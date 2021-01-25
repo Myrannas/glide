@@ -269,7 +269,11 @@ mod tests {
             parse_function::<VerboseError<&str>>("function test() { return a; }"),
             Ok((
                 "",
-                Function("test", Vec::new(), vec![Return(Box::new(Id("a")))])
+                Function(
+                    "test",
+                    Vec::new(),
+                    vec![Ast::Statement(Box::new(Ast::Return(Box::new(Id("a")))))]
+                )
             ))
         );
     }
