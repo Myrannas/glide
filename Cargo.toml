@@ -5,7 +5,11 @@ authors = ["Michael Oates <michael@oates.dev>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+debug = true
 
 [dependencies]
-nom="6"
 anyhow="1.0.37"
+log={ version = "0.4.14" }
+pretty_env_logger="0.4.0"
+logos = "0.12.0"

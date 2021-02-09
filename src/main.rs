@@ -1,14 +1,16 @@
 mod compiler;
 mod ops;
 mod parser;
+mod tc262;
 mod value;
 mod vm;
 
 use crate::compiler::compile;
-use crate::parser::parse_module;
+use crate::parser::parse_input;
 
 extern crate anyhow;
-extern crate nom;
+extern crate log;
+extern crate pretty_env_logger;
 
 // macro_rules! option {
 //     () => {
@@ -25,25 +27,37 @@ extern crate nom;
 // }
 
 fn main() {
-    match compile(
-        "main",
-        parse_module(
-            "
-function test(n) {
-    var a = 1;
-    function testa() {
-        return a;
-    };
+    pretty_env_logger::init();
 
-    return testa();
+    let start = std::time::Instant::now();
+
+    let parsed_module = parse_input(
+        "
+var console = {
+    log: 'log'
 };
-
-test();
+var i = 0;
+var test = {
+    test: {
+        abc: 123
+    }
+};
+console.log(test.test);
 ",
-        ),
-    ) {
+    );
+
+    println!("{:#?}", parsed_module);
+
+    match compile("main", parsed_module) {
         Ok(module) => {
+            println!("{:#?}", module);
+
             let r = module.load();
+
+            println!(
+                "Execution time {} ms",
+                (std::time::Instant::now() - start).as_secs_f64() * 1000.0
+            );
 
             println!("Result {:?}", r);
         }

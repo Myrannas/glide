@@ -1,29 +1,27 @@
-use crate::ops::{Context, Instruction, Next, RuntimeFrame};
-use crate::value::RuntimeValue;
-use nom::lib::std::fmt::{Debug, Formatter};
+use crate::compiler::Chunk;
+use crate::ops::{Context, ContextAccess, ControlFlow, Instruction, RuntimeFrame};
+use crate::value::{FunctionReference, RuntimeValue};
+use log::trace;
 use std::cell::RefCell;
+use std::fmt::{Debug, Formatter};
+use std::ops::Range;
 use std::rc::Rc;
 
+#[derive(Debug)]
 pub struct Module {
     pub init: Function,
 }
 
-impl Debug for Module {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Module{}")?;
-        Ok(())
-    }
-}
-
 impl Module {
     pub(crate) fn load(&self) -> Result<(), ExecutionError> {
-        self.init.execute(None)?;
+        let mut vec = Vec::with_capacity(4096);
+        self.init.execute(None, &mut vec, 0..0)?;
         Ok(())
     }
 }
 
 pub struct Function {
-    pub(crate) instructions: Vec<Instruction>,
+    pub(crate) chunks: Vec<Chunk>,
     pub stack_size: usize,
     pub local_size: usize,
     pub functions: Vec<Function>,
@@ -32,7 +30,7 @@ pub struct Function {
 
 impl Debug for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}()", self.name))
+        f.write_fmt(format_args!("{}() {{ {:#?} }}", self.name, self.chunks))
     }
 }
 
@@ -40,94 +38,58 @@ impl Debug for Function {
 pub enum ExecutionError {}
 
 impl Function {
-    pub(crate) fn execute<'a>(
+    pub(crate) fn execute<'a, 'b>(
         &'a self,
         parent: Option<Rc<RefCell<Context<'a>>>>,
+        stack: &'b mut Vec<RuntimeValue<'a>>,
+        arguments: Range<usize>,
     ) -> Result<RuntimeValue<'a>, ExecutionError> {
-        let mut frame = RuntimeFrame::<'a> {
+        let mut frame = RuntimeFrame::<'a, 'b> {
             context: Context::with_parent(parent, self.local_size),
-            stack: Vec::with_capacity(self.stack_size),
+            stack,
             function: &self,
         };
 
-        for Instruction { instr, constant } in self.instructions.iter() {
-            let result = instr(constant, &mut frame);
+        for (write_to, read_from) in arguments.enumerate() {
+            frame
+                .context
+                .write(write_to, frame.stack[read_from].clone())
+        }
 
-            println!("result: {:?}", result);
+        let mut chunk = &self.chunks[0];
+        let mut chunk_length = chunk.instructions.len();
+        let mut index = 0;
+        while index < chunk_length {
+            let Instruction { instr, constant } = &chunk.instructions[index];
 
-            match result {
-                Next::Step => {}
-                Next::Return(value) => return Ok(value),
-                Next::Call(RuntimeValue::Function(function, context)) => {
-                    let result = function.execute(Some(context))?;
+            // trace!("result: {:?}", result);
+
+            match instr(constant, &mut frame) {
+                ControlFlow::Step => {
+                    index += 1;
+                }
+                ControlFlow::Return(value) => return Ok(value),
+                ControlFlow::Call {
+                    function: FunctionReference { function, context },
+                    with_args,
+                } => {
+                    let stack_length = frame.stack.len();
+                    let range = (stack_length - with_args)..stack_length;
+                    let result = function.execute(Some(context), frame.stack, range)?;
+
+                    trace!("{} = {:#?}", function.name, result);
 
                     frame.stack.push(result);
                 }
-                test => panic!("Unhandled step type {:?}", test),
+                ControlFlow::Jump { chunk_index } => {
+                    chunk = &self.chunks[chunk_index];
+                    index = 0;
+                    chunk_length = chunk.instructions.len();
+                    continue;
+                }
             }
         }
 
         panic!("Block finished abnormally")
-
-        // loop {
-        //     for instr in self.instructions[chunk].iter() {
-        //         match instr {
-        //             Instruction::Add => {
-        //                 let left = vec.pop().unwrap();
-        //                 let right = vec.pop().unwrap();
-        //                 vec.push(left + right)
-        //             },
-        //             Instruction::Sub => {
-        //                 let left = vec.pop().unwrap();
-        //                 let right = vec.pop().unwrap();
-        //                 vec.push(left - right)
-        //             },
-        //             Instruction::Push(value) => {
-        //                 vec.push(value.clone());
-        //             }
-        //             Instruction::Jmp{ chunk: c } => {
-        //                 chunk = *c;
-        //                 break;
-        //             }
-        //             Instruction::Return => {
-        //                 return vec.pop().unwrap();
-        //             },
-        //             Instruction::BranchTruthy { chunk: c } => {
-        //                 let v = vec.pop().unwrap();
-        //œ
-        //                 if v == Value::True {
-        //                     chunk = *c;
-        //                     break;
-        //                 }
-        //             }
-        //             _ => panic!("Unsupported instruction")
-        //         }
-        //     }
-        // }
     }
 }
-
-// fn add(_: Value, mut stack: Vec<Value>) -> Vec<Value> {
-//     let l_ref = stack.pop().expect("Stack should have at two values to use add operator");
-//     // let l_value = l_ref.resolve();
-//     let l_prim = l_ref;
-//
-//     let r_ref = stack.pop().expect("Stack should have at two values to use add operator");
-//     // let r_value = r_ref.resolve();
-//     let r_prim = r_ref;
-//
-//     // no strings yet
-//
-//     let l_num: f64 = l_prim.into();
-//     let r_num: f64 = r_prim.into();
-//
-//     stack.push(Value::Float(l_num + r_num));
-//
-//     stack
-// }
-//
-// fn load(value: Value, mut stack: Vec<Value>) -> Vec<Value> {
-//     stack.push(value.clone());
-//
-//     stack
-// }
