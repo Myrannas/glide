@@ -29,6 +29,12 @@ pub enum Token<'a> {
     #[token("=")]
     Assign,
 
+    #[token("!")]
+    LogicalNot,
+
+    #[token("+=")]
+    AddAssign,
+
     #[token("<=")]
     LessThanEqual,
 
@@ -53,6 +59,15 @@ pub enum Token<'a> {
     #[token("function")]
     Function,
 
+    #[token("typeof")]
+    TypeOf,
+
+    #[token("undefined")]
+    Undefined,
+
+    #[token("null")]
+    Null,
+
     #[token("return")]
     Return,
 
@@ -70,6 +85,15 @@ pub enum Token<'a> {
 
     #[token("async")]
     Async,
+
+    #[token("try")]
+    Try,
+
+    #[token("catch")]
+    Catch,
+
+    #[token("finally")]
+    Finally,
 
     #[token("await")]
     Await,
@@ -113,11 +137,24 @@ pub enum Token<'a> {
     #[token("?.")]
     NullSafe,
 
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*")]
+    #[token("||")]
+    LogicalOr,
+
+    #[token("&&")]
+    LogicalAnd,
+
+    #[regex(r"[$a-zA-Z_][$a-zA-Z0-9_]*")]
     Id(&'a str),
 
-    #[regex(r"'[^'\n]+'", string)]
+    #[regex(r"'[^'\n]*'", string)]
+    #[regex(r#""[^"\n]*""#, string)]
     String(&'a str),
+
+    #[regex(r"//[^\n]*", logos::skip)]
+    Comment,
+
+    #[regex(r"/\*(?:[^*]|\*[^/])*\*/", logos::skip)]
+    BlockComment,
 
     #[error]
     #[regex(r"[ \t\n\f]+", logos::skip)]

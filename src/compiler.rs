@@ -1,11 +1,11 @@
 use crate::ops::{
-    add, bind, call, cjmp, div, get, get_null_safe, gt, gte, jmp, load, lt, lte, modulo, mul, ret,
-    set, sub, truncate, ControlFlow, Instruction, RuntimeFrame,
+    add, bind, call, cjmp, div, get, get_null_safe, gt, gte, jmp, land, lnot, load, lor, lt, lte,
+    modulo, mul, neg, not_strict_eq, ret, set, strict_eq, sub, truncate, type_of, ControlFlow,
+    Instruction, RuntimeFrame,
 };
-use crate::parser::ast::Statement::{Var, While};
 use crate::parser::ast::{
-    Expression, FunctionStatement, IfStatement, ParsedModule, Reference, Return, Statement,
-    VarStatement, WhileStatement,
+    Expression, FunctionStatement, IfStatement, ParsedModule, Reference, ReturnStatement,
+    Statement, TryStatement, VarStatement, WhileStatement,
 };
 use crate::value::StaticValue;
 use crate::value::StaticValue::Local;
@@ -204,24 +204,30 @@ fn compile_expression<'a, 'b, 'c>(
             compile_expression(*right, chunk)?;
             chunk.append(gte)
         }
+        Expression::LogicalOr(left, right) => {
+            compile_expression(*left, chunk)?;
+            compile_expression(*right, chunk)?;
+            chunk.append(lor)
+        }
+        Expression::LogicalAnd(left, right) => {
+            compile_expression(*left, chunk)?;
+            compile_expression(*right, chunk)?;
+            chunk.append(land)
+        }
+        Expression::LogicalNot(value) => {
+            compile_expression(*value, chunk)?;
+            chunk.append(lnot)
+        }
+        Expression::Neg(value) => {
+            compile_expression(*value, chunk)?;
+            chunk.append(neg)
+        }
+        Expression::TypeOf(value) => {
+            compile_expression(*value, chunk)?;
+            chunk.append(type_of)
+        }
         Expression::String(str) => {
             chunk.append_with_constant(load, StaticValue::String(str.to_owned()))
-        }
-        Expression::Reference(Reference::Id(id)) => {
-            match chunk.locals.resolve_identifier(id) {
-                Resolution::Resolved { local } => {
-                    chunk.append_with_constant(load, StaticValue::Local(local))
-                }
-                Resolution::Capture {
-                    local,
-                    frame: capture_frame,
-                } => {
-                    chunk.append_with_constant(load, Capture(capture_frame, local));
-                }
-                Resolution::Unresolved => {
-                    bail!("Reference unresolved {}", id)
-                }
-            };
         }
         Expression::Assign {
             assign_to: Reference::Id(id),
@@ -240,11 +246,37 @@ fn compile_expression<'a, 'b, 'c>(
                 }
             };
         }
+        Expression::Assign {
+            assign_to:
+                Reference::Accessor {
+                    accessor,
+                    expression: target,
+                    ..
+                },
+            expression,
+        } => {
+            compile_expression(*target, chunk)?;
+            compile_expression(*expression, chunk)?;
+
+            chunk.append_with_constant(set, StaticValue::String(accessor.to_owned()))
+        }
         Expression::Call {
             expression,
             parameters,
         } => {
             compile_expression(*expression, chunk)?;
+
+            let args_len = parameters.len();
+            for argument in parameters {
+                compile_expression(argument, chunk)?;
+            }
+
+            chunk.append_with_constant(call, StaticValue::Float(args_len as f64))
+        }
+
+        Expression::NewWithArgs { target, parameters } => {
+            // TODOME
+            compile_expression(*target, chunk)?;
 
             let args_len = parameters.len();
             for argument in parameters {
@@ -271,7 +303,8 @@ fn compile_expression<'a, 'b, 'c>(
                     chunk.append_with_constant(load, Capture(capture_frame, local));
                 }
                 Resolution::Unresolved => {
-                    bail!("Reference unresolved {}", id)
+                    chunk.append_with_constant(load, StaticValue::GlobalThis);
+                    chunk.append_with_constant(get, StaticValue::String(id.to_string()));
                 }
             };
         }
@@ -288,6 +321,47 @@ fn compile_expression<'a, 'b, 'c>(
                 chunk.append_with_constant(get, StaticValue::String(accessor.to_string()))
             }
         }
+        Expression::StrictEqualTo(left, right) => {
+            compile_expression(*left, chunk)?;
+            compile_expression(*right, chunk)?;
+
+            chunk.append(strict_eq)
+        }
+        Expression::NotStrictEqualTo(left, right) => {
+            compile_expression(*left, chunk)?;
+            compile_expression(*right, chunk)?;
+
+            chunk.append(not_strict_eq);
+        }
+        Expression::Function {
+            name: identifier,
+            statements,
+            arguments,
+        } => {
+            let identifier = identifier.unwrap_or("<>");
+            let function = chunk.frame.functions.allocate(Function {
+                chunks: vec![],
+                stack_size: 0,
+                local_size: 0,
+                functions: vec![],
+                name: identifier.to_owned(),
+            });
+
+            chunk.append_with_constant(load, StaticValue::Function(function));
+
+            let frame = &mut chunk.frame;
+
+            let Frame {
+                chunks,
+                functions,
+                local_size,
+            } = compile_function(identifier, &chunk.locals, arguments, statements)?;
+
+            frame.functions[function].chunks = chunks;
+            frame.functions[function].local_size = local_size;
+            frame.functions[function].functions = functions;
+        }
+        Expression::Undefined => chunk.append_with_constant(load, StaticValue::Undefined),
         node => panic!("Unsupported node {:#?}", node),
     }
 
@@ -299,9 +373,13 @@ fn compile_statement<'a, 'b>(
     mut chunk: ChunkBuilder<'a, 'b>,
 ) -> Result<ChunkBuilder<'a, 'b>> {
     match input {
-        Statement::Return(Return { expression }) => {
-            compile_expression(expression, &mut chunk)?;
-            chunk.append(ret)
+        Statement::Return(ReturnStatement { expression }) => {
+            if let Some(expression) = expression {
+                compile_expression(expression, &mut chunk)?;
+                chunk.append(ret)
+            } else {
+                chunk.append_with_constant(ret, StaticValue::Undefined)
+            }
         }
         Statement::Var(VarStatement {
             identifier,
@@ -345,7 +423,7 @@ fn compile_statement<'a, 'b>(
             compile_expression(expression, &mut chunk)?;
             chunk.append(truncate)
         }
-        Statement::IfStatement(IfStatement {
+        Statement::If(IfStatement {
             condition,
             true_block,
             false_block,
@@ -420,7 +498,48 @@ fn compile_statement<'a, 'b>(
 
             return Ok(sibling);
         }
-        node => panic!("Unsupported AST node {:?}", node),
+        Statement::Try(TryStatement {
+            try_block,
+            finally_block,
+            ..
+        }) => {
+            let try_block_index = chunk.frame.chunks.allocate(Chunk::new());
+            let next_chunk_index = chunk.frame.chunks.allocate(Chunk::new());
+            let finally_block_index = if finally_block.is_some() {
+                chunk.frame.chunks.allocate(Chunk::new())
+            } else {
+                next_chunk_index
+            };
+
+            chunk.append_with_constant(jmp, StaticValue::Jump(try_block_index));
+
+            compile_block(
+                try_block,
+                &mut chunk.frame,
+                &mut chunk.locals,
+                Some(try_block_index),
+                finally_block_index,
+            )?;
+
+            if let Some(finally) = finally_block {
+                compile_block(
+                    finally,
+                    &mut chunk.frame,
+                    &mut chunk.locals,
+                    Some(finally_block_index),
+                    next_chunk_index,
+                )?;
+            }
+
+            let sibling = ChunkBuilder {
+                locals: chunk.locals,
+                frame: chunk.frame,
+                chunk_index: next_chunk_index,
+            };
+
+            return Ok(sibling);
+            // need to implement catch
+        }
     }
 
     Ok(chunk)

@@ -1,4 +1,4 @@
-use crate::value::{FunctionReference, RuntimeValue, StaticValue};
+use crate::value::{FunctionReference, InternalValue, RuntimeValue, StaticValue};
 use crate::vm::Function;
 use log::trace;
 use std::cell::RefCell;
@@ -23,6 +23,7 @@ pub(crate) struct RuntimeFrame<'a, 'b> {
     pub(crate) context: Rc<RefCell<Context<'a>>>,
     pub(crate) stack: &'b mut Vec<RuntimeValue<'a>>,
     pub(crate) function: &'a Function,
+    pub(crate) global_this: RuntimeValue<'a>,
 }
 
 pub struct Context<'a> {
@@ -33,10 +34,9 @@ pub struct Context<'a> {
 impl<'a> Debug for Context<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "Context[{:p}, size={:?}, locals={:?}]",
+            "Context[{:p}, size={:?}]",
             self,
-            self.locals.len(),
-            self.locals
+            self.locals.len()
         ))
     }
 }
@@ -107,6 +107,17 @@ impl Debug for Instruction {
             i if i as usize == cjmp as usize => "cjmp",
             i if i as usize == set as usize => "set",
             i if i as usize == get as usize => "get",
+            i if i as usize == strict_eq as usize => "strict_eq",
+            i if i as usize == not_strict_eq as usize => "not_strict_eq",
+            i if i as usize == type_of as usize => "type_of",
+            i if i as usize == lnot as usize => "lnot",
+            i if i as usize == neg as usize => "neg",
+            i if i as usize == lt as usize => "lt",
+            i if i as usize == lte as usize => "lte",
+            i if i as usize == gt as usize => "gt",
+            i if i as usize == gte as usize => "gte",
+            i if i as usize == lor as usize => "lor",
+            i if i as usize == land as usize => "land",
             _ => panic!("Unknown instruction"),
         };
 
@@ -168,12 +179,12 @@ macro_rules! numeric_op {
 
         // let l_value = l_ref.resolve();
         let l_prim = match l_ref {
-            RuntimeValue::Local(index) => frame.context.read(index),
+            RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
             v => v,
         };
 
         let r_prim = match r_ref {
-            RuntimeValue::Local(index) => frame.context.read(index),
+            RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
             v => v,
         };
 
@@ -193,12 +204,12 @@ macro_rules! numeric_comparison_op {
 
         // let l_value = l_ref.resolve();
         let l_prim = match l_ref {
-            RuntimeValue::Local(index) => frame.context.read(index),
+            RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
             v => v,
         };
 
         let r_prim = match r_ref {
-            RuntimeValue::Local(index) => frame.context.read(index),
+            RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
             v => v,
         };
 
@@ -206,6 +217,31 @@ macro_rules! numeric_comparison_op {
 
         let $r: f64 = l_prim.into();
         let $l: f64 = r_prim.into();
+
+        frame.stack.push(RuntimeValue::Boolean($e));
+    } step););
+}
+
+macro_rules! logical_op {
+    ($i:ident($l:ident, $r:ident) => $e: expr) => (op!($i(frame) {
+        let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+        let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+
+        // let l_value = l_ref.resolve();
+        let l_prim = match l_ref {
+            RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
+            v => v,
+        };
+
+        let r_prim = match r_ref {
+            RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
+            v => v,
+        };
+
+        // no strings yet
+
+        let $r: bool = l_prim.into();
+        let $l: bool = r_prim.into();
 
         frame.stack.push(RuntimeValue::Boolean($e));
     } step););
@@ -221,6 +257,50 @@ numeric_comparison_op!(gt(l, r) => l > r);
 numeric_comparison_op!(gte(l, r) => l >= r);
 numeric_comparison_op!(lt(l, r) => l < r);
 numeric_comparison_op!(lte(l, r) => l <= r);
+numeric_comparison_op!(strict_eq(l, r) => l == r);
+numeric_comparison_op!(not_strict_eq(l, r) => l != r);
+
+logical_op!(lor(l, r) => l || r);
+logical_op!(land(l, r) => l && r);
+
+op!(lnot(val, frame) {
+   let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+
+    let l_prim = match l_ref {
+        RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
+        v => v,
+    };
+    
+    let r: bool = l_prim.into();
+    
+    frame.stack.push(RuntimeValue::Boolean(!r));
+} step);
+
+op!(neg(val, frame) {
+   let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+
+    let l_prim = match l_ref {
+        RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
+        v => v,
+    };
+    
+    let r: f64 = l_prim.into();
+    
+    frame.stack.push(RuntimeValue::Float(-r));
+} step);
+
+op!(type_of(val, frame) {
+   let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+
+    let l_prim = match l_ref {
+        RuntimeValue::Internal(InternalValue::Local(index)) => frame.context.read(index),
+        v => v,
+    };
+
+    frame.stack.push(RuntimeValue::String(Rc::new(match l_prim {
+        _ => "???".to_owned()
+    })));
+} step);
 
 op!(load(val, frame) {
    let value = val.as_ref()
@@ -250,8 +330,8 @@ op!(ret(val, frame) {
 op!(call(val, frame) {
     let function = frame.stack.pop()
         .and_then(|f| match f {
-            RuntimeValue::Function(function) => {
-                Some(function)
+            RuntimeValue::Object(function) => {
+                function.borrow().get_callable().clone()
             },
             _ => None
         })
@@ -312,12 +392,9 @@ op!(set(val, frame) {
 
     let target = frame.stack.pop().expect("Need an target");
 
-    match (target, attribute) {
-        (RuntimeValue::Object(mut obj), RuntimeValue::String(str)) => {
-            obj.borrow_mut().insert(str, value);
-            frame.stack.push(RuntimeValue::Object(obj));
-        },
-        _ => {}
+    if let (RuntimeValue::Object(obj), RuntimeValue::String(str)) = (target, attribute) {
+        obj.borrow_mut().set(str, value);
+        frame.stack.push(RuntimeValue::Object(obj));
     };
     
 } step);
@@ -332,7 +409,7 @@ op!(get(val, frame) {
     let target = frame.stack.pop().expect("Need an target");
 
     if let (RuntimeValue::Object(obj), RuntimeValue::String(str)) = (target, attribute) {
-        frame.stack.push(obj.borrow().get(&str).cloned().expect("TypeError: attribute does not exist"));
+        frame.stack.push(obj.borrow_mut().get(str).unwrap_or(RuntimeValue::Undefined));
     };
     
 } step);
@@ -346,11 +423,8 @@ op!(get_null_safe(val, frame) {
 
     let target = frame.stack.pop().expect("Need an target");
 
-    match (target, attribute) {
-        (RuntimeValue::Object(mut obj), RuntimeValue::String(str)) => {
-            frame.stack.push(obj.borrow().get(&str).cloned().unwrap_or(RuntimeValue::Undefined));
-        },
-        _ => {}
+    if let (RuntimeValue::Object(obj), RuntimeValue::String(str)) = (target, attribute) {
+        frame.stack.push(obj.borrow_mut().get(str).unwrap_or(RuntimeValue::Undefined));
     };
     
 } step);

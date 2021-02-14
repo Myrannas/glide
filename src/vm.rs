@@ -1,6 +1,6 @@
 use crate::compiler::Chunk;
 use crate::ops::{Context, ContextAccess, ControlFlow, Instruction, RuntimeFrame};
-use crate::value::{FunctionReference, RuntimeValue};
+use crate::value::{FunctionReference, JsObject, RuntimeValue};
 use log::trace;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -13,9 +13,9 @@ pub struct Module {
 }
 
 impl Module {
-    pub(crate) fn load(&self) -> Result<(), ExecutionError> {
+    pub(crate) fn load<'a>(&'a self, global: &'a RuntimeValue<'a>) -> Result<(), ExecutionError> {
         let mut vec = Vec::with_capacity(4096);
-        self.init.execute(None, &mut vec, 0..0)?;
+        self.init.execute(None, &mut vec, 0..0, global)?;
         Ok(())
     }
 }
@@ -38,16 +38,18 @@ impl Debug for Function {
 pub enum ExecutionError {}
 
 impl Function {
-    pub(crate) fn execute<'a, 'b>(
+    pub(crate) fn execute<'a, 'b, 'c>(
         &'a self,
         parent: Option<Rc<RefCell<Context<'a>>>>,
         stack: &'b mut Vec<RuntimeValue<'a>>,
         arguments: Range<usize>,
+        global_this: &'c RuntimeValue<'a>,
     ) -> Result<RuntimeValue<'a>, ExecutionError> {
         let mut frame = RuntimeFrame::<'a, 'b> {
             context: Context::with_parent(parent, self.local_size),
             stack,
             function: &self,
+            global_this: global_this.clone(),
         };
 
         for (write_to, read_from) in arguments.enumerate() {
@@ -62,7 +64,7 @@ impl Function {
         while index < chunk_length {
             let Instruction { instr, constant } = &chunk.instructions[index];
 
-            // trace!("result: {:?}", result);
+            trace!("result: {:?}", frame);
 
             match instr(constant, &mut frame) {
                 ControlFlow::Step => {
@@ -75,7 +77,9 @@ impl Function {
                 } => {
                     let stack_length = frame.stack.len();
                     let range = (stack_length - with_args)..stack_length;
-                    let result = function.execute(Some(context), frame.stack, range)?;
+
+                    let result =
+                        function.execute(Some(context), frame.stack, range, global_this)?;
 
                     trace!("{} = {:#?}", function.name, result);
 

@@ -7,6 +7,7 @@ mod vm;
 
 use crate::compiler::compile;
 use crate::parser::parse_input;
+use crate::value::JsObject;
 
 extern crate anyhow;
 extern crate log;
@@ -33,6 +34,7 @@ fn main() {
 
     let parsed_module = parse_input(
         "
+// Test program
 var console = {
     log: 'log'
 };
@@ -52,7 +54,8 @@ console.log(test.test);
         Ok(module) => {
             println!("{:#?}", module);
 
-            let r = module.load();
+            let global_this = JsObject::create();
+            let r = module.load(&global_this);
 
             println!(
                 "Execution time {} ms",
