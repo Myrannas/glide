@@ -112,6 +112,6 @@ pub(crate) enum Statement<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct ParsedModule<'a> {
+pub struct ParsedModule<'a> {
     pub(crate) block: Vec<Statement<'a>>,
 }

@@ -7,7 +7,7 @@ mod lexer;
 use crate::parser::hand_parser::pretty_print;
 use logos::Logos;
 
-pub(crate) fn parse_input(input: &str) -> ParsedModule {
+pub fn parse_input(input: &str) -> ParsedModule {
     let mut lex = lexer::Token::lexer(input).spanned().peekable();
 
     match hand_parser::parse(&mut lex) {

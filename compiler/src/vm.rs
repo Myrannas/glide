@@ -13,7 +13,7 @@ pub struct Module {
 }
 
 impl Module {
-    pub(crate) fn load<'a>(&'a self, global: &'a RuntimeValue<'a>) -> Result<(), ExecutionError> {
+    pub fn load<'a>(&'a self, global: &'a RuntimeValue<'a>) -> Result<(), ExecutionError> {
         let mut vec = Vec::with_capacity(4096);
         self.init.execute(None, &mut vec, 0..0, global)?;
         Ok(())

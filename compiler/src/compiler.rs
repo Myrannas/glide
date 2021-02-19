@@ -599,7 +599,7 @@ fn compile_function<'a>(
     Ok(frame)
 }
 
-pub(crate) fn compile(id: &str, input: ParsedModule) -> Result<Module> {
+pub fn compile(id: &str, input: ParsedModule) -> Result<Module> {
     debug!("{:#?}", input);
 
     let frame = compile_function(id, &FrameLocals::new_root(), Vec::new(), input.block)
