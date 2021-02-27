@@ -1,14 +1,14 @@
 use crate::ops::{Context, ContextAccess, RuntimeFrame};
 use crate::vm::Function;
-use std::cell::RefCell;
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub struct Reference<'a> {
-    base: RuntimeValue<'a>,
-    name: String,
-    strict: bool,
+    pub(crate) base: Box<RuntimeValue<'a>>,
+    pub(crate) name: Rc<String>,
+    pub(crate) strict: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -36,7 +36,7 @@ impl<'a> StaticValue {
             StaticValue::Float(f) => RuntimeValue::Float(*f),
             StaticValue::String(s) => RuntimeValue::String(Rc::new(s.clone())),
             StaticValue::Local(l) => frame.context.read(*l),
-            StaticValue::Function(f) => JsObject::from_function(FunctionReference {
+            StaticValue::Function(f) => Object::from_function(FunctionReference {
                 function: &frame.function.functions[*f],
                 context: frame.context.clone(),
             }),
@@ -48,7 +48,7 @@ impl<'a> StaticValue {
                 RuntimeValue::Internal(InternalValue::Branch(*left, *right))
             }
             StaticValue::Jump(left) => RuntimeValue::Internal(InternalValue::Jump(*left)),
-            StaticValue::Object => JsObject::create(),
+            StaticValue::Object => Object::create(),
             StaticValue::GlobalThis => frame.global_this.clone(),
         }
     }
@@ -68,47 +68,78 @@ pub enum RuntimeValue<'a> {
     Float(f64),
     String(Rc<String>),
     Object(Object<'a>),
-    Reference(Box<Reference<'a>>),
+    Reference(Reference<'a>),
     Internal(InternalValue),
 }
 
-type Object<'a> = Rc<RefCell<JsObject<'a>>>;
+impl<'a> RuntimeValue<'a> {
+    pub(crate) fn resolve<'b>(self, context: &'b Rc<RefCell<Context<'a>>>) -> Self {
+        match self {
+            RuntimeValue::Internal(InternalValue::Local(index)) => context.read(index),
+            RuntimeValue::Reference(reference) => match *reference.base {
+                RuntimeValue::Object(obj) => obj.get(reference.name),
+                _ => todo!("Unsupported type"),
+            },
+            other => other,
+        }
+    }
+}
+
+pub type Object<'a> = Rc<RefCell<JsObject<'a>>>;
 
 #[derive(Clone, Debug)]
 pub struct JsObject<'a> {
-    value: Option<HashMap<Rc<String>, RuntimeValue<'a>>>,
+    properties: Option<HashMap<Rc<String>, RuntimeValue<'a>>>,
     callable: Option<FunctionReference<'a>>,
 }
 
-impl<'a> JsObject<'a> {
-    pub fn create() -> RuntimeValue<'a> {
+pub trait ObjectMethods<'a, 'b> {
+    fn create() -> RuntimeValue<'a>;
+    fn from_function(function_reference: FunctionReference<'a>) -> RuntimeValue<'a>;
+    fn get(&self, key: Rc<String>) -> RuntimeValue<'a>;
+    fn set(&self, key: Rc<String>, value: RuntimeValue<'a>);
+    fn get_borrowed(&self, key: &Rc<String>) -> RuntimeValue<'a>;
+    fn get_callable(&self) -> Option<FunctionReference<'a>>;
+}
+
+impl<'a, 'b> ObjectMethods<'a, 'b> for Object<'a> {
+    fn create() -> RuntimeValue<'a> {
         RuntimeValue::Object(Rc::new(RefCell::new(JsObject {
-            value: None,
+            properties: None,
             callable: None,
         })))
     }
 
-    pub fn from_function(function_reference: FunctionReference<'a>) -> RuntimeValue<'a> {
+    fn from_function(function_reference: FunctionReference<'a>) -> RuntimeValue<'a> {
         RuntimeValue::Object(Rc::new(RefCell::new(JsObject {
-            value: None,
+            properties: None,
             callable: Some(function_reference),
         })))
     }
 
-    pub fn set(&mut self, key: Rc<String>, value: RuntimeValue<'a>) {
-        if self.value.is_none() {
-            self.value = Some(HashMap::new());
-        }
-
-        self.value.as_mut().unwrap().insert(key, value);
+    fn get(&self, key: Rc<String>) -> RuntimeValue<'a> {
+        self.get_borrowed(&key)
     }
 
-    pub fn get(&self, key: Rc<String>) -> Option<RuntimeValue<'a>> {
-        self.value.as_ref().and_then(|m| m.get(&key)).cloned()
+    fn set(&self, key: Rc<String>, value: RuntimeValue<'a>) {
+        RefMut::map(self.borrow_mut(), |f| {
+            let inner = f.properties.get_or_insert_with(HashMap::new);
+            inner.insert(key, value);
+            inner
+        });
     }
 
-    pub fn get_callable(&self) -> &Option<FunctionReference<'a>> {
-        &self.callable
+    fn get_borrowed(&self, key: &Rc<String>) -> RuntimeValue<'a> {
+        let b = self.borrow();
+
+        b.properties
+            .as_ref()
+            .and_then(|p| p.get(key).cloned())
+            .unwrap_or(RuntimeValue::Undefined)
+    }
+
+    fn get_callable(&self) -> Option<FunctionReference<'a>> {
+        self.borrow().callable.clone()
     }
 }
 
@@ -121,12 +152,18 @@ pub enum InternalValue {
 
 impl<'a> From<RuntimeValue<'a>> for f64 {
     fn from(value: RuntimeValue) -> Self {
+        (&value).into()
+    }
+}
+
+impl<'a> From<&RuntimeValue<'a>> for f64 {
+    fn from(value: &RuntimeValue) -> Self {
         match value {
             RuntimeValue::Undefined => f64::NAN,
             RuntimeValue::Null => 0.0,
             RuntimeValue::Boolean(true) => 1.0,
             RuntimeValue::Boolean(false) => 0.0,
-            RuntimeValue::Float(v) => v,
+            RuntimeValue::Float(v) => *v,
             RuntimeValue::Reference(..) => todo!("References are not supported"),
             RuntimeValue::Object(..) => f64::NAN,
             RuntimeValue::String(value) => value.parse().unwrap_or(f64::NAN),
@@ -137,9 +174,18 @@ impl<'a> From<RuntimeValue<'a>> for f64 {
 
 impl<'a> From<RuntimeValue<'a>> for bool {
     fn from(value: RuntimeValue<'a>) -> Self {
+        (&value).into()
+    }
+}
+
+impl<'a> From<&RuntimeValue<'a>> for bool {
+    fn from(value: &RuntimeValue<'a>) -> Self {
         match value {
-            RuntimeValue::Float(v) => v > 0.0,
-            RuntimeValue::Boolean(bool) => bool,
+            RuntimeValue::Float(v) => *v > 0.0,
+            RuntimeValue::Boolean(bool) => *bool,
+            RuntimeValue::String(str) if str.as_ref().eq("undefined") => false,
+            RuntimeValue::String(..) => true,
+            RuntimeValue::Undefined => false,
             value => todo!("Unsupported types {:?}", value),
         }
     }

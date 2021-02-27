@@ -89,6 +89,9 @@ pub enum Token<'a> {
     #[token("try")]
     Try,
 
+    #[token("throw")]
+    Throw,
+
     #[token("catch")]
     Catch,
 
@@ -103,6 +106,9 @@ pub enum Token<'a> {
 
     #[token("new")]
     New,
+
+    #[token("this")]
+    This,
 
     #[token("if")]
     If,

@@ -1,11 +1,13 @@
 use crate::compiler::Chunk;
-use crate::ops::{Context, ContextAccess, ControlFlow, Instruction, RuntimeFrame};
+use crate::ops::{Context as JSContext, ContextAccess, ControlFlow, Instruction, RuntimeFrame};
 use crate::value::{FunctionReference, JsObject, RuntimeValue};
+use anyhow::{Context, Result};
 use log::trace;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::ops::Range;
 use std::rc::Rc;
+use thiserror::Error;
 
 #[derive(Debug)]
 pub struct Module {
@@ -13,9 +15,10 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn load<'a>(&'a self, global: &'a RuntimeValue<'a>) -> Result<(), ExecutionError> {
+    pub fn load<'a, 'b>(&'a self, global: &'b RuntimeValue<'a>) -> Result<(), ExecutionError<'a>> {
         let mut vec = Vec::with_capacity(4096);
-        self.init.execute(None, &mut vec, 0..0, global)?;
+        self.init
+            .execute(None, &mut vec, 0..0, global, &RuntimeValue::Undefined)?;
         Ok(())
     }
 }
@@ -30,29 +33,38 @@ pub struct Function {
 
 impl Debug for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}() {{ {:#?} }}", self.name, self.chunks))
+        f.write_fmt(format_args!(
+            "{}()[locals: {}] {{ {:#?} }}",
+            self.name, self.local_size, self.chunks
+        ))
     }
 }
 
-#[derive(Debug)]
-pub enum ExecutionError {}
+#[derive(Debug, Error)]
+pub enum ExecutionError<'a> {
+    #[error("Runtime error")]
+    Thrown(RuntimeValue<'a>),
+    #[error("Encountered an internal error")]
+    InternalError(&'a str),
+}
 
 impl Function {
     pub(crate) fn execute<'a, 'b, 'c>(
         &'a self,
-        parent: Option<Rc<RefCell<Context<'a>>>>,
+        parent: Option<Rc<RefCell<JSContext<'a>>>>,
         stack: &'b mut Vec<RuntimeValue<'a>>,
         arguments: Range<usize>,
         global_this: &'c RuntimeValue<'a>,
-    ) -> Result<RuntimeValue<'a>, ExecutionError> {
+        this: &'c RuntimeValue<'a>,
+    ) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
         let mut frame = RuntimeFrame::<'a, 'b> {
-            context: Context::with_parent(parent, self.local_size),
+            context: JSContext::with_parent(parent, self.local_size, this.clone()),
             stack,
             function: &self,
             global_this: global_this.clone(),
         };
 
-        for (write_to, read_from) in arguments.enumerate() {
+        for (write_to, read_from) in arguments.enumerate().take(self.local_size) {
             frame
                 .context
                 .write(write_to, frame.stack[read_from].clone())
@@ -72,14 +84,20 @@ impl Function {
                 }
                 ControlFlow::Return(value) => return Ok(value),
                 ControlFlow::Call {
+                    target,
                     function: FunctionReference { function, context },
                     with_args,
                 } => {
                     let stack_length = frame.stack.len();
                     let range = (stack_length - with_args)..stack_length;
 
-                    let result =
-                        function.execute(Some(context), frame.stack, range, global_this)?;
+                    let result = function.execute(
+                        Some(context),
+                        frame.stack,
+                        range,
+                        global_this,
+                        &target,
+                    )?;
 
                     trace!("{} = {:#?}", function.name, result);
 
@@ -91,9 +109,12 @@ impl Function {
                     chunk_length = chunk.instructions.len();
                     continue;
                 }
+                ControlFlow::Throw(err) => {
+                    return Err(ExecutionError::Thrown(err));
+                }
             }
         }
 
-        panic!("Block finished abnormally")
+        Err(ExecutionError::InternalError(&self.name))
     }
 }

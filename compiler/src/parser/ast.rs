@@ -1,5 +1,6 @@
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Reference<'a> {
+    This,
     Id(&'a str),
     Accessor {
         expression: Box<Expression<'a>>,
@@ -101,6 +102,11 @@ pub(crate) struct TryStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub(crate) struct ThrowStatement<'a> {
+    pub(crate) expression: Expression<'a>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Statement<'a> {
     Function(FunctionStatement<'a>),
     If(IfStatement<'a>),
@@ -109,6 +115,7 @@ pub(crate) enum Statement<'a> {
     Var(VarStatement<'a>),
     Expression(Expression<'a>),
     Try(TryStatement<'a>),
+    ThrowStatement(ThrowStatement<'a>),
 }
 
 #[derive(Debug, PartialEq)]

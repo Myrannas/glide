@@ -1,7 +1,7 @@
 use super::ast::{Expression, Reference};
 use crate::parser::ast::{
-    FunctionStatement, IfStatement, ParsedModule, ReturnStatement, Statement, TryStatement,
-    VarStatement, WhileStatement,
+    FunctionStatement, IfStatement, ParsedModule, ReturnStatement, Statement, ThrowStatement,
+    TryStatement, VarStatement, WhileStatement,
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
@@ -187,6 +187,7 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
 
     match input.next() {
         Some((Token::Id(identifier), ..)) => Ok(Expression::Reference(Reference::Id(identifier))),
+        Some((Token::This, ..)) => Ok(Expression::Reference(Reference::This)),
         Some((Token::Float(value), ..)) => Ok(Expression::Float(value)),
         Some((Token::String(value), ..)) => Ok(Expression::String(value)),
         Some((Token::Boolean(value), ..)) => Ok(Expression::Boolean(value)),
@@ -492,6 +493,7 @@ impl<'a> Parse<'a> for Statement<'a> {
             Some((Token::While, ..)) => WhileStatement::parse(input).map(Statement::While),
             Some((Token::Var, ..)) => VarStatement::parse(input).map(Statement::Var),
             Some((Token::Try, ..)) => TryStatement::parse(input).map(Statement::Try),
+            Some((Token::Throw, ..)) => ThrowStatement::parse(input).map(Statement::ThrowStatement),
             Some(_) => Ok(Statement::Expression(parse_expression(input)?)),
             None => Err(Error::EndOfFile),
         }
@@ -609,6 +611,15 @@ impl<'a> Parse<'a> for FunctionStatement<'a> {
             arguments,
             statements,
         })
+    }
+}
+
+impl<'a> Parse<'a> for ThrowStatement<'a> {
+    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, ThrowStatement<'a>> {
+        input.expect(Token::Throw)?;
+        let expression = parse_expression(input)?;
+
+        Ok(ThrowStatement { expression })
     }
 }
 
