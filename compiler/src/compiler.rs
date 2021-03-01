@@ -16,7 +16,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use StaticValue::Capture;
 
-#[derive(Debug)]
 pub struct Chunk {
     pub(crate) instructions: Vec<Instruction>,
 }
@@ -316,7 +315,13 @@ impl<'a, 'c> ChunkBuilder<'a> {
                 Resolution::Capture {
                     local,
                     frame: capture_frame,
-                } => self.append_with_constant(load, Capture(capture_frame, local)),
+                } => self.append_with_constant(
+                    load,
+                    Capture {
+                        frame: capture_frame,
+                        local,
+                    },
+                ),
                 Resolution::Unresolved => self
                     .append_with_constant(load, StaticValue::GlobalThis)
                     .append_with_constant(get, StaticValue::String(id.to_string())),
@@ -350,7 +355,7 @@ impl<'a, 'c> ChunkBuilder<'a> {
                 statements,
                 arguments,
             } => {
-                let identifier = identifier.unwrap_or("<>");
+                let identifier = identifier.unwrap_or("(anonymous)");
                 let function = self.frame.functions.allocate(Function {
                     chunks: vec![],
                     stack_size: 0,
@@ -613,7 +618,7 @@ pub fn compile(id: &str, input: ParsedModule, options: CompilerOptions) -> Resul
             stack_size: 0,
             local_size: frame.local_size,
             functions: frame.functions,
-            name: "<init>".to_owned(),
+            name: "(anonymous)".to_owned(),
         },
     })
 }

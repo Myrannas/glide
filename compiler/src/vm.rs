@@ -1,4 +1,5 @@
 use crate::compiler::Chunk;
+use crate::debugging::{DebugRepresentation, Renderer};
 use crate::ops::{Context as JSContext, ContextAccess, ControlFlow, Instruction, RuntimeFrame};
 use crate::value::{FunctionReference, JsObject, RuntimeValue};
 use anyhow::{Context, Result};
@@ -33,10 +34,33 @@ pub struct Function {
 
 impl Debug for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{}()[locals: {}] {{ {:#?} }}",
-            self.name, self.local_size, self.chunks
-        ))
+        self.render(&mut Renderer::debug(f, 3))
+    }
+}
+
+impl DebugRepresentation for Function {
+    fn render(&self, f: &mut Renderer) -> std::fmt::Result {
+        f.function(&self.name)?;
+
+        f.start_internal("FUNCTION")?;
+
+        f.internal_key("instructions")?;
+
+        f.new_line()?;
+
+        for (i, chunk) in self.chunks.iter().enumerate() {
+            f.internal_index(i)?;
+            f.new_line()?;
+
+            for instruction in &chunk.instructions {
+                Instruction::render(instruction, f)?;
+                f.new_line()?;
+            }
+        }
+
+        f.end_internal()?;
+
+        Ok(())
     }
 }
 
@@ -78,7 +102,9 @@ impl Function {
 
             trace!("result: {:?}", frame);
 
-            match instr(constant, &mut frame) {
+            let result = instr(constant, &mut frame);
+
+            match result {
                 ControlFlow::Step => {
                     index += 1;
                 }

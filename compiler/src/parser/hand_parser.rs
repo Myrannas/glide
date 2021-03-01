@@ -5,8 +5,9 @@ use crate::parser::ast::{
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
-use logos::Span;
+use logos::{Source, Span};
 use std::cmp::min;
+use std::fmt::{Display, Formatter};
 use std::iter::Peekable;
 use std::ops::Range;
 
@@ -32,6 +33,14 @@ pub(crate) enum Error<'a> {
     },
     EndOfFile,
 }
+
+impl<'a> Display for Error<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", self))
+    }
+}
+
+impl<'a> std::error::Error for Error<'a> {}
 
 pub(crate) fn pretty_print(input: &str, err: Error) -> String {
     match err {
@@ -189,11 +198,19 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
         Some((Token::Id(identifier), ..)) => Ok(Expression::Reference(Reference::Id(identifier))),
         Some((Token::This, ..)) => Ok(Expression::Reference(Reference::This)),
         Some((Token::Float(value), ..)) => Ok(Expression::Float(value)),
-        Some((Token::String(value), ..)) => Ok(Expression::String(value)),
+        Some((Token::String(value), ..)) => {
+            let decoded_value = value.slice(1..(value.len() - 1)).unwrap();
+            Ok(Expression::String(decoded_value))
+        }
         Some((Token::Boolean(value), ..)) => Ok(Expression::Boolean(value)),
         Some((Token::OpenBrace, ..)) => parse_object_literal(input),
         Some((Token::Undefined, ..)) => Ok(Expression::Undefined),
         Some((Token::Null, ..)) => Ok(Expression::Null),
+        Some((Token::Void, ..)) => {
+            parse_expression(input)?;
+
+            Ok(Expression::Undefined)
+        }
         Some(other) => input.expected(
             vec![
                 Token::Id(""),
@@ -204,7 +221,7 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
             ],
             other,
         ),
-        _ => panic!(""),
+        _ => Err(Error::EndOfFile),
     }
 }
 

@@ -3,6 +3,7 @@ mod ops;
 mod parser;
 pub mod value;
 mod vm;
+mod debugging;
 
 extern crate anyhow;
 extern crate log;

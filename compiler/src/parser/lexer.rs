@@ -68,6 +68,9 @@ pub enum Token<'a> {
     #[token("null")]
     Null,
 
+    #[token("void")]
+    Void,
+
     #[token("return")]
     Return,
 

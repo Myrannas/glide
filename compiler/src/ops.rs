@@ -1,10 +1,11 @@
+use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::value::{
     FunctionReference, InternalValue, Object, ObjectMethods, Reference, RuntimeValue, StaticValue,
 };
 use crate::vm::Function;
 use log::trace;
 use std::cell::{Ref, RefCell};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Formatter, Write};
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -36,13 +37,41 @@ pub struct Context<'a> {
     this: RuntimeValue<'a>,
 }
 
+impl<'a> DebugRepresentation for Context<'a> {
+    fn render(&self, render: &mut Renderer) -> std::fmt::Result {
+        match render.representation {
+            Representation::Compact => Ok(()),
+            Representation::Full => Ok(()),
+            Representation::Debug => {
+                render.start_internal("CONTEXT")?;
+
+                if !self.locals.is_empty() {
+                    render.internal_key(" locals: ")?;
+                }
+
+                for value in self.locals.iter() {
+                    value.render(render)?;
+
+                    render.formatter.write_str(", ")?;
+                }
+
+                if let Some(parent) = &self.parent {
+                    render.internal_key(" parent: ")?;
+
+                    let p = parent.borrow();
+                    Context::render(&p, render)?;
+                }
+
+                render.end_internal()?;
+                Ok(())
+            }
+        }
+    }
+}
+
 impl<'a> Debug for Context<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "Context[{:p}, size={:?}]",
-            self,
-            self.locals.len()
-        ))
+        Renderer::debug(f, 3).render(self)
     }
 }
 
@@ -79,7 +108,10 @@ impl<'a, 'b> ContextAccess<'a> for Rc<RefCell<Context<'a>>> {
         if offset > 0 {
             let ctx = self.borrow();
 
-            return ctx.parent.as_ref().and_then(|parent| parent.capture(offset - 1, index));
+            return ctx
+                .parent
+                .as_ref()
+                .and_then(|parent| parent.capture(offset - 1, index));
         } else {
             self.borrow().locals.get(index).cloned()
         }
@@ -92,8 +124,8 @@ pub(crate) struct Instruction {
     pub(crate) constant: Option<StaticValue>,
 }
 
-impl Debug for Instruction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl DebugRepresentation for Instruction {
+    fn render(&self, f: &mut Renderer) -> std::fmt::Result {
         let name = match self.instr {
             i if i as usize == bind as usize => "bind",
             i if i as usize == truncate as usize => "truncate",
@@ -113,8 +145,8 @@ impl Debug for Instruction {
             i if i as usize == cjmp as usize => "cjmp",
             i if i as usize == set as usize => "set",
             i if i as usize == get as usize => "get",
-            i if i as usize == strict_eq as usize => "strict_eq",
-            i if i as usize == not_strict_eq as usize => "not_strict_eq",
+            i if i as usize == strict_eq as usize => "===",
+            i if i as usize == not_strict_eq as usize => "!==",
             i if i as usize == type_of as usize => "type_of",
             i if i as usize == lnot as usize => "lnot",
             i if i as usize == neg as usize => "neg",
@@ -130,7 +162,21 @@ impl Debug for Instruction {
             _ => panic!("Unknown instruction"),
         };
 
-        f.write_fmt(format_args!("{} {:?}", name, self.constant))
+        if let Some(constant) = &self.constant {
+            f.instruction(name)?;
+            f.formatter.write_char(' ')?;
+            constant.render(f)?;
+        } else {
+            f.instruction(name)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Debug for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Renderer::debug(f, 3).render(self)
     }
 }
 
@@ -245,8 +291,30 @@ numeric_comparison_op!(gt(l, r) => l > r);
 numeric_comparison_op!(gte(l, r) => l >= r);
 numeric_comparison_op!(lt(l, r) => l < r);
 numeric_comparison_op!(lte(l, r) => l <= r);
-numeric_comparison_op!(strict_eq(l, r) => l == r);
-numeric_comparison_op!(not_strict_eq(l, r) => l != r);
+
+op!(strict_eq(val, frame) {
+ let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+    let l_prim = l_ref.resolve(&frame.context);
+    
+    let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+    let r_prim = r_ref.resolve(&frame.context);
+    
+    print!("{:?} !== {:?}", l_prim, r_prim);
+    
+    frame.stack.push(RuntimeValue::Boolean(l_prim.strict_eq(&r_prim)));
+} step);
+
+op!(not_strict_eq(val, frame) {
+ let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+    let l_prim = l_ref.resolve(&frame.context);
+    
+    let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+    let r_prim = r_ref.resolve(&frame.context);
+    
+    print!("{:?} !== {:?}", l_prim, r_prim);
+    
+    frame.stack.push(RuntimeValue::Boolean(!l_prim.strict_eq(&r_prim)));
+} step);
 
 op!(lor(val, frame) {
     if let Some(StaticValue::Branch(left, right)) = val {
@@ -369,6 +437,8 @@ op!(call(val, frame) {
 });
 
 op!(call_new(val, frame) {
+    println!("{:?}", frame.stack);
+
     let fn_value = frame.stack.pop().expect("Expect a target");
 
     let target = Object::create();

@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 compiler = { path = "../compiler" }
+anyhow = "1.0.38"
+colored = "2.0.0"
