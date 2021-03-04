@@ -112,6 +112,18 @@ impl<'a, T> From<InternalError> for JsResult<'a, T> {
     }
 }
 
+impl<'a> From<InternalError> for ExecutionError<'a> {
+    fn from(err: InternalError) -> Self {
+        ExecutionError::InternalError(err)
+    }
+}
+
+impl<'a> From<RuntimeValue<'a>> for ExecutionError<'a> {
+    fn from(err: RuntimeValue<'a>) -> Self {
+        ExecutionError::Thrown(err, None)
+    }
+}
+
 impl<'a> From<StaticExecutionError> for ExecutionError<'a> {
     fn from(err: StaticExecutionError) -> Self {
         match err {

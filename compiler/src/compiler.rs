@@ -11,9 +11,9 @@ use crate::parser::ast::{
     UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
 use crate::result::{InternalError, JsResult, StaticJsResult, SyntaxError};
-use crate::value::StaticValue;
 use crate::value::StaticValue::Local;
-use crate::vm::{Function, FunctionInner, Module};
+use crate::value::{RuntimeValue, StaticValue};
+use crate::vm::{Function, FunctionInner, JsThread, Module};
 use crate::ExecutionError;
 use anyhow::{bail, Context, Error, Result};
 use log::debug;
@@ -81,10 +81,7 @@ struct ChunkBuilder {
 impl<'b> ChunkBuilder {
     fn append(
         mut self,
-        instr: for<'c, 'd, 'e> fn(
-            &Option<StaticValue>,
-            &'e mut RuntimeFrame<'c, 'd>,
-        ) -> JsResult<'c, ControlFlow<'c>>,
+        instr: for<'c, 'd, 'e> fn(&Option<StaticValue>, &'e mut JsThread<'c>),
     ) -> Self {
         self.frame.chunks[self.chunk_index]
             .instructions
@@ -98,10 +95,7 @@ impl<'b> ChunkBuilder {
 
     fn append_with_constant(
         mut self,
-        instr: for<'c, 'd, 'e> fn(
-            &Option<StaticValue>,
-            &'e mut RuntimeFrame<'c, 'd>,
-        ) -> JsResult<'c, ControlFlow<'c>>,
+        instr: for<'c, 'e> fn(&Option<StaticValue>, &'e mut JsThread<'c>),
         constant: StaticValue,
     ) -> Self {
         self.frame.chunks[self.chunk_index]
@@ -184,12 +178,7 @@ impl<'a> Locals for Rc<RefCell<FrameLocals>> {
 }
 
 impl BinaryOperator {
-    fn to_op(
-        &self,
-    ) -> for<'a, 'b, 'c, 'd> fn(
-        &Option<StaticValue>,
-        &'c mut RuntimeFrame<'a, 'b>,
-    ) -> JsResult<'a, ControlFlow<'a>> {
+    fn to_op(&self) -> for<'a, 'b, 'c, 'd> fn(&Option<StaticValue>, &'c mut JsThread<'a>) {
         match self {
             BinaryOperator::Add => add,
             BinaryOperator::Sub => sub,
@@ -215,12 +204,7 @@ impl BinaryOperator {
 }
 
 impl UnaryOperator {
-    fn to_op(
-        &self,
-    ) -> for<'a, 'b, 'c, 'd> fn(
-        &Option<StaticValue>,
-        &'c mut RuntimeFrame<'a, 'b>,
-    ) -> JsResult<'a, ControlFlow<'a>> {
+    fn to_op(&self) -> for<'a, 'b, 'c, 'd> fn(&Option<StaticValue>, &'c mut JsThread<'a>) {
         match self {
             UnaryOperator::TypeOf => type_of,
             UnaryOperator::LogicalNot => lnot,

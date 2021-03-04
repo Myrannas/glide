@@ -1,8 +1,10 @@
 use crate::compiler::compile_eval;
 use crate::object::{JsObject, Object, ObjectMethods};
-use crate::ops::RuntimeFrame;
+use crate::ops::{ControlFlow, RuntimeFrame};
+use crate::parser::ast::Statement::Continue;
 use crate::result::{ExecutionError, JsResult};
-use crate::value::{BuiltIn, BuiltinFn, FunctionReference, RuntimeValue};
+use crate::value::{BuiltIn, BuiltinFn, CustomFunctionReference, FunctionReference, RuntimeValue};
+use crate::vm::JsThread;
 use crate::{parse_input, CompilerOptions, InternalError};
 use std::cell::RefCell;
 use std::convert::TryInto;
@@ -10,79 +12,92 @@ use std::rc::Rc;
 
 fn object_constructor<'a, 'b>(
     args: &[Option<RuntimeValue<'a>>],
-    _: &mut RuntimeFrame<'a, 'b>,
+    thread: &mut JsThread<'a>,
     _: &RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
-) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
-    Ok(Object::create().into())
+) -> JsResult<'a, Option<RuntimeValue<'a>>> {
+    Ok(Some(RuntimeValue::Object(Object::create())))
 }
 
 fn array_constructor<'a, 'b>(
     args: &[Option<RuntimeValue<'a>>],
-    _: &mut RuntimeFrame<'a, 'b>,
+    thread: &mut JsThread<'a>,
     _: &RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
-) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
-    Ok(RuntimeValue::Object(Rc::new(RefCell::new(JsObject {
-        prototype: None,
-        indexed_properties: Some(vec![]),
-        properties: None,
-        name: None,
-    }))))
+) -> JsResult<'a, Option<RuntimeValue<'a>>> {
+    Ok(Some(RuntimeValue::Object(Rc::new(RefCell::new(
+        JsObject {
+            prototype: None,
+            indexed_properties: Some(vec![]),
+            properties: None,
+            name: None,
+        },
+    )))))
 }
 
 fn boolean_constructor<'a, 'b>(
     args: &[Option<RuntimeValue<'a>>],
-    _: &mut RuntimeFrame<'a, 'b>,
+    thread: &mut JsThread<'a>,
     _: &RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
-) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
-    Ok(Object::create().into())
+) -> JsResult<'a, Option<RuntimeValue<'a>>> {
+    Ok(Some(Object::create().into()))
 }
 
 fn eval<'a, 'b>(
     args: &[Option<RuntimeValue<'a>>],
-    frame: &mut RuntimeFrame<'a, 'b>,
+    frame: &mut JsThread<'a>,
     _value: &RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
-) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
+) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     match &args[0] {
         Some(RuntimeValue::String(str, ..)) => {
             let input = str.as_ref().to_owned();
 
-            let code = parse_input(&input)?;
-            let code = compile_eval(&frame.function(), &input, code)?;
+            let code = match parse_input(&input) {
+                Ok(code) => code,
+                Err(err) => {
+                    frame.throw(err);
+                    return Ok(None);
+                }
+            };
+            let function = match compile_eval(frame.current_function(), &input, code) {
+                Ok(code) => code,
+                Err(err) => {
+                    frame.throw(err);
+                    return Ok(None);
+                }
+            };
 
-            code.execute(
-                Some(frame.context.clone()),
-                frame.stack,
-                0..0,
-                Some(frame.call_stack.clone()),
-                &frame.global_this,
-                &RuntimeValue::Null,
-            )
+            let this = frame.current_context().this().clone();
+            let context = frame.current_context().clone();
+
+            frame.call(
+                this,
+                CustomFunctionReference { function, context },
+                0,
+                false,
+            );
+
+            Ok(None)
         }
-        None => Ok(RuntimeValue::Undefined),
-        _ => Ok(RuntimeValue::Undefined),
+        _ => Ok(Some(RuntimeValue::Undefined)),
     }
 }
 
 fn string_length<'a, 'b>(
     args: &[Option<RuntimeValue<'a>>],
-    frame: &mut RuntimeFrame<'a, 'b>,
+    thread: &mut JsThread<'a>,
     value: &RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
-) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
-    println!("{:?}", value);
+) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     match value {
-        RuntimeValue::String(str, ..) => Ok(RuntimeValue::Float(str.as_ref().len() as f64)),
+        RuntimeValue::String(str, ..) => Ok(Some(RuntimeValue::Float(str.as_ref().len() as f64))),
         _ => InternalError::new_stackless("Attempted to call string length on non-string").into(),
     }
 }
 
-pub(crate) fn make_type_error<'a, 'b>(
-    frame: &mut RuntimeFrame<'a, 'b>,
-) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
+pub(crate) fn make_type_error<'a, 'b>(frame: &mut JsThread<'a>) -> JsResult<'a> {
     Ok(RuntimeValue::Object(Rc::new(RefCell::new(JsObject {
         prototype: Some(
             frame
@@ -131,7 +146,7 @@ impl<'a> Helpers<'a> for Object<'a> {
             Rc::new(key.into()),
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(Box::new(value.into())),
-                op: |_, _, _, context| Ok(context.unwrap().clone()),
+                op: |_, thread, _, context| Ok(Some(context.unwrap().clone())),
                 desired_args: 0,
             })),
             None,
@@ -184,7 +199,7 @@ pub fn create_global<'a>() -> Object<'a> {
     let string_prototype = Object::create();
     let string_constructor = RuntimeValue::Function(
         FunctionReference::BuiltIn(BuiltIn {
-            op: |args, _, _, prototype| {
+            op: |args, thread, _, prototype| {
                 let prototype: Object<'a> = prototype.unwrap().clone().try_into()?;
                 let str_value: String = args[0]
                     .clone()
@@ -197,7 +212,7 @@ pub fn create_global<'a>() -> Object<'a> {
                     RuntimeValue::String(Rc::new(str_value), str_obj.clone()),
                 );
 
-                Ok(RuntimeValue::Object(str_obj))
+                Ok(Some(RuntimeValue::Object(str_obj)))
             },
             context: Some(Box::new(string_prototype.clone().into())),
             desired_args: 1,
@@ -216,7 +231,7 @@ pub fn create_global<'a>() -> Object<'a> {
     let math = Object::create();
     math.define_readonly_builtin(
         "pow",
-        |_args, _frame, _target, _context| Ok(RuntimeValue::Float(1.0)),
+        |_args, thread, _target, _context| Ok(Some(RuntimeValue::Undefined)),
         0,
     );
 

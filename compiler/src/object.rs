@@ -2,6 +2,7 @@ use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::ops::RuntimeFrame;
 use crate::result::JsResult;
 use crate::value::{BuiltIn, CustomFunctionReference, FunctionReference, RuntimeValue};
+use crate::vm::JsThread;
 use crate::{ExecutionError, InternalError};
 use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::Write;
 use std::rc::Rc;
+use std::thread::Thread;
 
 pub(crate) trait ObjectMethods<'a> {
     fn create() -> Object<'a>;
@@ -18,7 +20,7 @@ pub(crate) trait ObjectMethods<'a> {
     fn get<'b, 'c>(
         &self,
         key: Rc<String>,
-        frame: &'c mut RuntimeFrame<'a, 'b>,
+        frame: &'c mut JsThread<'a>,
         target: &RuntimeValue<'a>,
     ) -> JsResult<'a>;
     fn set(&self, key: Rc<String>, value: RuntimeValue<'a>);
@@ -32,7 +34,7 @@ pub(crate) trait ObjectMethods<'a> {
     fn get_borrowed<'b, 'c>(
         &self,
         key: &Rc<String>,
-        frame: &'c mut RuntimeFrame<'a, 'b>,
+        frame: &'c mut JsThread<'a>,
         target: &RuntimeValue<'a>,
     ) -> JsResult<'a>;
 }
@@ -77,7 +79,7 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
     fn get<'b, 'c>(
         &self,
         key: Rc<String>,
-        frame: &'c mut RuntimeFrame<'a, 'b>,
+        frame: &'c mut JsThread<'a>,
         target: &RuntimeValue<'a>,
     ) -> JsResult<'a> {
         self.get_borrowed(&key, frame, target)
@@ -126,9 +128,9 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
     fn get_borrowed<'b, 'c>(
         &self,
         key: &Rc<String>,
-        frame: &'c mut RuntimeFrame<'a, 'b>,
+        thread: &'c mut JsThread<'a>,
         target: &RuntimeValue<'a>,
-    ) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
+    ) -> JsResult<'a> {
         let b = self.borrow();
 
         if "prototype" == key.as_ref() {
@@ -141,21 +143,23 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
 
         match property {
             Some(Property::Value(value)) => Ok(value),
-            Some(Property::Complex {
-                getter: Some(FunctionReference::Custom(CustomFunctionReference { function, .. })),
-                ..
-            }) => function.execute(
-                None,
-                &mut Vec::new(),
-                0..0,
-                Some(frame.call_stack.clone()),
-                &frame.global_this,
-                target,
-            ),
+            // Some(Property::Complex {
+            //     getter: Some(FunctionReference::Custom(CustomFunctionReference { function, .. })),
+            //     ..
+            // }) => function.execute(
+            //     None,
+            //     &mut Vec::new(),
+            //     0..0,
+            //     Some(thread.call_stack.clone()),
+            //     &thread.global_this,
+            //     target,
+            // ),
             Some(Property::Complex {
                 getter: Some(FunctionReference::BuiltIn(function)),
                 ..
-            }) => function.apply(0, frame, target),
+            }) => Ok(function
+                .apply_return(0, thread, target)?
+                .unwrap_or(RuntimeValue::Undefined)),
             _ => Ok(RuntimeValue::Undefined),
         }
     }

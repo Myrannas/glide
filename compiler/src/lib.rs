@@ -18,4 +18,4 @@ pub use object::Object;
 pub use parser::{parse_input, ParsedModule};
 pub use primordials::create_global;
 pub use result::{ExecutionError, InternalError, StaticExecutionError, SyntaxError};
-pub use vm::Module;
+pub use vm::{JsThread, Module};

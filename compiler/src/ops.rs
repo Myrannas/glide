@@ -2,9 +2,9 @@ use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::object::{Object, ObjectMethods};
 use crate::primordials::make_type_error;
 use crate::result::ExecutionError;
-use crate::value::{make_string, CustomFunctionReference};
+use crate::value::CustomFunctionReference;
 use crate::value::{FunctionReference, Reference, RuntimeValue, StaticValue};
-use crate::vm::Function;
+use crate::vm::{Function, JsThread};
 use crate::InternalError;
 use log::trace;
 use std::cell::{Ref, RefCell};
@@ -107,7 +107,7 @@ struct ContextIter {
 }
 
 impl<'a, 'b> JsContext<'a> {
-    fn this(&self) -> Ref<RuntimeValue<'a>> {
+    pub(crate) fn this(&self) -> Ref<RuntimeValue<'a>> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
@@ -146,7 +146,6 @@ impl<'a, 'b> JsContext<'a> {
                 .as_ref()
                 .and_then(|parent| parent.capture(offset - 1, index));
         } else {
-            println!("\nCapture locals: {:?}", ctx.locals.get(index));
             ctx.locals.get(index).cloned()
         }
     }
@@ -164,7 +163,9 @@ impl<'a> CallStack {
     }
 
     fn iter(&self) -> ContextIter {
-        ContextIter { next: Some(Rc::new(self.clone())) }
+        ContextIter {
+            next: Some(Rc::new(self.clone())),
+        }
     }
 }
 
@@ -183,11 +184,9 @@ impl Iterator for ContextIter {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Instruction {
-    pub(crate) instr: for<'a, 'b, 'c> fn(
-        &Option<StaticValue>,
-        &'b mut RuntimeFrame<'a, 'c>,
-    ) -> Result<ControlFlow<'a>, ExecutionError<'a>>,
+    pub(crate) instr: for<'a, 'b> fn(&Option<StaticValue>, &'b mut JsThread<'a>),
     pub(crate) constant: Option<StaticValue>,
 }
 
@@ -253,42 +252,21 @@ impl Debug for Instruction {
     }
 }
 
-macro_rules! next {
-    ($e: expr, step) => {
-        Ok(ControlFlow::Step)
-    };
-    ($e: expr, ret) => {
-        Ok(ControlFlow::Return($e))
-    };
-    ($e: expr, call) => {
-        Ok(ControlFlow::Call($e))
-    };
-    ($e: expr) => {
-        $e
-    };
-}
-
 macro_rules! op {
-    ($i: ident ($v: ident, $frame: ident) $b: block $rr:ident) => (pub(crate) fn $i <'a, 'b, 'c>($v: &Option<StaticValue>, $frame: &'c mut RuntimeFrame<'a, 'b>) -> Result<ControlFlow<'a>, ExecutionError<'a>> {
-        let _rr = $b;
+    ($i: ident ($v: ident, $frame: ident) $b: block step) => (pub(crate) fn $i <'a, 'b, 'c>($v: &Option<StaticValue>, $frame: &'c mut JsThread<'a>) {
+        $b;
 
-        next!(_rr, $rr)
+        $frame.step();
     });
 
-    ($i: ident ($v: ident, $frame: ident) $b: block) => (pub(crate) fn $i <'a, 'b, 'c>($v: &Option<StaticValue>, $frame: &'c mut RuntimeFrame<'a, 'b>) -> Result<ControlFlow<'a>, ExecutionError<'a>> {
-        $b
+    ($i: ident ($frame: ident) $b: block step) => (pub(crate) fn $i <'a, 'b, 'c>(_: &Option<StaticValue>, $frame: &'c mut JsThread<'a>) {
+        $b;
+
+        $frame.step();
     });
 
-    ($i: ident ($frame: ident) $b: block $rr:ident) => (pub(crate) fn $i <'a, 'b, 'c>(_val: &Option<StaticValue>, $frame: &'c mut RuntimeFrame<'a, 'b>) -> Result<ControlFlow<'a>, ExecutionError<'a>> {
-        let _rr = $b;
-
-        next!(_rr, $rr)
-    });
-
-    ($i: ident $b: block $rr: ident) => (pub(crate) fn $i <'a, 'b, 'c>(val: &Option<StaticValue>, frame: &'c mut RuntimeFrame<'a, 'b>) -> ControlFlow<'a> {
-        $b
-
-        next!(_rr, $rr)
+    ($i: ident ($v: ident, $frame: ident) $b: block) => (pub(crate) fn $i <'a, 'b, 'c>($v: &Option<StaticValue>, $frame: &'c mut JsThread<'a>) {
+        $b;
     });
 }
 
@@ -298,8 +276,8 @@ macro_rules! numeric_op {
         let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
         // let l_value = l_ref.resolve();
-        let l_prim = l_ref.resolve(frame)?;
-        let r_prim = r_ref.resolve(frame)?;
+        let l_prim = resolve!(l_ref, frame);
+        let r_prim = resolve!(r_ref, frame);
 
         // no strings yet
 
@@ -316,8 +294,8 @@ macro_rules! numeric_comparison_op {
         let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
         // let l_value = l_ref.resolve();
-        let l_prim = l_ref.resolve(frame)?;
-        let r_prim = r_ref.resolve(frame)?;
+        let l_prim = resolve!(l_ref, frame);
+        let r_prim = resolve!(r_ref, frame);
 
         // no strings yet
 
@@ -334,8 +312,8 @@ macro_rules! logical_op {
         let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
         // let l_value = l_ref.resolve();
-        let l_prim = l_ref.resolve(frame)?;
-        let r_prim = r_ref.resolve(frame)?;
+        let l_prim = resolve!(l_ref, frame);
+        let r_prim = resolve!(r_ref, frame);
 
         // no strings yet
 
@@ -346,21 +324,39 @@ macro_rules! logical_op {
     } step););
 }
 
+macro_rules! resolve {
+    ($value:expr, $frame:ident) => (match $value.resolve($frame) {
+        Ok(value) => value,
+        Err(err) => {
+            $frame.throw(err);
+            return;
+        }
+    })
+}
+
+macro_rules! catch {
+    ($value:expr, $frame:ident) => (match $value {
+        Ok(value) => value,
+        Err(err) => {
+            $frame.throw(err);
+            return;
+        }
+    })
+}
+
 op!(add(val, frame) {
     let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
-    let l_prim = l_ref.resolve(frame)?;
-    let r_prim = r_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
+    let r_prim = resolve!(r_ref, frame);
     
-    println!("{:?} + {:?}", l_prim, r_prim);
-
     match l_prim {
         RuntimeValue::String(l_str, ..) => {
             let r_str: String = r_prim.into();
             let string = l_str.as_ref().to_owned() + &r_str; 
             
-            let str = make_string(string, frame);
+            let str = RuntimeValue::String(Rc::new(string), Object::create());
             frame.stack.push(str);
         },
         other => {
@@ -417,7 +413,7 @@ op!(increment(val, frame) {
         frame.stack.pop().expect("By")
     }).into();
     
-    let value = target.clone().resolve(frame)?;
+    let value = resolve!(target.clone(), frame);
     
     frame.stack.push(value.clone());
     
@@ -428,10 +424,10 @@ op!(increment(val, frame) {
 
 op!(strict_eq(val, frame) {
     let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let r_prim = r_ref.resolve(frame)?;
+    let r_prim = resolve!(r_ref, frame);
     
     let result = l_prim.strict_eq(&r_prim);
     // println!("{:?} === {:?} -> {}", l_prim, r_prim, result);
@@ -441,25 +437,25 @@ op!(strict_eq(val, frame) {
 
 op!(instance_of(val, frame) {
     let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let r_prim = r_ref.resolve(frame)?;
+    let r_prim = resolve!(r_ref, frame);
     
     if let RuntimeValue::Object(left) = l_prim {
         frame.stack.push(RuntimeValue::Boolean(false));
         Ok(ControlFlow::Step)
     } else {
-        Err(ExecutionError::throw(make_type_error(frame)?))
+        Err(ExecutionError::throw(catch!(make_type_error(frame), frame)))
     }
 } step);
 
 op!(eq(val, frame) {
  let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let r_prim = r_ref.resolve(frame)?;
+    let r_prim = resolve!(r_ref, frame);
     
     let result = l_prim.non_strict_eq(&r_prim, frame);
     // println!("{:?} == {:?} -> {}", l_prim, r_prim, result);
@@ -469,10 +465,10 @@ op!(eq(val, frame) {
 
 op!(not_strict_eq(val, frame) {
     let l_ref = frame.stack.pop().expect("Stack should have at two values to use !== operator");
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use !== operator");
-    let r_prim = r_ref.resolve(frame)?;
+    let r_prim = resolve!(r_ref, frame);
     
     let result = !l_prim.strict_eq(&r_prim);
     // println!("{:?} === {:?} -> {}", l_prim, r_prim, result);
@@ -482,10 +478,10 @@ op!(not_strict_eq(val, frame) {
 
 op!(ne(val, frame) {
  let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-    let r_prim = r_ref.resolve(frame)?;
+    let r_prim = resolve!(r_ref, frame);
     
     let result = !l_prim.non_strict_eq(&r_prim, frame);
     // println!("{:?} != {:?} -> {}", l_prim, r_prim, result);
@@ -498,15 +494,16 @@ op!(lor(val, frame) {
          let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
     let l_prim = l_ref.clone();
-    let l_prim = l_prim.resolve(frame)?;
+    let l_prim = resolve!(l_prim, frame);
 
     let r: bool = l_prim.into();
 
     if r {
         frame.stack.push(l_ref);
-        Ok(ControlFlow::Jump { chunk_index: *left })
+
+        frame.jump(*left);
     } else {
-        Ok(ControlFlow::Jump { chunk_index: *right })
+        frame.jump(*right);
     }
     } else {
         panic!("Cannot jump to block {:?}", val)
@@ -518,7 +515,7 @@ logical_op!(land(l, r) => l && r);
 op!(lnot(val, frame) {
    let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r: bool = l_prim.into();
     
@@ -528,7 +525,7 @@ op!(lnot(val, frame) {
 op!(neg(val, frame) {
    let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
     let r: f64 = l_prim.into();
     
@@ -538,9 +535,9 @@ op!(neg(val, frame) {
 op!(type_of(val, frame) {
    let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
-    let l_prim = l_ref.resolve(frame)?;
+    let l_prim = resolve!(l_ref, frame);
     
-    let str = make_string(match l_prim {
+    let str = RuntimeValue::String(Rc::new(match l_prim {
         RuntimeValue::Boolean(_) => "boolean".to_owned(),
         RuntimeValue::Null => "null".to_owned(),
         RuntimeValue::Object(_) => "object".to_owned(),
@@ -549,7 +546,7 @@ op!(type_of(val, frame) {
         RuntimeValue::Float(_) => "number".to_owned(),
         RuntimeValue::Undefined => "undefined".to_owned(),
         _ => "???".to_owned()
-    }, frame);
+    }), Object::create());
 
     frame.stack.push(str);
 } step);
@@ -563,25 +560,28 @@ op!(load(val, frame) {
 } step);
 
 op!(load_this(val, frame) {
-   frame.stack.push(frame.context.this().clone())
+    let this = frame.current_context().this().clone();
+   frame.stack.push(this);
 } step);
 
 op!(bind(val, frame) {
     let value = frame.stack.pop().expect("Expect a value to be present for assign");
     if let Some(StaticValue::Local(variable)) = val {
-        frame.context.write(*variable, value);
+        frame.current_context().write(*variable, value);
     } else {
         panic!("Bind value was incorrect {:?}", val);
     }
 } step);
 
 op!(ret(val, frame) {
-    if let Some(return_value) = val {
+    let return_value = if let Some(return_value) = val {
         return_value.to_runtime(frame)
     } else {
         frame.stack.pop().expect("Expect a value to be present for return")
-    }
-} ret);
+    };
+
+    frame.return_value(return_value);
+});
 
 op!(call(val, frame) {
     if let Some(StaticValue::Float(count)) = val {
@@ -596,31 +596,15 @@ op!(call(val, frame) {
             _ => RuntimeValue::Undefined
         };
 
-        println!("{:?}", target);
-
-        let function = match fn_value.clone().resolve(frame)? {
+        let function = match resolve!(fn_value.clone(), frame) {
             RuntimeValue::Function(FunctionReference::Custom(function), object) => {
-                function.clone()
+                frame.call(target, function, v, false);
             },
             RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
-                let result = function.apply(v, frame, &target)?;
-
-
-                frame.stack.push(result);
-
-                println!("Called builtin, result is {:?}", frame.stack);
-
-                return Ok(ControlFlow::Step)
+                function.apply(v, frame, &target);
             },
-            _ => return InternalError::new_stackless(format!("{} is not a function", fn_value)).into()
+            _ => frame.throw(InternalError::new_stackless(format!("{} is not a function", fn_value)))
         };
-
-        Ok(ControlFlow::Call {
-            function,
-            with_args: v as usize,
-            target,
-            new: false
-        })
     } else {
         panic!("Invalid call operator")
     }
@@ -632,29 +616,20 @@ op!(call_new(val, frame) {
 
         let fn_value = frame.stack.pop().expect("Expect a target");
 
-        let (function, prototype) = match fn_value.resolve(frame)? {
+        match resolve!(fn_value, frame) {
             RuntimeValue::Function(FunctionReference::Custom(function), object) => {
-                (function.clone(), object.borrow().prototype.clone())
+                let target = Object::create_named(function.function.name(), Some(object));
+
+                frame.call(target.into(), function, v, true);
             },
             RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
                 let obj = Object::create().into();
-                let result = function.apply(v, frame, &obj)?;
-                frame.stack.push(result);
-                return Ok(ControlFlow::Step)
+                return function.apply(v, frame, &obj);
             },
             v => {
-                return InternalError::new_stackless(format!("Uncaught type error: {:?} is not a function", v)).into()
+                return frame.throw(InternalError::new_stackless(format!("Uncaught type error: {:?} is not a function", v)));
             }
         };
-
-        let target = Object::create_named(function.function.name(), prototype);
-
-        Ok(ControlFlow::Call {
-            function,
-            with_args: v as usize,
-            target: target.into(),
-            new: true
-        })
     } else {
         panic!("Invalid call operator")
     }
@@ -672,7 +647,7 @@ op!(truncate(frame) {
 op!(cjmp(val, frame) {
     let conditional = frame.stack.pop().expect("Expected a value to be present for conditional jump");
 
-    let conditional_resolved = conditional.resolve(frame)?;
+    let conditional_resolved = resolve!(conditional, frame);
     let should_jump: bool = conditional_resolved.into();
 
     if let Some(StaticValue::Branch(left, right)) = val {
@@ -682,7 +657,7 @@ op!(cjmp(val, frame) {
             *right
         };
 
-        Ok(ControlFlow::Jump { chunk_index: next })
+        frame.jump(next);
     } else {
         panic!("Cannot jump to block {:?}", val)
     }
@@ -690,15 +665,15 @@ op!(cjmp(val, frame) {
 
 op!(jmp(val, frame) {
     if let Some(StaticValue::Jump(left)) = val {
-            Ok(ControlFlow::Jump { chunk_index: *left })
-        } else {
-            panic!("Cannot jump to block {:?}", val)
-        }
+        frame.jump(*left);
+    } else {
+        panic!("Cannot jump to block {:?}", val)
+    }
 });
 
 op!(set(val, frame) {
     let value = frame.stack.pop().expect("Need a value");
-    let resolved_value = value.resolve(frame)?.clone();
+    let resolved_value = resolve!(value, frame).clone();
 
     let attribute = val.clone().map(
         |value| value.to_runtime(frame)
@@ -706,15 +681,15 @@ op!(set(val, frame) {
         frame.stack.pop()
     }).expect("Need an attribute");
 
-    let target = frame.stack.pop().expect("Need an target").resolve(frame)?;
-    let obj: Object = target.resolve(frame)?
-        .try_into()?;
+    let target = resolve!(frame.stack.pop().expect("Need an target"), frame);
+    let obj: Object = catch!(resolve!(target, frame)
+        .try_into(), frame);
 
     if let RuntimeValue::String(str, ..) = attribute {        
         obj.set(str, resolved_value);
         // println!("{:?} {:?}", target, obj);
     } else {
-        return InternalError::new_stackless(format!("Cannot set attribute: {:?}", attribute)).into()
+        frame.throw(InternalError::new_stackless(format!("Cannot set attribute: {:?}", attribute)))
     };
     
 } step);
@@ -726,9 +701,8 @@ op!(get(val, frame) {
         frame.stack.pop()
     }).expect("Need an attribute");
 
-    let target = frame.stack.pop()
-        .expect("Need an target")
-        .resolve(frame)?;
+    let target = resolve!(frame.stack.pop()
+        .expect("Need an target"), frame);
 
     if let (obj, RuntimeValue::String(str, ..)) = (target, attribute) {
         frame.stack.push(RuntimeValue::Reference(
@@ -750,7 +724,7 @@ op!(get_null_safe(val, frame) {
     }).expect("Need an attribute");
 
     let target = frame.stack.pop().expect("Need an target");
-    let target = target.resolve(frame)?;
+    let target = resolve!(target, frame);
 
     if let (obj, RuntimeValue::String(str, ..)) = (target, attribute) {
         frame.stack.push(RuntimeValue::Reference(
@@ -771,5 +745,7 @@ op!(throw_value(val, frame) {
         frame.stack.pop()
     }).expect("Need an attribute");
 
-    Err(ExecutionError::throw(value))
+    frame.throw(value)
 });
+
+
