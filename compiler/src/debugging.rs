@@ -1,9 +1,9 @@
-use crate::value::RuntimeValue;
+use crate::value::{Reference, RuntimeValue};
 use colored::Colorize;
 use std::cmp::Ordering;
 use std::fmt::{Formatter, Result, Write};
 
-pub(crate) struct Renderer<'a, 'b> {
+pub struct Renderer<'a, 'b> {
     max_depth: usize,
     current_depth: usize,
     pub(crate) representation: Representation,
@@ -11,16 +11,17 @@ pub(crate) struct Renderer<'a, 'b> {
 }
 
 impl<'a, 'b> Renderer<'a, 'b> {
-    pub(crate) fn render(&mut self, object: &dyn DebugRepresentation) -> Result {
+    pub fn render(&mut self, object: &dyn DebugRepresentation) -> Result {
         match self.current_depth.cmp(&self.max_depth) {
-            Ordering::Equal => object.render(&mut Renderer::compact(self.formatter)),
+            Ordering::Equal | Ordering::Greater => {
+                object.render(&mut Renderer::compact(self.formatter))
+            }
             Ordering::Less => object.render(&mut Renderer {
                 max_depth: self.max_depth,
                 current_depth: self.current_depth + 1,
                 formatter: self.formatter,
                 representation: self.representation,
             }),
-            Ordering::Greater => Ok(()),
         }
     }
 
@@ -33,7 +34,7 @@ impl<'a, 'b> Renderer<'a, 'b> {
         }
     }
 
-    pub(crate) fn full(formatter: &'b mut Formatter<'a>) -> Self {
+    pub fn full(formatter: &'b mut Formatter<'a>) -> Self {
         Renderer {
             max_depth: 3,
             current_depth: 0,
@@ -111,14 +112,14 @@ impl<'a, 'b> Renderer<'a, 'b> {
     }
 }
 
-#[derive(Copy, Clone)]
-pub(crate) enum Representation {
+#[derive(Copy, Clone, PartialEq)]
+pub enum Representation {
     Compact,
     Full,
     Debug,
 }
 
-pub(crate) trait DebugRepresentation {
+pub trait DebugRepresentation {
     fn render(&self, renderer: &mut Renderer) -> Result;
 }
 
@@ -130,6 +131,8 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
             (.., RuntimeValue::Undefined) => render.literal("undefined"),
             (.., RuntimeValue::Null) => render.literal("null"),
             (.., RuntimeValue::Object(obj)) => render.render(obj),
+            (.., RuntimeValue::Function(_, obj)) => render.render(obj),
+            (.., RuntimeValue::String(str, ..)) => render.string_literal(str),
             (Representation::Debug, RuntimeValue::Reference(reference)) => {
                 render.start_internal("REF")?;
                 RuntimeValue::render(&reference.base, render)?;
@@ -143,8 +146,27 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
                 render.end_internal()?;
                 Ok(())
             }
+            (Representation::Compact, RuntimeValue::Reference(reference)) => match &*reference.base
+            {
+                RuntimeValue::Object(obj) => {
+                    render
+                        .formatter
+                        .write_fmt(format_args!(".{}", reference.name))?;
+
+                    Ok(())
+                }
+                RuntimeValue::Function(_, obj) => {
+                    render
+                        .formatter
+                        .write_fmt(format_args!(".{}", reference.name))?;
+
+                    Ok(())
+                }
+
+                value => panic!("Unsupported object type {:?}", value),
+            },
             (.., RuntimeValue::Float(value)) => render.literal(&format!("{}", value)),
-            _ => Ok(()),
+            other => panic!("Unsupported debug view"),
         }
     }
 }

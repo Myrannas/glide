@@ -1,14 +1,21 @@
+mod suite;
+
 extern crate anyhow;
 extern crate colored;
 extern crate compiler;
+extern crate serde;
+extern crate serde_yaml;
 
-use anyhow::{Error, Result};
+use crate::suite::{Negative, NegativeType, Phase, Suite, SuiteDetails};
+use anyhow::{Context, Error, Result};
 use colored::Colorize;
-use compiler::value::Object;
-use compiler::value::{JsObject, ObjectMethods, RuntimeValue};
-use compiler::{compile, parse_input, CompilerOptions, Module};
+use compiler::{
+    compile, create_global, parse_input, CompilerOptions, ExecutionError, Module, Object,
+    StaticExecutionError,
+};
+use std::env;
 use std::fs::{read_dir, read_to_string};
-use std::panic::catch_unwind;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
 fn bootstrap_harness<'a>() -> ModuleSet {
@@ -31,7 +38,7 @@ struct ModuleSet {
 }
 
 impl ModuleSet {
-    fn load<'a, 'b>(&'a self, value: &'b RuntimeValue<'a>) {
+    fn load<'a, 'b>(&'a self, value: &'b Object<'a>) {
         for module in self.modules.iter() {
             module.load(value);
         }
@@ -54,10 +61,15 @@ fn all_suites(path: PathBuf) -> std::io::Result<Vec<PathBuf>> {
     Ok(values)
 }
 
-fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<()> {
-    let test = read_to_string(suite).unwrap();
+enum Outcome {
+    Pass,
+    Skip,
+}
 
-    let test_module = parse_input(&test)?;
+fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<Outcome> {
+    let Suite { module, details } = Suite::parse(suite)?;
+
+    let harness = AssertUnwindSafe(harness);
 
     // let compiled = compile("assert.js", module, CompilerOptions::new()).unwrap();
     // let sta_compiled = compile("sta.js", sta_module, CompilerOptions::new()).unwrap();
@@ -71,31 +83,68 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<()> {
     // println!("{:#?}", global);
     //
 
+    if let Some(..) = details.features {
+        // panic!("{:?}", details);
+        return Ok(Outcome::Skip);
+    }
+
+    if let Some(..) = details.flags {
+        // panic!("{:?}", details);
+        return Ok(Outcome::Skip);
+    }
+
+    if let Some(Negative {
+        phase: Phase::Parse,
+        tpe: NegativeType::SyntaxError,
+    }) = details.negative
+    {
+        return match module {
+            Err(StaticExecutionError::SyntaxError(_)) => Ok(Outcome::Pass),
+            Ok(..) => Err(Error::msg("Expected a compilation error")),
+            Err(..) => Err(Error::msg("Expected a compilation error")),
+        };
+    }
+
+    let module = AssertUnwindSafe(module);
+
     match catch_unwind(|| {
-        let global = Object::create();
+        let global = create_global();
 
         harness.load(&global);
 
-        let test_compiled = compile("S8.3_A1_T1.js", test_module, CompilerOptions::new())
-            .expect("Compiling module");
-
-        test_compiled.load(&global).expect("Loading module");
+        match module.0?.load(&global) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+                Err(err).context(details)
+            }
+        }
     }) {
-        Ok(..) => Ok(()),
-        Err(..) => Err(Error::msg("Failed")),
+        Ok(Ok(..)) => Ok(()),
+        Ok(Err(error)) => Err(Error::msg(format!("{:?}", error))),
+        Err(error) => Err(Error::msg(format!("{:?}", error))),
     }?;
 
-    Ok(())
+    Ok(Outcome::Pass)
 }
 
 #[derive(PartialOrd, PartialEq)]
 enum SuiteResult {
     Success,
+    Skip,
     Failure,
+}
+
+struct TestResult {
+    result: SuiteResult,
+    name: String,
+    error: Option<String>,
 }
 
 fn main() {
     let harness = bootstrap_harness();
+    let args: Vec<String> = env::args().collect();
+    let pattern = args.get(1);
 
     let mut suites: Vec<PathBuf> = vec![
         PathBuf::from("./test262/test/language"),
@@ -107,23 +156,60 @@ fn main() {
     ]
     .into_iter()
     .flat_map(|f| all_suites(f).unwrap())
+    .filter(|p| {
+        if let Some(pattern) = pattern {
+            p.clone().to_str().unwrap().contains(pattern)
+        } else {
+            true
+        }
+    })
     .collect();
 
     suites.sort();
 
-    let mut results = Vec::new();
+    let mut results: Vec<TestResult> = Vec::new();
     for suite in suites {
         let suite_name = suite.to_str().unwrap().to_owned();
+
+        println!("Running suite {}", suite_name);
+
         match run_suite(suite.clone(), &harness) {
-            Ok(_) => results.push((SuiteResult::Success, suite_name)),
-            Err(_) => results.push((SuiteResult::Failure, suite_name)),
+            Ok(Outcome::Pass) => results.push(TestResult {
+                result: SuiteResult::Success,
+                name: suite_name,
+                error: None,
+            }),
+            Ok(Outcome::Skip) => results.push(TestResult {
+                result: SuiteResult::Skip,
+                name: suite_name,
+                error: None,
+            }),
+            Err(err) => results.push(TestResult {
+                result: SuiteResult::Failure,
+                name: suite_name,
+                error: Some(err.to_string()),
+            }),
         }
     }
 
-    for (result, suite) in results.iter() {
+    for TestResult {
+        result,
+        name,
+        error,
+    } in results.iter()
+    {
         match result {
-            SuiteResult::Success => println!("{}", suite.green()),
-            SuiteResult::Failure => println!("{}", suite.red()),
+            SuiteResult::Success => println!("{}", name.green()),
+            SuiteResult::Skip => {
+                // println!("{}", name.yellow())
+            }
+            SuiteResult::Failure => {
+                println!("{}", name.red());
+
+                if let Some(error) = error {
+                    println!("  {}", error.red());
+                }
+            }
         }
     }
 
@@ -131,14 +217,21 @@ fn main() {
         "{} suites succeeded",
         results
             .iter()
-            .filter(|f| f.0 == SuiteResult::Success)
+            .filter(|f| f.result == SuiteResult::Success)
             .count()
     );
     println!(
         "{} suites failed",
         results
             .iter()
-            .filter(|f| f.0 == SuiteResult::Failure)
+            .filter(|f| f.result == SuiteResult::Failure)
+            .count()
+    );
+    println!(
+        "{} suites skipped",
+        results
+            .iter()
+            .filter(|f| f.result == SuiteResult::Skip)
             .count()
     );
 

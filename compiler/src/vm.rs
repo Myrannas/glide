@@ -1,14 +1,14 @@
-use crate::compiler::Chunk;
+use crate::compiler::{Chunk, FrameLocals};
 use crate::debugging::{DebugRepresentation, Renderer};
-use crate::ops::{Context as JSContext, ContextAccess, ControlFlow, Instruction, RuntimeFrame};
-use crate::value::{FunctionReference, JsObject, RuntimeValue};
-use anyhow::{Context, Result};
+use crate::object::Object;
+use crate::ops::{CallStack, ControlFlow, Instruction, JsContext as JSContext, RuntimeFrame};
+use crate::result::{InternalError, JsResult};
+use crate::value::{make_arguments, CustomFunctionReference, FunctionReference, RuntimeValue};
 use log::trace;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::ops::Range;
 use std::rc::Rc;
-use thiserror::Error;
 
 #[derive(Debug)]
 pub struct Module {
@@ -16,20 +16,34 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn load<'a, 'b>(&'a self, global: &'b RuntimeValue<'a>) -> Result<(), ExecutionError<'a>> {
+    pub fn load<'a, 'b>(&'a self, global: &'b Object<'a>) -> JsResult<()> {
         let mut vec = Vec::with_capacity(4096);
         self.init
-            .execute(None, &mut vec, 0..0, global, &RuntimeValue::Undefined)?;
+            .execute(None, &mut vec, 0..0, None, global, &RuntimeValue::Undefined)?;
         Ok(())
     }
 }
 
-pub struct Function {
+pub(crate) struct FunctionInner {
     pub(crate) chunks: Vec<Chunk>,
-    pub stack_size: usize,
-    pub local_size: usize,
-    pub functions: Vec<Function>,
-    pub name: String,
+    pub(crate) stack_size: usize,
+    pub(crate) local_size: usize,
+    pub(crate) functions: Vec<Function>,
+    pub(crate) name: String,
+    pub(crate) locals: Rc<RefCell<FrameLocals>>,
+}
+
+impl From<FunctionInner> for Function {
+    fn from(inner: FunctionInner) -> Self {
+        Function {
+            inner: Rc::new(inner),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Function {
+    inner: Rc<FunctionInner>,
 }
 
 impl Debug for Function {
@@ -40,7 +54,7 @@ impl Debug for Function {
 
 impl DebugRepresentation for Function {
     fn render(&self, f: &mut Renderer) -> std::fmt::Result {
-        f.function(&self.name)?;
+        f.function(&self.inner.name)?;
 
         f.start_internal("FUNCTION")?;
 
@@ -48,7 +62,7 @@ impl DebugRepresentation for Function {
 
         f.new_line()?;
 
-        for (i, chunk) in self.chunks.iter().enumerate() {
+        for (i, chunk) in self.inner.chunks.iter().enumerate() {
             f.internal_index(i)?;
             f.new_line()?;
 
@@ -64,56 +78,89 @@ impl DebugRepresentation for Function {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ExecutionError<'a> {
-    #[error("Runtime error")]
-    Thrown(RuntimeValue<'a>),
-    #[error("Encountered an internal error")]
-    InternalError(&'a str),
+impl PartialEq for Function {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
 }
 
 impl Function {
-    pub(crate) fn execute<'a, 'b, 'c>(
-        &'a self,
-        parent: Option<Rc<RefCell<JSContext<'a>>>>,
+    pub fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    pub(crate) fn inner(&self) -> &FunctionInner {
+        &self.inner
+    }
+
+    pub(crate) fn child_function(&self, index: usize) -> &Function {
+        &self.inner.functions[index]
+    }
+
+    pub(crate) fn execute<'a, 'b, 'c, 'd, 'e>(
+        &'d self,
+        parent: Option<JSContext<'a>>,
         stack: &'b mut Vec<RuntimeValue<'a>>,
         arguments: Range<usize>,
-        global_this: &'c RuntimeValue<'a>,
+        call_stack: Option<Rc<CallStack>>,
+        global_this: &'c Object<'a>,
         this: &'c RuntimeValue<'a>,
-    ) -> Result<RuntimeValue<'a>, ExecutionError<'a>> {
+    ) -> JsResult<'a> {
+        // println!("{:#?}", self);
+
         let mut frame = RuntimeFrame::<'a, 'b> {
-            context: JSContext::with_parent(parent, self.local_size, this.clone()),
+            context: JSContext::with_parent(parent, self.inner.local_size, this.clone()),
             stack,
-            function: &self,
             global_this: global_this.clone(),
+            call_stack: Rc::new(CallStack {
+                parent: call_stack,
+                function: self.clone(),
+            }),
         };
 
-        for (write_to, read_from) in arguments.enumerate().take(self.local_size) {
+        for (write_to, read_from) in arguments.clone().enumerate().take(self.inner.local_size) {
             frame
                 .context
-                .write(write_to, frame.stack[read_from].clone())
+                .write(write_to + 1, frame.stack[read_from].clone())
         }
 
-        let mut chunk = &self.chunks[0];
+        frame.context.write(
+            0,
+            make_arguments(arguments.map(|i| frame.stack[i].clone()).collect()),
+        );
+
+        let mut current_chunk_index = 0;
+        let mut chunk = &self.inner.chunks[current_chunk_index];
         let mut chunk_length = chunk.instructions.len();
         let mut index = 0;
         while index < chunk_length {
             let Instruction { instr, constant } = &chunk.instructions[index];
 
-            trace!("result: {:?}", frame);
+            // println!("{:?} \n result: {:?}", &chunk.instructions[index], frame);
 
             let result = instr(constant, &mut frame);
 
             match result {
-                ControlFlow::Step => {
+                Ok(ControlFlow::Step) => {
                     index += 1;
                 }
-                ControlFlow::Return(value) => return Ok(value),
-                ControlFlow::Call {
+                Ok(ControlFlow::Return(value)) => {
+                    // let to_cleanup = frame.stack.len() - start_stack;
+                    //
+                    // if to_cleanup > 0 {
+                    //     for _ in 0..to_cleanup {
+                    //         frame.stack.pop();
+                    //     }
+                    // }
+
+                    return Ok(value);
+                }
+                Ok(ControlFlow::Call {
                     target,
-                    function: FunctionReference { function, context },
+                    function: CustomFunctionReference { function, context },
                     with_args,
-                } => {
+                    new,
+                }) => {
                     let stack_length = frame.stack.len();
                     let range = (stack_length - with_args)..stack_length;
 
@@ -121,26 +168,39 @@ impl Function {
                         Some(context),
                         frame.stack,
                         range,
+                        Some(frame.call_stack.clone()),
                         global_this,
                         &target,
                     )?;
 
-                    trace!("{} = {:#?}", function.name, result);
+                    trace!("{} = {:#?}", function.inner.name, result);
 
-                    frame.stack.push(result);
+                    if new {
+                        frame.stack.push(target)
+                    } else {
+                        frame.stack.push(result);
+                    }
+
+                    index += 1;
                 }
-                ControlFlow::Jump { chunk_index } => {
-                    chunk = &self.chunks[chunk_index];
+                Ok(ControlFlow::Jump { chunk_index }) => {
+                    chunk = &self.inner.chunks[chunk_index];
+                    current_chunk_index = chunk_index;
                     index = 0;
                     chunk_length = chunk.instructions.len();
                     continue;
                 }
-                ControlFlow::Throw(err) => {
-                    return Err(ExecutionError::Thrown(err));
-                }
+                Err(err) => return Err(err.fill_stack_trace(frame.call_stack.stack_trace())),
             }
         }
 
-        Err(ExecutionError::InternalError(&self.name))
+        InternalError::new(
+            format!(
+                "Execution error - hit end of function ({}:{})",
+                current_chunk_index, index
+            ),
+            frame.call_stack.stack_trace(),
+        )
+        .into()
     }
 }

@@ -10,3 +10,6 @@ edition = "2018"
 compiler = { path = "../compiler" }
 anyhow = "1.0.38"
 colored = "2.0.0"
+log = { version = "0.4", features = ["max_level_trace"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8"

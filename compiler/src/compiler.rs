@@ -1,20 +1,25 @@
 use crate::ops::{
-    add, bind, call, call_new, cjmp, div, get, get_null_safe, gt, gte, jmp, land, lnot, load,
-    load_this, lor, lt, lte, modulo, mul, neg, not_strict_eq, ret, set, strict_eq, sub,
-    throw_value, truncate, type_of, ControlFlow, Instruction, RuntimeFrame,
+    add, bind, call, call_new, cjmp, div, eq, get, get_null_safe, gt, gte, increment, instance_of,
+    jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo, mul, ne, not_strict_eq, ret,
+    rshift, rshift_u, set, strict_eq, sub, throw_value, truncate, type_of, ControlFlow,
+    Instruction, RuntimeFrame,
 };
+use crate::parser::ast::Statement::Break;
 use crate::parser::ast::{
-    Expression, FunctionStatement, IfStatement, ParsedModule, Reference, ReturnStatement,
-    Statement, ThrowStatement, TryStatement, VarStatement, WhileStatement,
+    BinaryOperator, BlockStatement, Expression, ForStatement, FunctionStatement, IfStatement,
+    ParsedModule, Reference, ReturnStatement, Statement, ThrowStatement, TryStatement,
+    UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
+use crate::result::{InternalError, JsResult, StaticJsResult, SyntaxError};
 use crate::value::StaticValue;
 use crate::value::StaticValue::Local;
-use crate::vm::{Function, Module};
-use anyhow::{bail, Context, Result};
+use crate::vm::{Function, FunctionInner, Module};
+use crate::ExecutionError;
+use anyhow::{bail, Context, Error, Result};
 use log::debug;
 use std::cell::RefCell;
 use std::rc::Rc;
-use StaticValue::Capture;
+use StaticValue::{Branch, Capture, Jump};
 
 pub struct Chunk {
     pub(crate) instructions: Vec<Instruction>,
@@ -29,15 +34,16 @@ impl Chunk {
 }
 
 #[derive(Debug, Clone)]
-struct FrameLocals<'a> {
-    locals: Vec<&'a str>,
-    parent: Option<&'a FrameLocals<'a>>,
+pub(crate) struct FrameLocals {
+    locals: Vec<String>,
+    parent: Option<Rc<RefCell<FrameLocals>>>,
 }
 
 struct Frame {
     chunks: Vec<Chunk>,
-    functions: Vec<Function>,
+    functions: Vec<FunctionInner>,
     local_size: usize,
+    locals: Rc<RefCell<FrameLocals>>,
 }
 
 trait Bucket<T> {
@@ -53,34 +59,32 @@ impl<T> Bucket<T> for Vec<T> {
 }
 
 impl Frame {
-    fn new_chunk(mut self, options: CompilerOptions, locals: FrameLocals) -> ChunkBuilder {
+    fn new_chunk(mut self, options: CompilerOptions) -> ChunkBuilder {
         let chunk = Chunk::new();
 
         let offset = self.chunks.allocate(chunk);
 
         ChunkBuilder {
             frame: self,
-            locals,
             chunk_index: offset,
             options,
         }
     }
 }
 
-struct ChunkBuilder<'a> {
+struct ChunkBuilder {
     frame: Frame,
-    locals: FrameLocals<'a>,
     chunk_index: usize,
     options: CompilerOptions,
 }
 
-impl<'a, 'b> ChunkBuilder<'a> {
+impl<'b> ChunkBuilder {
     fn append(
         mut self,
         instr: for<'c, 'd, 'e> fn(
             &Option<StaticValue>,
             &'e mut RuntimeFrame<'c, 'd>,
-        ) -> ControlFlow<'c>,
+        ) -> JsResult<'c, ControlFlow<'c>>,
     ) -> Self {
         self.frame.chunks[self.chunk_index]
             .instructions
@@ -97,7 +101,7 @@ impl<'a, 'b> ChunkBuilder<'a> {
         instr: for<'c, 'd, 'e> fn(
             &Option<StaticValue>,
             &'e mut RuntimeFrame<'c, 'd>,
-        ) -> ControlFlow<'c>,
+        ) -> JsResult<'c, ControlFlow<'c>>,
         constant: StaticValue,
     ) -> Self {
         self.frame.chunks[self.chunk_index]
@@ -110,15 +114,18 @@ impl<'a, 'b> ChunkBuilder<'a> {
         self
     }
 
-    fn allocate_local(&mut self, id: &'a str) -> usize {
+    fn allocate_local(&mut self, id: &str) -> usize {
         self.frame.local_size += 1;
-        self.locals.locals.allocate(id)
+        self.frame
+            .locals
+            .borrow_mut()
+            .locals
+            .allocate(id.to_owned())
     }
 
-    fn switch_to(mut self, chunk_index: usize) -> Self {
+    fn switch_to(self, chunk_index: usize) -> Self {
         ChunkBuilder {
             frame: self.frame,
-            locals: self.locals,
             chunk_index,
             options: self.options.clone(),
         }
@@ -131,9 +138,17 @@ enum Resolution {
     Unresolved,
 }
 
-impl<'a> FrameLocals<'a> {
+trait Locals {
+    fn resolve_identifier(&self, id: &str) -> Resolution;
+    fn allocate_identifier(&self, id: &str) -> usize;
+    fn new_root() -> Self;
+    fn child(&self) -> Self;
+}
+
+impl<'a> Locals for Rc<RefCell<FrameLocals>> {
     fn resolve_identifier(&self, id: &str) -> Resolution {
-        match (self.locals.iter().position(|v| *v == id), self.parent) {
+        let value = self.borrow();
+        match (value.locals.iter().position(|v| *v == id), &value.parent) {
             (Some(position), _) => Resolution::Resolved {
                 local: position as usize,
             },
@@ -149,25 +164,115 @@ impl<'a> FrameLocals<'a> {
         }
     }
 
-    fn new_root() -> FrameLocals<'a> {
-        FrameLocals {
-            locals: vec![],
-            parent: None,
-        }
+    fn allocate_identifier(&self, id: &str) -> usize {
+        self.borrow_mut().locals.allocate(id.to_owned())
     }
 
-    fn child(&self) -> FrameLocals<'_> {
-        FrameLocals {
+    fn new_root() -> Self {
+        Rc::new(RefCell::new(FrameLocals {
             locals: vec![],
-            parent: Some(self),
+            parent: None,
+        }))
+    }
+
+    fn child(&self) -> Self {
+        Rc::new(RefCell::new(FrameLocals {
+            locals: vec![],
+            parent: Some(self.clone()),
+        }))
+    }
+}
+
+impl BinaryOperator {
+    fn to_op(
+        &self,
+    ) -> for<'a, 'b, 'c, 'd> fn(
+        &Option<StaticValue>,
+        &'c mut RuntimeFrame<'a, 'b>,
+    ) -> JsResult<'a, ControlFlow<'a>> {
+        match self {
+            BinaryOperator::Add => add,
+            BinaryOperator::Sub => sub,
+            BinaryOperator::Mul => mul,
+            BinaryOperator::Div => div,
+            BinaryOperator::Mod => modulo,
+            BinaryOperator::GreaterThan => gt,
+            BinaryOperator::GreaterThanEqual => gte,
+            BinaryOperator::LessThan => lt,
+            BinaryOperator::LessThanEqual => lte,
+            BinaryOperator::NotEqualTo => ne,
+            BinaryOperator::EqualTo => eq,
+            BinaryOperator::StrictEqualTo => strict_eq,
+            BinaryOperator::NotStrictEqualTo => not_strict_eq,
+            BinaryOperator::LeftShift => lshift,
+            BinaryOperator::RightShift => rshift,
+            BinaryOperator::RightShiftUnsigned => rshift_u,
+            BinaryOperator::InstanceOf => instance_of,
+            BinaryOperator::LogicalOr => panic!("Lor is handled separately"),
+            BinaryOperator::LogicalAnd => panic!("Land is handled separately"),
         }
     }
 }
 
-impl<'a, 'c> ChunkBuilder<'a> {
+impl UnaryOperator {
+    fn to_op(
+        &self,
+    ) -> for<'a, 'b, 'c, 'd> fn(
+        &Option<StaticValue>,
+        &'c mut RuntimeFrame<'a, 'b>,
+    ) -> JsResult<'a, ControlFlow<'a>> {
+        match self {
+            UnaryOperator::TypeOf => type_of,
+            UnaryOperator::LogicalNot => lnot,
+            UnaryOperator::Sub => sub,
+            UnaryOperator::Add => todo!("Not implemented"),
+        }
+    }
+}
+
+enum BreakStack<'a, 'b> {
+    Root,
+    Child {
+        label: Option<&'a str>,
+        break_chunk: usize,
+        continue_chunk: usize,
+        parent: Option<&'b BreakStack<'a, 'b>>,
+    },
+}
+
+impl<'a, 'b> BreakStack<'a, 'b> {
+    fn new() -> BreakStack<'a, 'b> {
+        BreakStack::Root
+    }
+
+    fn child(&'b self, break_chunk: usize, continue_chunk: usize) -> BreakStack<'a, 'b> {
+        BreakStack::Child {
+            label: None,
+            break_chunk,
+            continue_chunk,
+            parent: Some(&self),
+        }
+    }
+
+    fn get_break(&self) -> StaticJsResult<usize> {
+        match self {
+            BreakStack::Root => SyntaxError::new("Illegal break statement").into(),
+            BreakStack::Child { break_chunk, .. } => Ok(*break_chunk),
+        }
+    }
+
+    fn get_continue(&self) -> StaticJsResult<usize> {
+        match self {
+            BreakStack::Root => SyntaxError::new("Illegal continue statement").into(),
+            BreakStack::Child { continue_chunk, .. } => Ok(*continue_chunk),
+        }
+    }
+}
+
+impl<'a, 'c> ChunkBuilder {
     #[inline]
     fn resolve_identifier(&self, id: &str) -> Resolution {
-        self.locals.resolve_identifier(id)
+        self.frame.locals.resolve_identifier(id)
     }
 
     #[inline]
@@ -181,69 +286,60 @@ impl<'a, 'c> ChunkBuilder<'a> {
         mut self,
         input: Expression<'a>,
         // options: CompilerOptions,
-    ) -> Result<Self> {
+    ) -> StaticJsResult<Self> {
         let chunk = match input {
-            Expression::Add(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(add),
-            Expression::Sub(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(sub),
-            Expression::Mul(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(mul),
-            Expression::Div(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(div),
-            Expression::Mod(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(modulo),
-            Expression::Float(value) => self.append_with_constant(load, StaticValue::Float(value)),
-            Expression::Boolean(value) => {
-                self.append_with_constant(load, StaticValue::Boolean(value))
-            }
-            Expression::LessThan(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(lt),
-            Expression::LessThanEqual(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(lte),
-            Expression::GreaterThan(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(gt),
-            Expression::GreaterThanEqual(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(gte),
-            Expression::LogicalOr(left, right) => {
+            Expression::BinaryExpression {
+                left,
+                right,
+                operator: BinaryOperator::LogicalOr,
+            } => {
                 let right_index = self.allocate_chunk();
                 let next_index = self.allocate_chunk();
 
                 self.compile_expression(*left)?
-                    .append_with_constant(lor, StaticValue::Branch(next_index, right_index))
+                    .append_with_constant(lor, Branch(next_index, right_index))
                     .switch_to(right_index)
                     .compile_expression(*right)?
-                    .append_with_constant(jmp, StaticValue::Jump(next_index))
+                    .append_with_constant(jmp, Jump(next_index))
                     .switch_to(next_index)
             }
-            Expression::LogicalAnd(left, right) => self
+            Expression::BinaryExpression {
+                left,
+                right,
+                operator: BinaryOperator::LogicalAnd,
+            } => self
                 .compile_expression(*left)?
                 .compile_expression(*right)?
                 .append(land),
-            Expression::LogicalNot(value) => self.compile_expression(*value)?.append(lnot),
-            Expression::Neg(value) => self.compile_expression(*value)?.append(neg),
-            Expression::TypeOf(value) => self.compile_expression(*value)?.append(type_of),
+            Expression::BinaryExpression {
+                left,
+                right,
+                operator,
+            } => self
+                .compile_expression(*right)?
+                .compile_expression(*left)?
+                .append(operator.to_op()),
+            Expression::UnaryExpression {
+                operator: UnaryOperator::Add,
+                ..
+            } => return InternalError::new_stackless("Add unary operator not implemented").into(),
+            Expression::UnaryExpression { value, operator } => {
+                self.compile_expression(*value)?.append(operator.to_op())
+            }
+            Expression::Float(value) => self.append_with_constant(load, StaticValue::Float(value)),
+            Expression::Boolean(value) => {
+                self.append_with_constant(load, StaticValue::Boolean(value))
+            }
             Expression::String(str) => {
                 self.append_with_constant(load, StaticValue::String(str.to_owned()))
             }
+            Expression::Inc { reference, .. } => self
+                .compile_expression(Expression::Reference(reference))?
+                .append_with_constant(increment, StaticValue::Float(1.0)),
+            Expression::Dec { reference, .. } => self
+                .compile_expression(Expression::Reference(reference))?
+                .append_with_constant(increment, StaticValue::Float(-1.0)),
+            Expression::Null => self.append_with_constant(load, StaticValue::Null),
             Expression::Assign {
                 assign_to: Reference::Id(id),
                 expression,
@@ -254,12 +350,12 @@ impl<'a, 'c> ChunkBuilder<'a> {
                     Resolution::Resolved { local } => {
                         next.append_with_constant(bind, StaticValue::Local(local))
                     }
-                    Resolution::Capture { .. } => {
-                        todo!("Can't mutate other contexts atm")
+                    Resolution::Capture { frame, local } => {
+                        next.append_with_constant(set, StaticValue::Capture { frame, local })
                     }
-                    Resolution::Unresolved => {
-                        bail!("Reference unresolved {}", id)
-                    }
+                    Resolution::Unresolved => next
+                        .append_with_constant(load, StaticValue::GlobalThis)
+                        .append_with_constant(set, StaticValue::String(id.to_string())),
                 }
             }
             Expression::Assign {
@@ -342,39 +438,34 @@ impl<'a, 'c> ChunkBuilder<'a> {
                     next.append_with_constant(get, StaticValue::String(accessor.to_string()))
                 }
             }
-            Expression::StrictEqualTo(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(strict_eq),
-            Expression::NotStrictEqualTo(left, right) => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(not_strict_eq),
             Expression::Function {
                 name: identifier,
-                statements,
+                statements: BlockStatement { statements },
                 arguments,
             } => {
                 let identifier = identifier.unwrap_or("(anonymous)");
-                let function = self.frame.functions.allocate(Function {
+                let function = self.frame.functions.allocate(FunctionInner {
                     chunks: vec![],
                     stack_size: 0,
                     local_size: 0,
                     functions: vec![],
                     name: identifier.to_owned(),
+                    locals: Locals::new_root(),
                 });
 
                 let mut next = self.append_with_constant(load, StaticValue::Function(function));
 
+                let parent_locals = next.frame.locals.clone();
                 let frame = &mut next.frame;
 
                 let Frame {
                     chunks,
                     functions,
                     local_size,
+                    locals,
                 } = compile_function(
                     identifier,
-                    &next.locals,
+                    parent_locals,
                     arguments,
                     statements,
                     DEFAULT_OPTIONS,
@@ -382,18 +473,28 @@ impl<'a, 'c> ChunkBuilder<'a> {
 
                 frame.functions[function].chunks = chunks;
                 frame.functions[function].local_size = local_size;
-                frame.functions[function].functions = functions;
+                frame.functions[function].functions =
+                    functions.into_iter().map(|v| v.into()).collect();
+                frame.functions[function].locals = locals;
 
                 next
             }
             Expression::Undefined => self.append_with_constant(load, StaticValue::Undefined),
-            node => panic!("Unsupported node {:#?}", node),
+            node => {
+                return InternalError::new_stackless(format!("Unexpected expression {:?}", node))
+                    .into()
+            }
         };
 
         Ok(chunk)
     }
 
-    fn compile_statement<'b>(mut self, input: Statement<'a>) -> Result<Self> {
+    fn compile_statement<'b>(
+        mut self,
+        input: Statement<'a>,
+        next_block: Option<usize>,
+        break_stack: &'b BreakStack<'a, 'b>,
+    ) -> StaticJsResult<Self> {
         let chunk = match input {
             Statement::Return(ReturnStatement { expression }) => {
                 if let Some(expression) = expression {
@@ -402,36 +503,89 @@ impl<'a, 'c> ChunkBuilder<'a> {
                     self.append_with_constant(ret, StaticValue::Undefined)
                 }
             }
-            Statement::Var(VarStatement {
-                identifier,
-                expression,
-            }) => {
-                let idx = self.allocate_local(identifier);
+            Statement::Var(VarStatement { declarations }) => {
+                let mut next = self;
 
-                let next = self
-                    .compile_expression(expression)?
-                    .append_with_constant(bind, StaticValue::Local(idx))
-                    .append(truncate);
+                for VarDeclaration {
+                    identifier,
+                    expression,
+                } in declarations
+                {
+                    let idx = next.allocate_local(identifier);
 
-                if !next.options.module {
-                    next.append_with_constant(load, StaticValue::GlobalThis)
-                        .append_with_constant(load, StaticValue::Local(idx))
-                        .append_with_constant(set, StaticValue::String(identifier.to_owned()))
-                } else {
-                    next
+                    next = next
+                        .compile_expression(expression.unwrap_or(Expression::Undefined))?
+                        .append_with_constant(bind, StaticValue::Local(idx))
+                        .append(truncate);
+
+                    if !next.options.module {
+                        next = next
+                            .append_with_constant(load, StaticValue::GlobalThis)
+                            .append_with_constant(load, StaticValue::Local(idx))
+                            .append_with_constant(set, StaticValue::String(identifier.to_owned()))
+                    }
                 }
+
+                next
+            }
+            Statement::For(ForStatement::VarList {
+                expression,
+                operation,
+                condition,
+                block,
+                vars,
+            }) => {
+                let condition_index = self.allocate_chunk();
+                let operation_index = self.allocate_chunk();
+                let block_index = self.allocate_chunk();
+                let next_index = self.allocate_chunk();
+
+                let mut next = self;
+
+                if let Some(vars) = vars {
+                    next = next.compile_statement(Statement::Var(vars), next_block, break_stack)?;
+                } else if let Some(expression) = expression {
+                    next = next.compile_expression(expression)?;
+                }
+
+                next = next
+                    .append_with_constant(jmp, Jump(condition_index))
+                    .switch_to(condition_index);
+
+                if let Some(condition) = condition {
+                    next = next
+                        .compile_expression(condition)?
+                        .append_with_constant(cjmp, Branch(block_index, next_index));
+                } else {
+                    next = next.append_with_constant(jmp, Jump(block_index));
+                }
+
+                let next_break_stack = &break_stack.child(next_index, condition_index);
+                next = next
+                    .switch_to(block_index)
+                    .compile_block(block, operation_index, next_break_stack)?
+                    .append_with_constant(jmp, Jump(operation_index))
+                    .switch_to(operation_index);
+
+                if let Some(operation) = operation {
+                    next = next.compile_expression(operation)?
+                }
+
+                next.append_with_constant(jmp, Jump(condition_index))
+                    .switch_to(next_index)
             }
             Statement::Function(FunctionStatement {
                 identifier,
                 arguments,
-                statements,
+                statements: BlockStatement { statements },
             }) => {
                 let local = self.allocate_local(identifier);
-                let function = self.frame.functions.allocate(Function {
+                let function = self.frame.functions.allocate(FunctionInner {
                     chunks: vec![],
                     stack_size: 0,
                     local_size: 0,
                     functions: vec![],
+                    locals: Locals::new_root(),
                     name: identifier.to_owned(),
                 });
 
@@ -442,19 +596,21 @@ impl<'a, 'c> ChunkBuilder<'a> {
                 if !next.options.module {
                     next = next
                         .append_with_constant(load, StaticValue::GlobalThis)
-                        .append_with_constant(load, StaticValue::Function(function))
+                        .append_with_constant(load, StaticValue::Local(local))
                         .append_with_constant(set, StaticValue::String(identifier.to_owned()));
                 }
 
+                let parent_locals = next.frame.locals.clone();
                 let frame = &mut next.frame;
 
                 let Frame {
                     chunks,
                     functions,
                     local_size,
+                    locals,
                 } = compile_function(
                     identifier,
-                    &next.locals,
+                    parent_locals,
                     arguments,
                     statements,
                     DEFAULT_OPTIONS,
@@ -462,7 +618,9 @@ impl<'a, 'c> ChunkBuilder<'a> {
 
                 frame.functions[function].chunks = chunks;
                 frame.functions[function].local_size = local_size;
-                frame.functions[function].functions = functions;
+                frame.functions[function].functions =
+                    functions.into_iter().map(From::from).collect();
+                frame.functions[function].locals = locals;
 
                 next
             }
@@ -485,16 +643,18 @@ impl<'a, 'c> ChunkBuilder<'a> {
 
                 let mut next = self
                     .compile_expression(condition)?
-                    .append_with_constant(cjmp, StaticValue::Branch(if_index, else_index));
+                    .append_with_constant(cjmp, Branch(if_index, else_index));
 
-                next = next
-                    .switch_to(if_index)
-                    .compile_block(true_block, next_index)?;
+                next =
+                    next.switch_to(if_index)
+                        .compile_block(true_block, next_index, break_stack)?;
 
                 if let Some(else_block) = false_block {
-                    next = next
-                        .switch_to(else_index)
-                        .compile_block(else_block, next_index)?
+                    next = next.switch_to(else_index).compile_block(
+                        else_block,
+                        next_index,
+                        break_stack,
+                    )?
                 };
 
                 return Ok(next.switch_to(next_index));
@@ -507,12 +667,14 @@ impl<'a, 'c> ChunkBuilder<'a> {
                 let block_index = self.allocate_chunk();
                 let next_index = self.allocate_chunk();
 
-                self.append_with_constant(jmp, StaticValue::Jump(condition_index))
+                let next_break_stack = &break_stack.child(next_index, condition_index);
+
+                self.append_with_constant(jmp, Jump(condition_index))
                     .switch_to(condition_index)
                     .compile_expression(condition)?
-                    .append_with_constant(cjmp, StaticValue::Branch(block_index, next_index))
+                    .append_with_constant(cjmp, Branch(block_index, next_index))
                     .switch_to(block_index)
-                    .compile_block(loop_block, condition_index)?
+                    .compile_block(loop_block, condition_index, next_break_stack)?
                     .switch_to(next_index)
             }
             Statement::Try(TryStatement {
@@ -524,27 +686,46 @@ impl<'a, 'c> ChunkBuilder<'a> {
                 let try_index = self.allocate_chunk();
                 let finally_index = self.allocate_chunk();
 
-                self.append_with_constant(jmp, StaticValue::Jump(try_index))
+                self.append_with_constant(jmp, Jump(try_index))
                     .switch_to(try_index)
-                    .compile_block(try_block, finally_index)?
+                    .compile_block(try_block, finally_index, break_stack)?
                     .switch_to(finally_index)
-                    .compile_block(finally_block.unwrap_or(vec![]), next_index)?
+                    .compile_block(
+                        finally_block.unwrap_or(BlockStatement { statements: vec![] }),
+                        next_index,
+                        break_stack,
+                    )?
+                    .switch_to(next_index)
             }
             Statement::ThrowStatement(ThrowStatement { expression }) => {
                 self.compile_expression(expression)?.append(throw_value)
+            }
+            Statement::Block(block) => {
+                self.compile_block(block, next_block.unwrap_or(usize::MAX), break_stack)?
+            }
+            Statement::Break => self.append_with_constant(jmp, Jump(break_stack.get_break()?)),
+            Statement::Continue => {
+                self.append_with_constant(jmp, Jump(break_stack.get_continue()?))
             }
         };
 
         Ok(chunk)
     }
 
-    fn compile_block<'b>(mut self, block: Vec<Statement<'a>>, next_index: usize) -> Result<Self> {
-        let next = block
+    fn compile_block<'b, B: Into<BlockStatement<'a>>>(
+        self,
+        statements: B,
+        next_block: usize,
+        break_stack: &'b BreakStack<'a, 'b>,
+    ) -> StaticJsResult<Self> {
+        let next = statements
+            .into()
+            .statements
             .into_iter()
             .try_fold(self, |builder, statement| {
-                builder.compile_statement(statement)
+                builder.compile_statement(statement, Some(next_block), break_stack)
             })?
-            .append_with_constant(jmp, StaticValue::Jump(next_index));
+            .append_with_constant(jmp, Jump(next_block));
 
         Ok(next)
     }
@@ -557,29 +738,28 @@ impl<'a, 'c> ChunkBuilder<'a> {
 const DEFAULT_OPTIONS: CompilerOptions = CompilerOptions { module: true };
 
 fn compile_function<'a>(
-    name: &'a str,
-    parent: &'a FrameLocals<'a>,
+    _name: &'a str,
+    parent: Rc<RefCell<FrameLocals>>,
     arguments: Vec<&'a str>,
     statements: Vec<Statement<'a>>,
     options: CompilerOptions,
-) -> Result<Frame> {
-    let mut frame = Frame {
+) -> StaticJsResult<Frame> {
+    let frame = Frame {
         chunks: vec![],
         functions: vec![],
-        local_size: arguments.len(),
+        local_size: arguments.len() + 1,
+        locals: parent.child(),
     };
 
-    let mut locals = parent.child();
+    frame.locals.allocate_identifier("arguments");
 
     for argument in arguments {
-        locals.locals.push(argument);
+        frame.locals.allocate_identifier(argument);
     }
 
-    let mut chunk = frame.new_chunk(options, locals);
+    let mut chunk = frame.new_chunk(options);
     for statement in statements.into_iter() {
-        chunk = chunk
-            .compile_statement(statement)
-            .with_context(|| format!("Error compiling function {}", name))?;
+        chunk = chunk.compile_statement(statement, None, &BreakStack::new())?;
     }
 
     chunk = chunk.append_with_constant(ret, StaticValue::Undefined);
@@ -600,25 +780,58 @@ impl CompilerOptions {
     }
 }
 
-pub fn compile(id: &str, input: ParsedModule, options: CompilerOptions) -> Result<Module> {
+pub struct Eval {
+    chunks: Vec<Chunk>,
+}
+
+pub fn compile_eval<'a>(
+    function: &Function,
+    _input_string: &str,
+    input: ParsedModule<'a>,
+) -> StaticJsResult<Function> {
+    let frame = Frame {
+        chunks: vec![],
+        functions: vec![],
+        local_size: 0,
+        locals: function.inner().locals.child(),
+    };
+
+    let mut chunk = frame.new_chunk(CompilerOptions { module: true });
+    for statement in input.block.into_iter() {
+        chunk = chunk.compile_statement(statement, None, &BreakStack::new())?;
+    }
+    chunk = chunk.append(ret);
+
+    let finalised = chunk.finalize();
+    Ok(FunctionInner {
+        locals: finalised.locals,
+        functions: finalised.functions.into_iter().map(From::from).collect(),
+        chunks: finalised.chunks,
+        local_size: finalised.local_size,
+        stack_size: 0,
+        name: "eval".to_owned(),
+    }
+    .into())
+}
+
+pub fn compile<'a>(
+    id: &'a str,
+    input: ParsedModule<'a>,
+    options: CompilerOptions,
+) -> StaticJsResult<Module> {
     debug!("{:#?}", input);
 
-    let frame = compile_function(
-        id,
-        &FrameLocals::new_root(),
-        Vec::new(),
-        input.block,
-        options,
-    )
-    .with_context(|| format!("Error compiling module {}", id))?;
+    let frame = compile_function(id, Locals::new_root(), Vec::new(), input.block, options)?;
 
     Ok(Module {
-        init: Function {
+        init: FunctionInner {
             chunks: frame.chunks,
             stack_size: 0,
             local_size: frame.local_size,
-            functions: frame.functions,
+            functions: frame.functions.into_iter().map(From::from).collect(),
+            locals: frame.locals,
             name: "(anonymous)".to_owned(),
-        },
+        }
+        .into(),
     })
 }

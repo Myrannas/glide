@@ -1,9 +1,12 @@
 mod compiler;
+mod debugging;
+mod object;
 mod ops;
 mod parser;
+mod primordials;
+mod result;
 pub mod value;
 mod vm;
-mod debugging;
 
 extern crate anyhow;
 extern crate log;
@@ -11,5 +14,8 @@ extern crate pretty_env_logger;
 extern crate thiserror;
 
 pub use compiler::{compile, CompilerOptions};
-pub use parser::parse_input;
+pub use object::Object;
+pub use parser::{parse_input, ParsedModule};
+pub use primordials::create_global;
+pub use result::{ExecutionError, InternalError, StaticExecutionError, SyntaxError};
 pub use vm::Module;

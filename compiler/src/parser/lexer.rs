@@ -2,7 +2,7 @@ use logos::{Lexer, Logos};
 
 #[derive(Logos, Debug, PartialEq, Copy, Clone)]
 pub enum Token<'a> {
-    #[regex(r"[0-9]+(\.[0-9]+)?", float)]
+    #[regex(r"-?[0-9]+(\.[0-9]+)?(e[+-][1-9][0-9]*)?", float)]
     Float(f64),
 
     #[regex(r"(true|false)", boolean)]
@@ -10,6 +10,12 @@ pub enum Token<'a> {
 
     #[token("+")]
     Add,
+
+    #[token("++")]
+    Inc,
+
+    #[token("--")]
+    Dec,
 
     #[token("-")]
     Sub,
@@ -56,14 +62,23 @@ pub enum Token<'a> {
     #[token("!==")]
     NotStrictEqualTo,
 
+    #[token(">>>")]
+    UnsignedRightShift,
+
+    #[token("<<")]
+    LeftShift,
+
+    #[token(">>")]
+    RightShift,
+
     #[token("function")]
     Function,
 
     #[token("typeof")]
     TypeOf,
 
-    #[token("undefined")]
-    Undefined,
+    #[token("instanceof")]
+    InstanceOf,
 
     #[token("null")]
     Null,
@@ -83,6 +98,9 @@ pub enum Token<'a> {
     #[token("let")]
     Let,
 
+    #[token("for")]
+    For,
+
     #[token("const")]
     Const,
 
@@ -91,6 +109,12 @@ pub enum Token<'a> {
 
     #[token("try")]
     Try,
+
+    #[token("break")]
+    Break,
+
+    #[token("continue")]
+    Continue,
 
     #[token("throw")]
     Throw,
@@ -155,9 +179,12 @@ pub enum Token<'a> {
     #[regex(r"[$a-zA-Z_][$a-zA-Z0-9_]*")]
     Id(&'a str),
 
-    #[regex(r"'[^'\n]*'", string)]
-    #[regex(r#""[^"\n]*""#, string)]
+    #[regex(r"'([^'\n]|(\\'))*'", string)]
+    #[regex(r#""([^"\n]|(\\"))*""#, string)]
     String(&'a str),
+
+    #[regex(r"`[^`\n]*`", string)]
+    TemplateString(&'a str),
 
     #[regex(r"//[^\n]*", logos::skip)]
     Comment,
