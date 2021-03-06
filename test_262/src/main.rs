@@ -292,7 +292,8 @@ fn main() {
         println!("{} new suites failed", failure_count);
         println!("{} new suites skipped", skip_count);
 
-        if failure_count > 0 || skip_count > 0 {
+        if !differences.is_empty() {
+            println!("Remember to update the ratchet with changes");
             std::process::exit(1);
         }
     } else {
