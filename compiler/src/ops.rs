@@ -1,5 +1,5 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::object::{Object, ObjectMethods};
+use crate::object::{JsObject};
 use crate::value::{FunctionReference, Reference, RuntimeValue, StaticValue};
 use crate::vm::{Function, JsThread};
 use crate::InternalError;
@@ -64,7 +64,7 @@ impl<'a, 'b> DebugRepresentation for JsContext<'a> {
 
 impl<'a, 'b> Debug for JsContext<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Renderer::debug(f, 3).render(self)
+        Renderer::debug(f, 3).render(self,)
     }
 }
 
@@ -178,6 +178,7 @@ impl DebugRepresentation for Instruction {
             i if i as usize == catch as usize => "catch",
             i if i as usize == uncatch as usize => "uncatch",
             i if i as usize == duplicate as usize => "duplicate",
+            i if i as usize == resolve as usize => "resolve",
             _ => panic!("Unknown instruction"),
         };
 
@@ -300,10 +301,10 @@ op!(add(frame) {
     
     match l_prim {
         RuntimeValue::String(l_str, ..) => {
-            let r_str: String = r_prim.into();
+            let r_str = catch!(frame, r_prim.to_string(frame));
             let string = l_str.as_ref().to_owned() + &r_str; 
             
-            let str = RuntimeValue::String(Rc::new(string), Object::create());
+            let str = RuntimeValue::String(Rc::new(string), JsObject::new());
             frame.stack.push(str);
         },
         other => {
@@ -459,7 +460,26 @@ op!(lor(val, frame) {
     }
 });
 
-logical_op!(land(l, r) => l && r);
+op!(land(val, frame) {
+    if let Some(StaticValue::Branch(left, right)) = val {
+         let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
+
+    let l_prim = l_ref.clone();
+    let l_prim = resolve!(l_prim, frame);
+
+    let r: bool = l_prim.clone().into();
+
+    if !r {
+        frame.stack.push(l_prim);
+
+        frame.jump(*left);
+    } else {
+        frame.jump(*right);
+    }
+    } else {
+        panic!("Cannot jump to block {:?}", val)
+    }
+});
 
 op!(lnot(val, frame) {
    let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
@@ -495,7 +515,7 @@ op!(type_of(val, frame) {
         RuntimeValue::Float(_) => "number".to_owned(),
         RuntimeValue::Undefined => "undefined".to_owned(),
         _ => "???".to_owned()
-    }), Object::create());
+    }), JsObject::new());
 
     frame.stack.push(str);
 } step);
@@ -523,7 +543,9 @@ op!(bind(val, frame) {
 } step);
 
 op!(ret(val, frame) {
-    let return_value = if let Some(return_value) = val {
+    let return_value = if frame.is_new() {
+        frame.current_context().this().clone()
+    } else if let Some(return_value) = val {
         return_value.to_runtime(frame)
     } else {
         frame.stack.pop().expect("Expect a value to be present for return")
@@ -531,6 +553,13 @@ op!(ret(val, frame) {
 
     frame.return_value(return_value);
 });
+
+op!(resolve(val, frame) {
+    if let Some(value) = frame.stack.pop() {
+        let value = resolve!(value, frame);
+        frame.stack.push(value);
+    };
+} step);
 
 op!(call(val, frame) {
     if let Some(StaticValue::Float(count)) = val {
@@ -547,10 +576,11 @@ op!(call(val, frame) {
 
         let function = match resolve!(fn_value.clone(), frame) {
             RuntimeValue::Function(FunctionReference::Custom(function), object) => {
-                frame.call(target, function, v, false);
+                frame.call(target, function, v, false, false);
             },
             RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
                 function.apply(v, frame, &target);
+                frame.step();
             },
             _ => frame.throw(frame.global_this.errors.new_type_error(format!("{} is not a function", fn_value)))
         };
@@ -567,13 +597,14 @@ op!(call_new(val, frame) {
 
         match resolve!(fn_value, frame) {
             RuntimeValue::Function(FunctionReference::Custom(function), object) => {
-                let target = Object::create_named(function.function.name(), Some(object));
+                let target = JsObject::new().with_name(function.function.name()).with_prototype(object);
 
-                frame.call(target.into(), function, v, true);
+                frame.call(target.into(), function, v, true, false);
             },
             RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
-                let obj = Object::create().into();
-                return function.apply(v, frame, &obj);
+                let obj = JsObject::new().into();
+                function.apply(v, frame, &obj);
+                frame.step();
             },
             v => {
                 return frame.throw(InternalError::new_stackless(format!("Uncaught type error: {:?} is not a function", v)));
@@ -633,7 +664,11 @@ op!(catch(val, frame) {
 });
 
 op!(uncatch(val, frame) {
-    frame.uncatch();
+    if let Some(StaticValue::Jump(chunk)) = val {
+        frame.uncatch(*chunk);
+    } else {
+        panic!("Invalid uncatch")
+    }
 });
 
 op!(set(val, frame) {
@@ -647,7 +682,7 @@ op!(set(val, frame) {
     }).expect("Need an attribute");
 
     let target = resolve!(frame.stack.pop().expect("Need an target"), frame);
-    let obj: Object = catch!(frame, resolve!(target, frame)
+    let obj: JsObject = catch!(frame, resolve!(target, frame)
         .try_into());
 
     if let RuntimeValue::String(str, ..) = attribute {        

@@ -319,25 +319,29 @@ fn parse_call<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>>
     }
 }
 
-fn parse_binary_expression<'a>(
-    input: &mut impl LexerUtils<'a>,
-    left: Expression<'a>,
+fn parse_binary_expression<'a, T: LexerUtils<'a>>(
+    input: &mut T,
+    next: impl Fn(&mut T) -> Result<'a, Expression<'a>>,
     matcher: impl Fn(Token) -> Option<BinaryOperator>,
 ) -> Result<'a, Expression<'a>> {
-    match input.lookahead() {
-        Some((token, _span)) => match matcher(token) {
-            Some(operator) => {
-                input.next();
+    let mut left = next(input)?;
 
-                Ok(Expression::BinaryExpression {
-                    left: Box::new(left),
-                    right: Box::new(parse_expression(input)?),
-                    operator,
-                })
-            }
-            None => Ok(left),
-        },
-        None => Ok(left),
+    loop {
+        match input.lookahead() {
+            Some((token, _span)) => match matcher(token) {
+                Some(operator) => {
+                    input.next();
+
+                    left = Expression::BinaryExpression {
+                        left: Box::new(left),
+                        right: Box::new(next(input)?),
+                        operator,
+                    }
+                }
+                None => return Ok(left),
+            },
+            None => return Ok(left),
+        }
     }
 }
 
@@ -410,9 +414,7 @@ fn parse_unary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
 }
 
 fn parse_commutative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_unary(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_unary, |token| match token {
         Token::Multiply => Some(BinaryOperator::Mul),
         Token::Divide => Some(BinaryOperator::Div),
         Token::Modulus => Some(BinaryOperator::Mod),
@@ -421,9 +423,7 @@ fn parse_commutative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressi
 }
 
 fn parse_associative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_commutative(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_commutative, |token| match token {
         Token::Add => Some(BinaryOperator::Add),
         Token::Sub => Some(BinaryOperator::Sub),
         _ => None,
@@ -431,9 +431,7 @@ fn parse_associative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressi
 }
 
 fn parse_shifts<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_associative(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_associative, |token| match token {
         Token::LeftShift => Some(BinaryOperator::LeftShift),
         Token::RightShift => Some(BinaryOperator::RightShift),
         Token::UnsignedRightShift => Some(BinaryOperator::RightShiftUnsigned),
@@ -442,9 +440,7 @@ fn parse_shifts<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a
 }
 
 fn parse_comparison<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_shifts(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_shifts, |token| match token {
         Token::GreaterThan => Some(BinaryOperator::GreaterThan),
         Token::GreaterThanEqual => Some(BinaryOperator::GreaterThanEqual),
         Token::LessThan => Some(BinaryOperator::LessThan),
@@ -455,9 +451,7 @@ fn parse_comparison<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressio
 }
 
 fn parse_equality<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_comparison(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_comparison, |token| match token {
         Token::EqualTo => Some(BinaryOperator::EqualTo),
         Token::NotEqualTo => Some(BinaryOperator::NotEqualTo),
         Token::StrictEqualTo => Some(BinaryOperator::StrictEqualTo),
@@ -467,18 +461,14 @@ fn parse_equality<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
 }
 
 fn parse_logical_and<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_equality(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_equality, |token| match token {
         Token::LogicalAnd => Some(BinaryOperator::LogicalAnd),
         _ => None,
     })
 }
 
 fn parse_logical_or<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let left = parse_logical_and(input)?;
-
-    parse_binary_expression(input, left, |token| match token {
+    parse_binary_expression(input, parse_logical_and, |token| match token {
         Token::LogicalOr => Some(BinaryOperator::LogicalOr),
         _ => None,
     })

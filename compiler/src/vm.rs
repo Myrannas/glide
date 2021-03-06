@@ -3,10 +3,11 @@ use crate::debugging::{DebugRepresentation, Renderer};
 use crate::ops::{Instruction, JsContext as JSContext, JsContext};
 use crate::primordials::GlobalThis;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
-use crate::value::{make_arguments, CustomFunctionReference, RuntimeValue};
+use crate::value::{make_arguments, CustomFunctionReference, FunctionReference, RuntimeValue};
 use crate::ExecutionError;
+use log::trace;
 use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -45,6 +46,8 @@ impl From<FunctionInner> for Function {
 pub struct Function {
     inner: Rc<FunctionInner>,
 }
+
+const END_OF_FRAME: usize = usize::MAX - 1;
 
 impl Debug for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -98,13 +101,25 @@ impl Function {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 struct StackFrame<'a> {
     current_function: Function,
     current_chunk_index: usize,
     index: usize,
     context: JsContext<'a>,
     stack_size: usize,
+    is_new: bool,
+}
+
+impl<'a> Debug for StackFrame<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{} ({}:{})",
+            self.current_function.name(),
+            self.current_chunk_index,
+            self.index
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -182,6 +197,7 @@ impl<'a> JsThread<'a> {
                     local_size,
                     RuntimeValue::Object(global_this.global_this.clone()),
                 ),
+                is_new: false,
             },
             global_this,
             error: None,
@@ -199,13 +215,43 @@ impl<'a> JsThread<'a> {
     }
 
     pub(crate) fn return_value(&mut self, value: RuntimeValue<'a>) {
+        trace!(
+            "return {:?} {:?} {:?}",
+            value,
+            self.current_frame,
+            self.call_stack.last()
+        );
+
         if let Some(parent) = self.call_stack.pop() {
             self.current_frame = parent;
-            self.stack.push(value);
         }
 
         self.stack.truncate(self.current_frame.stack_size);
-        self.current_frame.index += 1;
+        self.stack.push(value);
+
+        trace!("fixing catch stack {:?}", self.catch_stack);
+
+        while let Some(CatchFrame { stack_frame, .. }) = self.catch_stack.last() {
+            trace!(
+                "attempting to fix catch stack {} {}",
+                *stack_frame,
+                self.call_stack.len()
+            );
+            if self.call_stack.len() < *stack_frame {
+                trace!("Dropping catch");
+                self.catch_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        trace!("finished fixing catch stack {:?}", self.catch_stack);
+
+        self.current_frame.index += 1
+    }
+
+    pub(crate) fn is_new(&self) -> bool {
+        self.current_frame.is_new
     }
 
     pub(crate) fn jump(&mut self, chunk_index: usize) {
@@ -222,33 +268,94 @@ impl<'a> JsThread<'a> {
     }
 
     pub(crate) fn throw(&mut self, error: impl Into<ExecutionError<'a>>) {
-        let stack: Stack = self.into();
-        let error = error.into().fill_stack_trace(stack);
+        let mut error = error.into();
 
-        match (error, self.catch_stack.pop()) {
-            (ExecutionError::Thrown(error, ..), Some(CatchFrame { stack_frame, chunk })) => {
-                self.call_stack.truncate(stack_frame + 1);
-
-                if let Some(call) = self.call_stack.pop() {
-                    self.current_frame = call;
-                    self.stack.truncate(self.current_frame.stack_size);
-                }
-
-                self.current_frame.current_chunk_index = chunk;
-                self.current_frame.index = 0;
-                self.stack.push(error);
-            }
-            (error, ..) => {
-                self.call_stack.truncate(1);
-                if let Some(call) = self.call_stack.pop() {
-                    self.current_frame = call;
-                    self.stack.truncate(self.current_frame.stack_size);
-                }
-
-                self.current_frame.index = usize::MAX;
-                self.error = Some(error);
+        if let Some(limit) = self.cost_limit {
+            if limit > 0 {
+                self.cost_limit = Some(limit - 1)
+            } else {
+                error = InternalError::new_stackless("Hit execution limit").into();
             }
         }
+
+        let stack: Stack = self.into();
+        let error = error.fill_stack_trace(stack);
+
+        if matches!(&error, ExecutionError::InternalError(_))
+            || matches!(&error, ExecutionError::SyntaxError(_))
+            || self.catch_stack.is_empty()
+        {
+            self.call_stack.truncate(1);
+            if let Some(call) = self.call_stack.pop() {
+                self.current_frame = call;
+                self.stack.truncate(self.current_frame.stack_size);
+            }
+
+            self.current_frame.index = END_OF_FRAME;
+            self.error = Some(error);
+        } else if let ExecutionError::Thrown(error, stack) = error {
+            let CatchFrame { chunk, stack_frame } = self.catch_stack.last().unwrap();
+
+            trace!(
+                "Starting to unwind the stack\n{:?}\n{:?}\n{:?}",
+                self.current_frame,
+                self.catch_stack,
+                self.call_stack
+            );
+
+            while self.call_stack.len() > *stack_frame {
+                if let Some(call) = self.call_stack.pop() {
+                    self.current_frame = call;
+
+                    if self.current_frame.index == END_OF_FRAME {
+                        // this is a native frame that we would need to unwind via
+                        self.error = Some(ExecutionError::Thrown(error, stack));
+                        return;
+                    }
+
+                    self.stack.truncate(self.current_frame.stack_size);
+                }
+
+                trace!(
+                    "Unwinding\n{:?}\n{:?}\n{:?}",
+                    self.current_frame,
+                    self.catch_stack,
+                    self.call_stack
+                );
+            }
+
+            self.current_frame.current_chunk_index = *chunk;
+            self.current_frame.index = 0;
+
+            self.stack.push(error);
+        } else {
+            unreachable!("This should not be possible :(");
+        }
+
+        // match (error, self.catch_stack.pop()) {
+        //     (ExecutionError::Thrown(error, ..), Some(CatchFrame { stack_frame, chunk })) => {
+        //         self.call_stack.truncate(stack_frame + 1);
+        //
+        //         if let Some(call) = self.call_stack.pop() {
+        //             self.current_frame = call;
+        //             self.stack.truncate(self.current_frame.stack_size);
+        //         }
+        //
+        //         self.current_frame.current_chunk_index = chunk;
+        //         self.current_frame.index = 0;
+        //         self.stack.push(error);
+        //     }
+        //     (error, ..) => {
+        //         self.call_stack.truncate(1);
+        //         if let Some(call) = self.call_stack.pop() {
+        //             self.current_frame = call;
+        //             self.stack.truncate(self.current_frame.stack_size);
+        //         }
+        //
+        //         self.current_frame.index = usize::MAX;
+        //         self.error = Some(error);
+        //     }
+        // }
     }
 
     pub(crate) fn catch(&mut self, chunk: usize) {
@@ -256,11 +363,21 @@ impl<'a> JsThread<'a> {
             chunk,
             stack_frame: self.call_stack.len(),
         });
+
+        trace!("Catch\n{:?}", self.catch_stack);
+
         self.step();
     }
 
-    pub(crate) fn uncatch(&mut self) {
-        self.catch_stack.pop();
+    pub(crate) fn uncatch(&mut self, chunk: usize) {
+        let catch = self.catch_stack.pop().unwrap();
+
+        assert_eq!(self.call_stack.len(), catch.stack_frame);
+        assert_eq!(chunk, catch.chunk);
+
+        trace!("Uncatch\n{:?}\n{:?}", self.catch_stack, catch);
+
+        self.step();
     }
 
     fn next_instruction(&self) -> Instruction {
@@ -272,8 +389,10 @@ impl<'a> JsThread<'a> {
         target: RuntimeValue<'a>,
         CustomFunctionReference { function, context }: CustomFunctionReference<'a>,
         args: usize,
-        _new: bool,
+        new: bool,
+        native: bool,
     ) {
+        trace!("{} \n =====", function.name());
         if self.call_stack.len() > self.call_stack_limit {
             return self.throw(InternalError::new_stackless("Stack overflow"));
         }
@@ -305,7 +424,7 @@ impl<'a> JsThread<'a> {
 
         new_context.write(
             0,
-            make_arguments(arguments.map(|i| self.stack[i].clone()).collect()),
+            make_arguments(arguments.map(|_| self.stack.pop().unwrap()).collect()),
         );
 
         self.current_frame.stack_size = self.stack.len();
@@ -315,19 +434,31 @@ impl<'a> JsThread<'a> {
             index: 0,
             context: new_context,
             stack_size: 0,
+            is_new: new,
         };
 
-        self.call_stack
-            .push(std::mem::replace(&mut self.current_frame, new_frame));
+        let existing_frame = std::mem::replace(&mut self.current_frame, new_frame);
+        self.call_stack.push(existing_frame.clone());
+
+        if native {
+            let mut native_frame = existing_frame;
+            native_frame.index = END_OF_FRAME;
+            self.call_stack.push(native_frame);
+        }
     }
 
-    pub fn run(&mut self) -> JsResult<'a, ()> {
+    pub fn run(&mut self) -> JsResult<'a, RuntimeValue<'a>> {
         while self.current_frame.index < self.current_frame.get_chunk().instructions.len() {
+            trace!(
+                "{:3}:{:3} {:?}",
+                self.current_frame.current_chunk_index,
+                self.current_frame.index,
+                self.next_instruction(),
+            );
+
             let Instruction { instr, constant } = self.next_instruction();
 
-            // println!("{:?} \n result: {:?}", &chunk.instructions[index], frame);
-
-            // println!("{:?}", self.next_instruction());
+            // trace!("{:?} \n result: {:?}", &chunk.instructions[index], frame);
 
             instr(&constant, self);
         }
@@ -335,7 +466,34 @@ impl<'a> JsThread<'a> {
         if let Some(err) = std::mem::replace(&mut self.error, None) {
             Err(err)
         } else {
-            Ok(())
+            Ok(self.stack.pop().unwrap_or_default())
+        }
+    }
+
+    pub(crate) fn call_from_native(
+        &mut self,
+        target: RuntimeValue<'a>,
+        function_reference: FunctionReference<'a>,
+        args: usize,
+        new: bool,
+    ) -> JsResult<'a, RuntimeValue<'a>> {
+        match function_reference {
+            FunctionReference::BuiltIn(builtin) => {
+                let result = builtin.apply_return(args, self, &target)?;
+
+                Ok(result.unwrap_or_default())
+            }
+            FunctionReference::Custom(custom) => {
+                self.call(target, custom, args, new, true);
+
+                let result = self.run();
+
+                trace!("Returning from native call {:?}", result);
+
+                self.current_frame = self.call_stack.pop().unwrap();
+
+                result
+            }
         }
     }
 }

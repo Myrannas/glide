@@ -1,5 +1,5 @@
 use crate::debugging::{DebugRepresentation, Renderer};
-use crate::object::{JsObject, Object, ObjectMethods};
+use crate::object::JsObject;
 use crate::ops::JsContext;
 use crate::result::ExecutionError;
 use crate::result::JsResult;
@@ -105,7 +105,7 @@ impl<'a> StaticValue {
             StaticValue::Null => RuntimeValue::Null,
             StaticValue::Boolean(v) => RuntimeValue::Boolean(*v),
             StaticValue::Float(f) => RuntimeValue::Float(*f),
-            StaticValue::String(s) => RuntimeValue::String(Rc::new(s.to_owned()), Object::create()),
+            StaticValue::String(s) => RuntimeValue::String(Rc::new(s.to_owned()), JsObject::new()),
             StaticValue::Local(l) => frame.current_context().read(*l),
             StaticValue::Function(f) => {
                 let function = frame.current_function();
@@ -116,7 +116,9 @@ impl<'a> StaticValue {
                         function: child_function,
                         context: frame.current_context().clone(),
                     }),
-                    Object::create_named("Function", Some(Object::create())),
+                    JsObject::new()
+                        .with_name("Function")
+                        .with_prototype(JsObject::new()),
                 )
             }
             StaticValue::Capture {
@@ -130,7 +132,7 @@ impl<'a> StaticValue {
                 RuntimeValue::Internal(InternalValue::Branch(*left, *right))
             }
             StaticValue::Jump(left) => RuntimeValue::Internal(InternalValue::Jump(*left)),
-            StaticValue::Object => Object::create().into(),
+            StaticValue::Object => JsObject::new().into(),
             StaticValue::GlobalThis => RuntimeValue::Object(frame.global_this.global_this.clone()),
         }
     }
@@ -177,7 +179,7 @@ impl<'a> From<BuiltIn<'a>> for FunctionReference<'a> {
 
 impl<'a> From<BuiltIn<'a>> for RuntimeValue<'a> {
     fn from(builtin: BuiltIn<'a>) -> Self {
-        RuntimeValue::Function(FunctionReference::BuiltIn(builtin), Object::create())
+        RuntimeValue::Function(FunctionReference::BuiltIn(builtin), JsObject::new())
     }
 }
 
@@ -258,9 +260,9 @@ pub enum RuntimeValue<'a> {
     Null,
     Boolean(bool),
     Float(f64),
-    String(Rc<String>, Object<'a>),
-    Function(FunctionReference<'a>, Object<'a>),
-    Object(Object<'a>),
+    String(Rc<String>, JsObject<'a>),
+    Function(FunctionReference<'a>, JsObject<'a>),
+    Object(JsObject<'a>),
     Reference(Reference<'a>),
     Internal(InternalValue),
 }
@@ -284,9 +286,9 @@ impl<'a> RuntimeValue<'a> {
             (RuntimeValue::Boolean(b1), RuntimeValue::Boolean(b2)) => b1 == b2,
             (RuntimeValue::String(b1, ..), RuntimeValue::String(b2, ..)) => b1.eq(b2),
             (RuntimeValue::Float(b1), RuntimeValue::Float(b2)) => b1 == b2,
-            (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => Rc::ptr_eq(b1, b2),
+            (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => b1 == b2,
             (RuntimeValue::Function(f1, b1), RuntimeValue::Function(f2, b2)) => {
-                Rc::ptr_eq(b1, b2) && f1 == f2
+                b1 == b2 && f1 == f2
             }
             (RuntimeValue::Null, RuntimeValue::Null) => true,
             _ => false,
@@ -307,25 +309,26 @@ impl<'a> RuntimeValue<'a> {
                 true
             }
             (RuntimeValue::Float(b1), RuntimeValue::Float(b2)) => b1 == b2,
-            (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => Rc::ptr_eq(b1, b2),
+            (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => b1 == b2,
             (RuntimeValue::String(s1, ..), RuntimeValue::Object(b1)) => {
-                let string_value1: String = b1
+                let string_value1 = b1
                     .get(
                         Rc::new("___internal___string".to_owned()),
                         frame,
                         &RuntimeValue::Object(b1.clone()),
                     )
                     .unwrap()
-                    .into();
+                    .to_string(frame)
+                    .unwrap();
 
-                s1.eq(&Rc::new(string_value1))
+                s1.eq(&string_value1)
             }
             (RuntimeValue::Null, RuntimeValue::Null) => true,
             _ => false,
         }
     }
 
-    pub(crate) fn as_object(&self) -> JsResult<'a, &Object<'a>> {
+    pub(crate) fn as_object(&self) -> JsResult<'a, &JsObject<'a>> {
         match self {
             RuntimeValue::Object(obj) => Ok(obj),
             _ => InternalError::new_stackless("Unable to use as object").into(),
@@ -404,6 +407,44 @@ impl<'a> RuntimeValue<'a> {
             _ => InternalError::new_stackless("Unable to update").into(),
         }
     }
+
+    pub(crate) fn to_string(&self, thread: &mut JsThread<'a>) -> JsResult<'a, Rc<String>> {
+        let result = match self {
+            RuntimeValue::Float(v) => v.to_string(),
+            RuntimeValue::Boolean(bool) => bool.to_string(),
+            RuntimeValue::String(str, ..) => str.as_ref().to_owned(),
+            RuntimeValue::Undefined => "undefined".to_owned(),
+            RuntimeValue::Null => "null".to_owned(),
+            RuntimeValue::Object(obj) => {
+                let target = RuntimeValue::Object(obj.clone());
+                let to_string = obj.get(
+                    Rc::new("toString".to_owned()),
+                    thread,
+                    &RuntimeValue::Object(obj.clone()),
+                )?;
+
+                println!("{:?}\n{:?}", target, to_string);
+
+                return match to_string {
+                    RuntimeValue::Function(function, _) => thread
+                        .call_from_native(target, function, 0, false)?
+                        .to_string(thread),
+                    RuntimeValue::Undefined => Ok(Rc::new("[Object object]".to_owned())),
+                    _ => {
+                        let error = thread
+                            .global_this
+                            .errors
+                            .new_type_error("Cannot convert object to primitive value");
+
+                        return Err(error.into());
+                    }
+                };
+            }
+            value => todo!("Unsupported types {:?}", value),
+        };
+
+        return Ok(Rc::new(result));
+    }
 }
 
 impl<'a> Debug for RuntimeValue<'a> {
@@ -419,12 +460,10 @@ impl<'a> Display for RuntimeValue<'a> {
 }
 
 pub(crate) fn make_arguments(arguments: Vec<RuntimeValue>) -> RuntimeValue {
-    RuntimeValue::Object(Rc::new(RefCell::new(JsObject {
-        properties: None,
-        indexed_properties: Some(arguments),
-        name: Some("[Arguments]".into()),
-        prototype: None,
-    })))
+    JsObject::new()
+        .with_name("[Arguments]")
+        .with_indexed_properties(arguments)
+        .into()
 }
 
 #[derive(Clone, Debug)]
@@ -485,22 +524,22 @@ impl<'a> From<&RuntimeValue<'a>> for bool {
     }
 }
 
-impl<'a> From<RuntimeValue<'a>> for String {
-    fn from(value: RuntimeValue<'a>) -> Self {
-        (&value).into()
-    }
-}
-
-impl<'a> From<&RuntimeValue<'a>> for String {
-    fn from(value: &RuntimeValue<'a>) -> Self {
-        match value {
-            RuntimeValue::Float(v) => v.to_string(),
-            RuntimeValue::Boolean(bool) => bool.to_string(),
-            RuntimeValue::String(str, ..) => str.as_ref().to_owned(),
-            RuntimeValue::Undefined => "undefined".to_owned(),
-            RuntimeValue::Null => "null".to_owned(),
-            RuntimeValue::Object(_) => "[object Object]".to_owned(),
-            value => todo!("Unsupported types {:?}", value),
-        }
-    }
-}
+// impl<'a> From<RuntimeValue<'a>> for String {
+//     fn from(value: RuntimeValue<'a>) -> Self {
+//         (&value).into()
+//     }
+// }
+//
+// impl<'a> From<&RuntimeValue<'a>> for String {
+//     fn from(value: &RuntimeValue<'a>) -> Self {
+//         match value {
+//             RuntimeValue::Float(v) => v.to_string(),
+//             RuntimeValue::Boolean(bool) => bool.to_string(),
+//             RuntimeValue::String(str, ..) => str.as_ref().to_owned(),
+//             RuntimeValue::Undefined => "undefined".to_owned(),
+//             RuntimeValue::Null => "null".to_owned(),
+//             RuntimeValue::Object(_) => "[object Object]".to_owned(),
+//             value => todo!("Unsupported types {:?}", value),
+//         }
+//     }
+// }

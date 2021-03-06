@@ -71,7 +71,7 @@ enum Outcome {
     Skip,
 }
 
-fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<Outcome> {
+fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<Outcome> {
     let Suite { module, details } = Suite::parse(suite)?;
 
     let harness = AssertUnwindSafe(harness);
@@ -118,7 +118,7 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<Outcome> {
         harness.load(global.clone());
 
         let mut thread = JsThread::new(module.0?.init, global.clone());
-        thread.set_cost_limit(100000);
+        thread.set_cost_limit(cost_limit);
         match thread.run() {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -172,6 +172,13 @@ fn main() {
                 .short("x")
                 .long("commit"),
         )
+        .arg(
+            Arg::with_name("limit")
+                .help("Write the test results")
+                .short("l")
+                .long("limit")
+                .default_value("100000"),
+        )
         .get_matches();
 
     let pattern = matches.value_of("pattern");
@@ -203,24 +210,37 @@ fn main() {
     for suite in suites {
         let suite_name = suite.to_str().unwrap().to_owned();
 
-        // println!("Running suite {}", suite_name);
+        println!("Running suite {:80.80}", suite_name);
 
-        match run_suite(suite.clone(), &harness) {
-            Ok(Outcome::Pass) => results.push(TestResult {
-                result: SuiteResult::Success,
-                name: suite_name,
-                error: None,
-            }),
-            Ok(Outcome::Skip) => results.push(TestResult {
-                result: SuiteResult::Skip,
-                name: suite_name,
-                error: None,
-            }),
-            Err(err) => results.push(TestResult {
-                result: SuiteResult::Failure,
-                name: suite_name,
-                error: Some(err.to_string()),
-            }),
+        match run_suite(
+            suite.clone(),
+            &harness,
+            matches.value_of("limit").unwrap().parse().unwrap(),
+        ) {
+            Ok(Outcome::Pass) => {
+                println!("{}", "pass".green());
+                results.push(TestResult {
+                    result: SuiteResult::Success,
+                    name: suite_name,
+                    error: None,
+                })
+            }
+            Ok(Outcome::Skip) => {
+                println!("{}", "skip".yellow());
+                results.push(TestResult {
+                    result: SuiteResult::Skip,
+                    name: suite_name,
+                    error: None,
+                })
+            }
+            Err(err) => {
+                println!("{}", "fail".red());
+                results.push(TestResult {
+                    result: SuiteResult::Failure,
+                    name: suite_name,
+                    error: Some(err.to_string()),
+                })
+            }
         }
     }
 
@@ -278,6 +298,20 @@ fn main() {
         .iter()
         .filter(|f| f.result == SuiteResult::Failure)
         .count();
+
+    let total_success_count = previous
+        .values()
+        .filter(|f| f.result == SuiteResult::Success)
+        .count();
+
+    let total_count = previous.len();
+
+    let percent_passing = (total_success_count as f64 / total_count as f64) * 100.0;
+
+    println!(
+        "{} / {} passing ({:3.1} %)",
+        total_success_count, total_count, percent_passing
+    );
 
     if compare {
         println!("{} new suites succeeded", success_count);

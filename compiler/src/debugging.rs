@@ -1,16 +1,18 @@
 use crate::value::RuntimeValue;
+use crate::JsThread;
 use colored::Colorize;
 use std::cmp::Ordering;
 use std::fmt::{Formatter, Result, Write};
 
-pub struct Renderer<'a, 'b> {
+pub struct Renderer<'a, 'b, 'c, 'd> {
     max_depth: usize,
     current_depth: usize,
     pub(crate) representation: Representation,
     pub(crate) formatter: &'b mut Formatter<'a>,
+    thread: Option<&'d JsThread<'c>>,
 }
 
-impl<'a, 'b> Renderer<'a, 'b> {
+impl<'a, 'b, 'c, 'd> Renderer<'a, 'b, 'c, 'd> {
     pub fn render(&mut self, object: &dyn DebugRepresentation) -> Result {
         match self.current_depth.cmp(&self.max_depth) {
             Ordering::Equal | Ordering::Greater => {
@@ -21,6 +23,7 @@ impl<'a, 'b> Renderer<'a, 'b> {
                 current_depth: self.current_depth + 1,
                 formatter: self.formatter,
                 representation: self.representation,
+                thread: self.thread,
             }),
         }
     }
@@ -31,6 +34,7 @@ impl<'a, 'b> Renderer<'a, 'b> {
             current_depth: 1,
             formatter,
             representation: Representation::Compact,
+            thread: None,
         }
     }
 
@@ -40,6 +44,7 @@ impl<'a, 'b> Renderer<'a, 'b> {
             current_depth: 0,
             formatter,
             representation: Representation::Debug,
+            thread: None,
         }
     }
 
@@ -51,6 +56,11 @@ impl<'a, 'b> Renderer<'a, 'b> {
             internal_type.blue(),
             "| ".blue()
         ))
+    }
+
+    pub(crate) fn with_thread(mut self, thread: &'d JsThread<'c>) -> Self {
+        self.thread = Some(thread);
+        self
     }
 
     #[inline]
@@ -109,8 +119,26 @@ pub enum Representation {
     Debug,
 }
 
+// struct Debuggable<'a, 'b, A> {
+//     debuggable: &'a A,
+//     thread: &'a JsThread<'b>,
+// }
+//
+// impl DebugRepresentation for Debuggable<'a, 'b, A> {
+//     fn render(&self, renderer: &mut Renderer<'a, 'b, 'c, 'd>) -> Result {
+//         unimplemented!()
+//     }
+// }
+
 pub trait DebugRepresentation {
     fn render(&self, renderer: &mut Renderer) -> Result;
+
+    // fn debuggable<'a, 'b>(&'a self, thread: &'a JsThread<'b>) -> Debuggable<'a, 'b, &'a Self> {
+    //     Debuggable {
+    //         debuggable: self,
+    //         thread,
+    //     }
+    // }
 }
 
 impl<'a> DebugRepresentation for RuntimeValue<'a> {

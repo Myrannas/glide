@@ -10,81 +10,62 @@ use std::convert::TryInto;
 use std::fmt::Write;
 use std::rc::Rc;
 
-pub(crate) trait ObjectMethods<'a> {
-    fn create() -> Object<'a>;
-    fn with_prototype(prototype: Object<'a>) -> Object<'a>;
-    fn create_named<S>(name: S, prototype: Option<Object<'a>>) -> Object<'a>
-    where
-        S: Into<String>;
-    fn get<'b, 'c>(
-        &self,
-        key: Rc<String>,
-        frame: &'c mut JsThread<'a>,
-        target: &RuntimeValue<'a>,
-    ) -> JsResult<'a>;
-    fn set(&self, key: Rc<String>, value: RuntimeValue<'a>);
-    fn set_indexed(&self, key: usize, value: RuntimeValue<'a>);
-    fn define_property(
-        &self,
-        key: Rc<String>,
-        getter: Option<FunctionReference<'a>>,
-        setter: Option<FunctionReference<'a>>,
-    );
-    fn get_borrowed<'b, 'c>(
-        &self,
-        key: &Rc<String>,
-        frame: &'c mut JsThread<'a>,
-        target: &RuntimeValue<'a>,
-    ) -> JsResult<'a>;
+#[derive(Clone, Debug)]
+pub struct JsObject<'a> {
+    inner: Rc<RefCell<JsObjectInner<'a>>>,
+}
+
+#[derive(Clone, Debug)]
+struct JsObjectInner<'a> {
+    pub(crate) properties: Option<HashMap<Rc<String>, Property<'a>>>,
+    pub(crate) indexed_properties: Option<Vec<RuntimeValue<'a>>>,
+    pub(crate) name: Option<String>,
+    pub(crate) prototype: Option<JsObject<'a>>,
 }
 
 impl<'a> JsObject<'a> {
     fn get_property(&self, key: &Rc<String>) -> Option<Property<'a>> {
-        self.properties
+        self.inner
+            .borrow()
+            .properties
             .as_ref()
             .and_then(|p| p.get(key).cloned())
             .or_else(|| {
-                if let Some(prototype) = &self.prototype {
-                    prototype.borrow().get_property(key)
+                if let Some(prototype) = &self.inner.borrow().prototype {
+                    prototype.get_property(key)
                 } else {
                     None
                 }
             })
     }
-}
 
-impl<'a> ObjectMethods<'a> for Object<'a> {
-    fn create() -> Object<'a> {
-        Rc::new(RefCell::new(JsObject {
-            properties: None,
-            indexed_properties: None,
-            name: None,
-            prototype: None,
-        }))
+    pub fn new() -> Self {
+        JsObject {
+            inner: Rc::new(RefCell::new(JsObjectInner {
+                properties: None,
+                indexed_properties: None,
+                name: None,
+                prototype: None,
+            })),
+        }
     }
 
-    fn with_prototype(prototype: Object<'a>) -> Object<'a> {
-        Rc::new(RefCell::new(JsObject {
-            properties: None,
-            indexed_properties: None,
-            name: None,
-            prototype: Some(prototype),
-        }))
+    pub fn with_prototype(self, prototype: Self) -> Self {
+        self.inner.borrow_mut().prototype = Some(prototype);
+        self
     }
 
-    fn create_named<S>(name: S, prototype: Option<Object<'a>>) -> Object<'a>
-    where
-        S: Into<String>,
-    {
-        Rc::new(RefCell::new(JsObject {
-            properties: None,
-            indexed_properties: None,
-            name: Some(name.into()),
-            prototype,
-        }))
+    pub fn with_name(self, name: impl Into<String>) -> Self {
+        self.inner.borrow_mut().name = Some(name.into());
+        self
     }
 
-    fn get<'b, 'c>(
+    pub fn with_indexed_properties(self, properties: Vec<RuntimeValue<'a>>) -> Self {
+        self.inner.borrow_mut().indexed_properties = Some(properties.into());
+        self
+    }
+
+    pub fn get<'b, 'c>(
         &self,
         key: Rc<String>,
         frame: &'c mut JsThread<'a>,
@@ -93,16 +74,16 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
         self.get_borrowed(&key, frame, target)
     }
 
-    fn set(&self, key: Rc<String>, value: RuntimeValue<'a>) {
-        RefMut::map(self.borrow_mut(), |f| {
+    pub fn set(&self, key: Rc<String>, value: RuntimeValue<'a>) {
+        RefMut::map(self.inner.borrow_mut(), |f| {
             let inner = f.properties.get_or_insert_with(HashMap::new);
             inner.insert(key, Property::Value(value));
             inner
         });
     }
 
-    fn set_indexed(&self, key: usize, value: RuntimeValue<'a>) {
-        let mut object = self.borrow_mut();
+    pub fn set_indexed(&self, key: usize, value: RuntimeValue<'a>) {
+        let mut object = self.inner.borrow_mut();
 
         if let Some(indexed_properties) = &mut object.indexed_properties {
             match key.cmp(&indexed_properties.len()) {
@@ -120,13 +101,13 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
         }
     }
 
-    fn define_property(
+    pub(crate) fn define_property(
         &self,
         key: Rc<String>,
         getter: Option<FunctionReference<'a>>,
         setter: Option<FunctionReference<'a>>,
     ) {
-        RefMut::map(self.borrow_mut(), |f| {
+        RefMut::map(self.inner.borrow_mut(), |f| {
             let inner = f.properties.get_or_insert_with(HashMap::new);
             inner.insert(key, Property::Complex { getter, setter });
             inner
@@ -139,7 +120,7 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
         thread: &'c mut JsThread<'a>,
         target: &RuntimeValue<'a>,
     ) -> JsResult<'a> {
-        let b = self.borrow();
+        let b = self.inner.borrow();
 
         if "prototype" == key.as_ref() {
             if let Some(prototype) = &b.prototype {
@@ -147,7 +128,7 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
             }
         }
 
-        let property = b.get_property(key);
+        let property = self.get_property(key);
 
         match property {
             Some(Property::Value(value)) => Ok(value),
@@ -173,26 +154,38 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
     }
 }
 
-impl<'a> From<Object<'a>> for RuntimeValue<'a> {
-    fn from(obj: Object<'a>) -> Self {
+impl<'a> Default for JsObject<'a> {
+    fn default() -> Self {
+        JsObject::new()
+    }
+}
+
+impl<'a> From<JsObject<'a>> for RuntimeValue<'a> {
+    fn from(obj: JsObject<'a>) -> Self {
         RuntimeValue::Object(obj)
     }
 }
 
-impl<'a> TryInto<Object<'a>> for RuntimeValue<'a> {
+impl<'a> TryInto<JsObject<'a>> for RuntimeValue<'a> {
     type Error = ExecutionError<'a>;
 
-    fn try_into(self) -> JsResult<'a, Object<'a>> {
+    fn try_into(self) -> JsResult<'a, JsObject<'a>> {
         match self {
             RuntimeValue::Object(obj) => Ok(obj),
             RuntimeValue::Function(_, obj) => Ok(obj),
             RuntimeValue::String(_, obj) => Ok(obj),
-            _ => InternalError::new_stackless("Incorrect object type").into(),
+            value => {
+                InternalError::new_stackless(format!("Incorrect object type {:?}", value)).into()
+            }
         }
     }
 }
 
-pub type Object<'a> = Rc<RefCell<JsObject<'a>>>;
+impl<'a> PartialEq for JsObject<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum Property<'a> {
@@ -203,17 +196,9 @@ pub(crate) enum Property<'a> {
     },
 }
 
-#[derive(Clone, Debug)]
-pub struct JsObject<'a> {
-    pub(crate) properties: Option<HashMap<Rc<String>, Property<'a>>>,
-    pub(crate) indexed_properties: Option<Vec<RuntimeValue<'a>>>,
-    pub(crate) name: Option<String>,
-    pub(crate) prototype: Option<Object<'a>>,
-}
-
-impl<'a> DebugRepresentation for Object<'a> {
+impl<'a> DebugRepresentation for JsObject<'a> {
     fn render(&self, renderer: &mut Renderer) -> std::fmt::Result {
-        let value = self.borrow();
+        let value = self.inner.borrow();
 
         if let Some(name) = &value.name {
             renderer.formatter.write_fmt(format_args!("{} ", name))?;

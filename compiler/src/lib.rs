@@ -15,7 +15,7 @@ extern crate pretty_env_logger;
 extern crate thiserror;
 
 pub use compiler::{compile, CompilerOptions};
-pub use object::Object;
+pub use object::JsObject;
 pub use parser::{parse_input, ParsedModule};
 pub use primordials::GlobalThis;
 pub use result::{ExecutionError, InternalError, StaticExecutionError, SyntaxError};

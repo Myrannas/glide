@@ -1,8 +1,8 @@
 use crate::ops::{
     add, bind, call, call_new, catch, cjmp, div, duplicate, eq, get, get_null_safe, gt, gte,
     increment, instance_of, jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo, mul,
-    ne, not_strict_eq, ret, rshift, rshift_u, set, strict_eq, sub, throw_value, truncate, type_of,
-    uncatch, Instruction,
+    ne, not_strict_eq, resolve, ret, rshift, rshift_u, set, strict_eq, sub, throw_value, truncate,
+    type_of, uncatch, Instruction,
 };
 
 use crate::parser::ast::{
@@ -285,10 +285,19 @@ impl<'a, 'c> ChunkBuilder {
                 left,
                 right,
                 operator: BinaryOperator::LogicalAnd,
-            } => self
-                .compile_expression(*left)?
-                .compile_expression(*right)?
-                .append(land),
+            } => {
+                let right_index = self.allocate_chunk();
+                let next_index = self.allocate_chunk();
+
+                println!("{:?} && {:?}", left, right);
+
+                self.compile_expression(*left)?
+                    .append_with_constant(land, Branch(next_index, right_index))
+                    .switch_to(right_index)
+                    .compile_expression(*right)?
+                    .append_with_constant(jmp, Jump(next_index))
+                    .switch_to(next_index)
+            }
             Expression::BinaryExpression {
                 left,
                 right,
@@ -354,7 +363,10 @@ impl<'a, 'c> ChunkBuilder {
 
                 parameters
                     .into_iter()
-                    .try_fold(self, |next, expression| next.compile_expression(expression))?
+                    .try_fold(self, |next, expression| {
+                        next.compile_expression(expression)
+                            .map(|n| n.append(resolve))
+                    })?
                     .compile_expression(*expression)?
                     .append_with_constant(call, StaticValue::Float(args_len as f64))
             }
@@ -476,7 +488,7 @@ impl<'a, 'c> ChunkBuilder {
         input: Statement<'a>,
         next_block: Option<usize>,
         break_stack: &'b BreakStack,
-    ) -> StaticJsResult<Self> {
+    ) -> StaticJsResult<(Self, bool)> {
         let chunk = match input {
             Statement::Return(ReturnStatement { expression }) => {
                 if let Some(expression) = expression {
@@ -525,7 +537,14 @@ impl<'a, 'c> ChunkBuilder {
                 let mut next = self;
 
                 if let Some(vars) = vars {
-                    next = next.compile_statement(Statement::Var(vars), next_block, break_stack)?;
+                    let (next_builder, finalized) =
+                        next.compile_statement(Statement::Var(vars), next_block, break_stack)?;
+
+                    if finalized {
+                        return Ok((next_builder, finalized));
+                    } else {
+                        next = next_builder
+                    }
                 } else if let Some(expression) = expression {
                     next = next.compile_expression(expression)?;
                 }
@@ -545,7 +564,7 @@ impl<'a, 'c> ChunkBuilder {
                 let next_break_stack = &break_stack.child(next_index, condition_index);
                 next = next
                     .switch_to(block_index)
-                    .compile_block(block, operation_index, next_break_stack)?
+                    .compile_block(block, operation_index, next_break_stack, |c| c)?
                     .append_with_constant(jmp, Jump(operation_index))
                     .switch_to(operation_index);
 
@@ -627,19 +646,23 @@ impl<'a, 'c> ChunkBuilder {
                     .compile_expression(condition)?
                     .append_with_constant(cjmp, Branch(if_index, else_index));
 
-                next =
-                    next.switch_to(if_index)
-                        .compile_block(true_block, next_index, break_stack)?;
+                next = next.switch_to(if_index).compile_block(
+                    true_block,
+                    next_index,
+                    break_stack,
+                    |c| c,
+                )?;
 
                 if let Some(else_block) = false_block {
                     next = next.switch_to(else_index).compile_block(
                         else_block,
                         next_index,
                         break_stack,
+                        |c| c,
                     )?
                 };
 
-                return Ok(next.switch_to(next_index));
+                next.switch_to(next_index)
             }
             Statement::While(WhileStatement {
                 condition,
@@ -656,7 +679,7 @@ impl<'a, 'c> ChunkBuilder {
                     .compile_expression(condition)?
                     .append_with_constant(cjmp, Branch(block_index, next_index))
                     .switch_to(block_index)
-                    .compile_block(loop_block, condition_index, next_break_stack)?
+                    .compile_block(loop_block, condition_index, next_break_stack, |c| c)?
                     .switch_to(next_index)
             }
             Statement::Try(TryStatement {
@@ -674,36 +697,47 @@ impl<'a, 'c> ChunkBuilder {
                     .append_with_constant(jmp, Jump(try_index))
                     .switch_to(try_index);
 
-                if catch_block.is_some() {
+                let has_catch_block = catch_block.is_some();
+
+                if has_catch_block {
                     next = next.append_with_constant(catch, Jump(catch_index));
                 }
 
-                next = next.compile_block(try_block, finally_index, break_stack)?;
+                next = next.compile_block(try_block, finally_index, break_stack, |c| {
+                    if has_catch_block {
+                        c.append_with_constant(uncatch, Jump(catch_index))
+                    } else {
+                        c
+                    }
+                })?;
 
                 if let Some(catch_block) = catch_block {
-                    next = next.append(uncatch).switch_to(catch_index);
+                    next = next
+                        .switch_to(catch_index)
+                        .append_with_constant(uncatch, Jump(catch_index));
 
                     if let Some(binding) = catch_binding {
                         let binding = next.allocate_local(binding);
                         next = next.append_with_constant(bind, Local(binding));
                     }
 
-                    next = next.compile_block(catch_block, finally_index, break_stack)?;
+                    next = next.compile_block(catch_block, finally_index, break_stack, |c| c)?;
                 }
 
-                next.switch_to(finally_index)
-                    .compile_block(
-                        finally_block.unwrap_or(BlockStatement { statements: vec![] }),
-                        next_index,
-                        break_stack,
-                    )?
-                    .switch_to(next_index)
+                next = next.switch_to(finally_index).compile_block(
+                    finally_block.unwrap_or(BlockStatement { statements: vec![] }),
+                    next_index,
+                    break_stack,
+                    |c| c,
+                )?;
+
+                next.switch_to(next_index)
             }
             Statement::ThrowStatement(ThrowStatement { expression }) => {
                 self.compile_expression(expression)?.append(throw_value)
             }
             Statement::Block(block) => {
-                self.compile_block(block, next_block.unwrap_or(usize::MAX), break_stack)?
+                self.compile_block(block, next_block.unwrap_or(usize::MAX), break_stack, |c| c)?
             }
             Statement::Break => self.append_with_constant(jmp, Jump(break_stack.get_break()?)),
             Statement::Continue => {
@@ -711,7 +745,7 @@ impl<'a, 'c> ChunkBuilder {
             }
         };
 
-        Ok(chunk)
+        Ok((chunk, false))
     }
 
     fn compile_block<'b, B: Into<BlockStatement<'a>>>(
@@ -719,15 +753,23 @@ impl<'a, 'c> ChunkBuilder {
         statements: B,
         next_block: usize,
         break_stack: &'b BreakStack,
+        finalize: impl Fn(Self) -> Self,
     ) -> StaticJsResult<Self> {
-        let next = statements
-            .into()
-            .statements
-            .into_iter()
-            .try_fold(self, |builder, statement| {
-                builder.compile_statement(statement, Some(next_block), break_stack)
-            })?
-            .append_with_constant(jmp, Jump(next_block));
+        let mut next = self;
+        for statement in statements.into().statements.into_iter() {
+            let (next_builder, finalised) =
+                next.compile_statement(statement, Some(next_block), break_stack)?;
+
+            next = next_builder;
+
+            if finalised {
+                next = finalize(next);
+                break;
+            }
+        }
+
+        next = finalize(next);
+        next = next.append_with_constant(jmp, Jump(next_block));
 
         Ok(next)
     }
@@ -761,7 +803,9 @@ fn compile_function<'a>(
 
     let mut chunk = frame.new_chunk(options);
     for statement in statements.into_iter() {
-        chunk = chunk.compile_statement(statement, None, &BreakStack::new())?;
+        chunk = chunk
+            .compile_statement(statement, None, &BreakStack::new())?
+            .0;
     }
 
     chunk = chunk.append_with_constant(ret, StaticValue::Undefined);
@@ -802,7 +846,9 @@ pub fn compile_eval<'a>(
 
     let mut chunk = frame.new_chunk(CompilerOptions { module: true });
     for statement in input.block.into_iter() {
-        chunk = chunk.compile_statement(statement, None, &BreakStack::new())?;
+        chunk = chunk
+            .compile_statement(statement, None, &BreakStack::new())?
+            .0;
     }
     chunk = chunk.append(ret);
 
