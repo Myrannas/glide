@@ -7,6 +7,7 @@ use crate::parser::ast::{
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
+use crate::parser::strings::parse_string;
 use logos::{Source, Span};
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
@@ -210,12 +211,12 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
         Some((Token::This, ..)) => Ok(Expression::Reference(Reference::This)),
         Some((Token::Float(value), ..)) => Ok(Expression::Float(value)),
         Some((Token::String(value), ..)) => {
-            let decoded_value = value.slice(1..(value.len() - 1)).unwrap();
+            let decoded_value = parse_string(value.slice(1..(value.len() - 1)).unwrap());
             Ok(Expression::String(decoded_value))
         }
         Some((Token::TemplateString(value), ..)) => {
             let decoded_value = value.slice(1..(value.len() - 1)).unwrap();
-            Ok(Expression::String(decoded_value))
+            Ok(Expression::String(decoded_value.to_owned()))
         }
         Some((Token::Boolean(value), ..)) => Ok(Expression::Boolean(value)),
         Some((Token::OpenBrace, ..)) => parse_object_literal(input),

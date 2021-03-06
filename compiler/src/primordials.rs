@@ -1,6 +1,6 @@
 use crate::compiler::compile_eval;
 use crate::object::{JsObject, Object, ObjectMethods};
-use crate::ops::{ControlFlow, RuntimeFrame};
+use crate::ops::RuntimeFrame;
 use crate::parser::ast::Statement::Continue;
 use crate::result::{ExecutionError, JsResult};
 use crate::value::{BuiltIn, BuiltinFn, CustomFunctionReference, FunctionReference, RuntimeValue};
@@ -8,6 +8,7 @@ use crate::vm::JsThread;
 use crate::{parse_input, CompilerOptions, InternalError};
 use std::cell::RefCell;
 use std::convert::TryInto;
+use std::fmt::Error;
 use std::rc::Rc;
 
 fn object_constructor<'a, 'b>(
@@ -95,22 +96,6 @@ fn string_length<'a, 'b>(
         RuntimeValue::String(str, ..) => Ok(Some(RuntimeValue::Float(str.as_ref().len() as f64))),
         _ => InternalError::new_stackless("Attempted to call string length on non-string").into(),
     }
-}
-
-pub(crate) fn make_type_error<'a, 'b>(frame: &mut JsThread<'a>) -> JsResult<'a> {
-    Ok(RuntimeValue::Object(Rc::new(RefCell::new(JsObject {
-        prototype: Some(
-            frame
-                .global_this
-                .clone()
-                .get(Rc::new("TypeError".to_owned()), frame, &RuntimeValue::Null)?
-                .as_object()?
-                .clone(),
-        ),
-        indexed_properties: Some(vec![]),
-        properties: None,
-        name: None,
-    }))))
 }
 
 trait Helpers<'a> {
@@ -220,34 +205,184 @@ pub fn create_global<'a>() -> Object<'a> {
         string_prototype.clone(),
     );
 
-    string_prototype.define_readonly_value("constructor", string_constructor.clone());
-    string_prototype.define_readonly_builtin("length", string_length, 0);
-
     globals.define_readonly_value("String", string_constructor);
     globals.define_readonly_builtin("Object", object_constructor, 0);
     globals.define_readonly_builtin("Boolean", boolean_constructor, 0);
     globals.define_readonly_builtin("Array", array_constructor, 0);
 
-    let math = Object::create();
-    math.define_readonly_builtin(
-        "pow",
-        |_args, thread, _target, _context| Ok(Some(RuntimeValue::Undefined)),
-        0,
-    );
+    globals
+}
 
-    globals.define_readonly_value("Math", math);
-    globals.define_readonly_value(
-        "eval",
-        RuntimeValue::Function(
-            FunctionReference::BuiltIn(BuiltIn {
+#[derive(Clone)]
+pub(crate) struct Errors<'a> {
+    reference_error: Object<'a>,
+    syntax_error: Object<'a>,
+    type_error: Object<'a>,
+    error: Object<'a>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Primitives<'a> {
+    string: Object<'a>,
+}
+
+#[derive(Clone)]
+pub struct GlobalThis<'a> {
+    pub(crate) global_this: Object<'a>,
+    pub(crate) errors: Errors<'a>,
+    pub(crate) wrappers: Primitives<'a>,
+}
+
+impl<'a> GlobalThis<'a> {
+    pub fn new() -> GlobalThis<'a> {
+        let global_this = Object::create();
+
+        let math = Object::create();
+        math.define_readonly_builtin(
+            "pow",
+            |_args, thread, _target, _context| Ok(Some(RuntimeValue::Undefined)),
+            0,
+        );
+
+        global_this.define_readonly_value("Math", math);
+        global_this.define_readonly_value(
+            "eval",
+            RuntimeValue::Function(
+                FunctionReference::BuiltIn(BuiltIn {
+                    context: None,
+                    desired_args: 1,
+                    op: eval,
+                }),
+                Object::create(),
+            ),
+        );
+        global_this.define_readonly_value("undefined", RuntimeValue::Undefined);
+        global_this.define_readonly_value("NaN", f64::NAN);
+
+        let primitives = Primitives::init(&global_this);
+        let errors = Errors::init(&global_this);
+
+        GlobalThis {
+            global_this,
+            wrappers: primitives,
+            errors,
+        }
+    }
+}
+
+impl<'a> Primitives<'a> {
+    fn init(global_this: &Object<'a>) -> Primitives<'a> {
+        let string_prototype = Object::create();
+
+        string_prototype.define_readonly_value(
+            "constructor",
+            BuiltIn {
+                op: |args, _, _, ctx| {
+                    let value = args
+                        .get(0)
+                        .cloned()
+                        .unwrap()
+                        .unwrap_or(RuntimeValue::Undefined);
+                    let str: String = value.into();
+                    let prototype = ctx.unwrap().as_object()?.clone();
+
+                    Ok(Some(RuntimeValue::String(Rc::new(str), prototype)))
+                },
+                desired_args: 1,
+                context: Some(Box::new(RuntimeValue::Object(string_prototype.clone()))),
+            },
+        );
+        string_prototype.define_readonly_builtin("length", string_length, 0);
+
+        let string_function = BuiltIn {
+            op: |args, _, _, ctx| {
+                let value = args
+                    .get(0)
+                    .cloned()
+                    .unwrap()
+                    .unwrap_or(RuntimeValue::Undefined);
+                let str: String = value.into();
+                let prototype = ctx.unwrap().as_object()?.clone();
+
+                Ok(Some(RuntimeValue::String(Rc::new(str), prototype)))
+            },
+            desired_args: 1,
+            context: Some(Box::new(RuntimeValue::Object(string_prototype.clone()))),
+        };
+
+        global_this.define_readonly_value(
+            "String",
+            RuntimeValue::Function(string_function.into(), string_prototype.clone()),
+        );
+
+        Primitives {
+            string: string_prototype,
+        }
+    }
+}
+
+impl<'a> Errors<'a> {
+    pub(crate) fn new_reference_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
+        self.new_error(&self.reference_error, message.into()).into()
+    }
+
+    pub(crate) fn new_syntax_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
+        self.new_error(&self.syntax_error, message.into()).into()
+    }
+
+    pub(crate) fn new_type_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
+        self.new_error(&self.type_error, message.into()).into()
+    }
+
+    fn new_error(&self, prototype: &Object<'a>, message: impl Into<String>) -> Object<'a> {
+        let error = Object::with_prototype(prototype.clone());
+
+        error.set(
+            Rc::new("message".into()),
+            RuntimeValue::String(Rc::new(message.into()), Object::create()),
+        );
+
+        error
+    }
+
+    fn init(global_this: &Object<'a>) -> Errors<'a> {
+        let error = Object::create();
+
+        error.define_readonly_value(
+            "constructor",
+            BuiltIn {
                 context: None,
                 desired_args: 1,
-                op: eval,
-            }),
-            Object::create(),
-        ),
-    );
-    globals.define_readonly_value("undefined", RuntimeValue::Undefined);
+                op: |args, _, target, _| {
+                    let obj = target.as_object()?;
 
-    globals
+                    let message = args
+                        .get(0)
+                        .cloned()
+                        .unwrap()
+                        .unwrap_or(RuntimeValue::Undefined);
+
+                    obj.set(Rc::new("message".into()), message);
+
+                    Ok(None)
+                },
+            },
+        );
+
+        let reference_error = Object::with_prototype(error.clone());
+        let syntax_error = Object::with_prototype(error.clone());
+        let type_error = Object::with_prototype(error.clone());
+
+        global_this.define_readonly_value("ReferenceError", reference_error.clone());
+        global_this.define_readonly_value("SyntaxError", syntax_error.clone());
+        global_this.define_readonly_value("TypeError", type_error.clone());
+        global_this.define_readonly_value("Error", error.clone());
+
+        Errors {
+            syntax_error,
+            reference_error,
+            type_error,
+            error,
+        }
+    }
 }

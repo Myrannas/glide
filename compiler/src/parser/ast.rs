@@ -44,7 +44,7 @@ pub enum UnaryOperator {
 pub(crate) enum Expression<'a> {
     Float(f64),
     Boolean(bool),
-    String(&'a str),
+    String(String),
     Null,
     Undefined,
     NewWithArgs {

@@ -16,6 +16,6 @@ extern crate thiserror;
 pub use compiler::{compile, CompilerOptions};
 pub use object::Object;
 pub use parser::{parse_input, ParsedModule};
-pub use primordials::create_global;
+pub use primordials::GlobalThis;
 pub use result::{ExecutionError, InternalError, StaticExecutionError, SyntaxError};
 pub use vm::{JsThread, Module};

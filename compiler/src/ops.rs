@@ -1,6 +1,5 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::object::{Object, ObjectMethods};
-use crate::primordials::make_type_error;
 use crate::result::ExecutionError;
 use crate::value::CustomFunctionReference;
 use crate::value::{FunctionReference, Reference, RuntimeValue, StaticValue};
@@ -11,21 +10,6 @@ use std::cell::{Ref, RefCell};
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter, Write};
 use std::rc::Rc;
-
-#[derive(Debug)]
-pub enum ControlFlow<'a> {
-    Step,
-    Return(RuntimeValue<'a>),
-    Call {
-        target: RuntimeValue<'a>,
-        function: CustomFunctionReference<'a>,
-        with_args: usize,
-        new: bool,
-    },
-    Jump {
-        chunk_index: usize,
-    },
-}
 
 #[derive(Debug)]
 pub(crate) struct RuntimeFrame<'a, 'b> {
@@ -231,6 +215,9 @@ impl DebugRepresentation for Instruction {
             i if i as usize == rshift as usize => ">>",
             i if i as usize == lshift as usize => "<<",
             i if i as usize == increment as usize => "++",
+            i if i as usize == catch as usize => "catch",
+            i if i as usize == uncatch as usize => "uncatch",
+            i if i as usize == duplicate as usize => "duplicate",
             _ => panic!("Unknown instruction"),
         };
 
@@ -444,11 +431,13 @@ op!(instance_of(val, frame) {
     
     if let RuntimeValue::Object(left) = l_prim {
         frame.stack.push(RuntimeValue::Boolean(false));
-        Ok(ControlFlow::Step)
+        frame.step();
     } else {
-        Err(ExecutionError::throw(catch!(make_type_error(frame), frame)))
+        frame.throw(
+            frame.global_this.errors.new_type_error("Type error")
+        )
     }
-} step);
+});
 
 op!(eq(val, frame) {
  let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
@@ -603,7 +592,7 @@ op!(call(val, frame) {
             RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
                 function.apply(v, frame, &target);
             },
-            _ => frame.throw(InternalError::new_stackless(format!("{} is not a function", fn_value)))
+            _ => frame.throw(frame.global_this.errors.new_type_error(format!("{} is not a function", fn_value)))
         };
     } else {
         panic!("Invalid call operator")
@@ -634,6 +623,10 @@ op!(call_new(val, frame) {
         panic!("Invalid call operator")
     }
 });
+
+op!(duplicate(val, frame) {
+    frame.stack.push(frame.stack[frame.stack.len() - 1].clone())
+} step);
 
 op!(truncate(frame) {
     // let top = frame.stack.pop();
@@ -669,6 +662,18 @@ op!(jmp(val, frame) {
     } else {
         panic!("Cannot jump to block {:?}", val)
     }
+});
+
+op!(catch(val, frame) {
+    if let Some(StaticValue::Jump(left)) = val {
+        frame.catch(*left);
+    } else {
+        panic!("Cannot jump to block {:?}", val)
+    }
+});
+
+op!(uncatch(val, frame) {
+    frame.uncatch();
 });
 
 op!(set(val, frame) {

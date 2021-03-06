@@ -3,22 +3,26 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
 pub struct Stack {
-    entries: Vec<String>,
+    pub(crate) entries: Vec<StackTraceFrame>,
+}
+
+#[derive(Debug)]
+pub struct StackTraceFrame {
+    pub(crate) function: String,
+    pub(crate) chunk: usize,
+    pub(crate) offset: usize,
 }
 
 impl Display for Stack {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for entry in &self.entries {
-            f.write_fmt(format_args!("{}\n", entry))?;
+            f.write_fmt(format_args!(
+                "{} ({}:{})\n",
+                entry.function, entry.chunk, entry.offset
+            ))?;
         }
 
         Ok(())
-    }
-}
-
-impl From<Vec<String>> for Stack {
-    fn from(entries: Vec<String>) -> Self {
-        Stack { entries }
     }
 }
 

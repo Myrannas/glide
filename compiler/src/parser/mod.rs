@@ -1,6 +1,7 @@
 pub(crate) mod ast;
 mod hand_parser;
 mod lexer;
+mod strings;
 
 use crate::parser::hand_parser::pretty_print;
 use anyhow::{Context, Error, Result};

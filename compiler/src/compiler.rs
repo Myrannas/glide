@@ -1,8 +1,8 @@
 use crate::ops::{
-    add, bind, call, call_new, cjmp, div, eq, get, get_null_safe, gt, gte, increment, instance_of,
-    jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo, mul, ne, not_strict_eq, ret,
-    rshift, rshift_u, set, strict_eq, sub, throw_value, truncate, type_of, ControlFlow,
-    Instruction, RuntimeFrame,
+    add, bind, call, call_new, catch, cjmp, div, duplicate, eq, get, get_null_safe, gt, gte,
+    increment, instance_of, jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo, mul,
+    ne, not_strict_eq, ret, rshift, rshift_u, set, strict_eq, sub, throw_value, truncate, type_of,
+    uncatch, Instruction, RuntimeFrame,
 };
 use crate::parser::ast::Statement::Break;
 use crate::parser::ast::{
@@ -384,9 +384,15 @@ impl<'a, 'c> ChunkBuilder {
                 attributes
                     .into_iter()
                     .try_fold(next, |builder, (attr, expression)| {
-                        builder.compile_expression(expression).map(|builder| {
-                            builder.append_with_constant(set, StaticValue::String(attr.to_string()))
-                        })
+                        builder
+                            .append(duplicate)
+                            .compile_expression(expression)
+                            .map(|builder| {
+                                builder.append_with_constant(
+                                    set,
+                                    StaticValue::String(attr.to_string()),
+                                )
+                            })
                     })?
             }
             Expression::Reference(Reference::This) => self.append(load_this),
@@ -664,16 +670,36 @@ impl<'a, 'c> ChunkBuilder {
             Statement::Try(TryStatement {
                 try_block,
                 finally_block,
-                ..
+                catch_block,
+                catch_binding,
             }) => {
                 let next_index = self.allocate_chunk();
                 let try_index = self.allocate_chunk();
+                let catch_index = self.allocate_chunk();
                 let finally_index = self.allocate_chunk();
 
-                self.append_with_constant(jmp, Jump(try_index))
-                    .switch_to(try_index)
-                    .compile_block(try_block, finally_index, break_stack)?
-                    .switch_to(finally_index)
+                let mut next = self
+                    .append_with_constant(jmp, Jump(try_index))
+                    .switch_to(try_index);
+
+                if catch_block.is_some() {
+                    next = next.append_with_constant(catch, Jump(catch_index));
+                }
+
+                next = next.compile_block(try_block, finally_index, break_stack)?;
+
+                if let Some(catch_block) = catch_block {
+                    next = next.append(uncatch).switch_to(catch_index);
+
+                    if let Some(binding) = catch_binding {
+                        let binding = next.allocate_local(binding);
+                        next = next.append_with_constant(bind, Local(binding));
+                    }
+
+                    next = next.compile_block(catch_block, finally_index, break_stack)?;
+                }
+
+                next.switch_to(finally_index)
                     .compile_block(
                         finally_block.unwrap_or(BlockStatement { statements: vec![] }),
                         next_index,

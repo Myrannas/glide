@@ -14,6 +14,7 @@ use std::thread::Thread;
 
 pub(crate) trait ObjectMethods<'a> {
     fn create() -> Object<'a>;
+    fn with_prototype(prototype: Object<'a>) -> Object<'a>;
     fn create_named<S>(name: S, prototype: Option<Object<'a>>) -> Object<'a>
     where
         S: Into<String>;
@@ -61,6 +62,15 @@ impl<'a> ObjectMethods<'a> for Object<'a> {
             indexed_properties: None,
             name: None,
             prototype: None,
+        }))
+    }
+
+    fn with_prototype(prototype: Object<'a>) -> Object<'a> {
+        Rc::new(RefCell::new(JsObject {
+            properties: None,
+            indexed_properties: None,
+            name: None,
+            prototype: Some(prototype),
         }))
     }
 

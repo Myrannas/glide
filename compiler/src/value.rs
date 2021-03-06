@@ -1,6 +1,6 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::object::{JsObject, Object, ObjectMethods};
-use crate::ops::{ControlFlow, JsContext, RuntimeFrame};
+use crate::ops::{JsContext, RuntimeFrame};
 use crate::result::ExecutionError;
 use crate::result::JsResult;
 use crate::vm::{Function, JsThread};
@@ -132,7 +132,7 @@ impl<'a> StaticValue {
             }
             StaticValue::Jump(left) => RuntimeValue::Internal(InternalValue::Jump(*left)),
             StaticValue::Object => Object::create().into(),
-            StaticValue::GlobalThis => RuntimeValue::Object(frame.global_this.clone()),
+            StaticValue::GlobalThis => RuntimeValue::Object(frame.global_this.global_this.clone()),
         }
     }
 }
@@ -158,6 +158,8 @@ impl<'a> PartialEq for CustomFunctionReference<'a> {
 #[derive(Clone)]
 pub struct BuiltIn<'a> {
     pub(crate) op: BuiltinFn<'a>,
+
+    // Option<Box<..>> to prevent infinite sized RuntimeValues
     pub(crate) context: Option<Box<RuntimeValue<'a>>>,
     pub(crate) desired_args: usize,
 }
@@ -165,6 +167,18 @@ pub struct BuiltIn<'a> {
 impl<'a> PartialEq for BuiltIn<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.op as usize == other.op as usize && self.context == other.context
+    }
+}
+
+impl<'a> From<BuiltIn<'a>> for FunctionReference<'a> {
+    fn from(builtin: BuiltIn<'a>) -> Self {
+        FunctionReference::BuiltIn(builtin)
+    }
+}
+
+impl<'a> From<BuiltIn<'a>> for RuntimeValue<'a> {
+    fn from(builtin: BuiltIn<'a>) -> Self {
+        RuntimeValue::Function(FunctionReference::BuiltIn(builtin), Object::create())
     }
 }
 
@@ -350,6 +364,18 @@ impl<'a> RuntimeValue<'a> {
                     thread,
                     &RuntimeValue::Function(value, obj.clone()),
                 ),
+                RuntimeValue::Undefined => {
+                    let error: RuntimeValue<'a> = thread
+                        .global_this
+                        .errors
+                        .new_type_error(format!(
+                            "Cannot read property {} of undefined",
+                            reference.name
+                        ))
+                        .into();
+
+                    Err(error.into())
+                }
                 value => todo!("Unsupported type {:?}", value),
             },
             other => Ok(other),
@@ -469,7 +495,7 @@ impl<'a> From<&RuntimeValue<'a>> for String {
             RuntimeValue::String(str, ..) => str.as_ref().to_owned(),
             RuntimeValue::Undefined => "undefined".to_owned(),
             RuntimeValue::Null => "null".to_owned(),
-            RuntimeValue::Object(..) => "[object Object]".to_owned(),
+            RuntimeValue::Object(obj) => "[object Object]".to_owned(),
             value => todo!("Unsupported types {:?}", value),
         }
     }

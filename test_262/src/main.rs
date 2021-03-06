@@ -10,7 +10,7 @@ use crate::suite::{Negative, NegativeType, Phase, Suite, SuiteDetails};
 use anyhow::{Context, Error, Result};
 use colored::Colorize;
 use compiler::{
-    compile, create_global, parse_input, CompilerOptions, ExecutionError, JsThread, Module, Object,
+    compile, parse_input, CompilerOptions, ExecutionError, GlobalThis, JsThread, Module, Object,
     StaticExecutionError,
 };
 use std::env;
@@ -38,9 +38,11 @@ struct ModuleSet {
 }
 
 impl ModuleSet {
-    fn load<'a, 'b>(&'a self, global_this: Object<'a>) {
+    fn load<'a>(&'a self, global_this: GlobalThis<'a>) {
         for module in self.modules.iter() {
-            JsThread::new(module.init.clone(), global_this.clone()).run();
+            JsThread::new(module.init.clone(), global_this.clone())
+                .run()
+                .unwrap();
         }
     }
 }
@@ -108,11 +110,12 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<Outcome> {
     let module = AssertUnwindSafe(module);
 
     match catch_unwind(|| {
-        let global = create_global();
+        let global = GlobalThis::new();
 
         harness.load(global.clone());
 
         let mut thread = JsThread::new(module.0?.init, global.clone());
+        thread.set_cost_limit(100000);
         match thread.run() {
             Ok(_) => Ok(()),
             Err(err) => {
