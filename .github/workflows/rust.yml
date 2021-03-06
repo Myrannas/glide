@@ -16,5 +16,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+      with:
+        submodules: 'true'
     - name: Build
-      run: cd test_262 && cargo run
+      run: cargo build --release && cd ./test_262/ && ../target/release/test_262
