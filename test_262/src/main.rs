@@ -17,7 +17,7 @@ use compiler::{
     StaticExecutionError,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -228,7 +228,7 @@ fn main() {
     let commit = matches.is_present("commit");
     let input = read_to_string("./target/results.json").unwrap_or_else(|_| "{}".to_owned());
 
-    let mut previous: HashMap<_, _> = serde_json::from_str(&input).unwrap_or_default();
+    let mut previous: BTreeMap<_, _> = serde_json::from_str(&input).unwrap_or_default();
 
     let differences: Vec<TestResult> = results
         .into_iter()
@@ -249,7 +249,7 @@ fn main() {
     if commit {
         write(
             "./target/results.json",
-            serde_json::to_string(&previous).unwrap(),
+            serde_json::to_string_pretty(&previous).unwrap(),
         )
         .unwrap();
     }
