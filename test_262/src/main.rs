@@ -1,20 +1,25 @@
 mod suite;
 
 extern crate anyhow;
+extern crate clap;
 extern crate colored;
 extern crate compiler;
 extern crate serde;
+extern crate serde_json;
 extern crate serde_yaml;
 
 use crate::suite::{Negative, NegativeType, Phase, Suite, SuiteDetails};
 use anyhow::{Context, Error, Result};
+use clap::{App, Arg};
 use colored::Colorize;
 use compiler::{
     compile, parse_input, CompilerOptions, ExecutionError, GlobalThis, JsThread, Module, Object,
     StaticExecutionError,
 };
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
-use std::fs::{read_dir, read_to_string};
+use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
@@ -132,13 +137,14 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet) -> Result<Outcome> {
     Ok(Outcome::Pass)
 }
 
-#[derive(PartialOrd, PartialEq)]
+#[derive(PartialOrd, PartialEq, Serialize, Deserialize, Clone)]
 enum SuiteResult {
     Success,
     Skip,
     Failure,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct TestResult {
     result: SuiteResult,
     name: String,
@@ -146,15 +152,37 @@ struct TestResult {
 }
 
 fn main() {
+    let matches = App::new("test_262")
+        .arg(
+            Arg::with_name("pattern")
+                .short("p")
+                .long("pattern")
+                .takes_value(true)
+                .index(1),
+        )
+        .arg(
+            Arg::with_name("compare")
+                .help("Compare with results in provided results file. Return non-zero exit code on additional failures")
+                .short("c")
+                .long("compare"),
+        )
+        .arg(
+            Arg::with_name("commit")
+                .help("Write the test results")
+                .short("x")
+                .long("commit"),
+        )
+        .get_matches();
+
+    let pattern = matches.value_of("pattern");
+
     let harness = bootstrap_harness();
-    let args: Vec<String> = env::args().collect();
-    let pattern = args.get(1);
 
     let mut suites: Vec<PathBuf> = vec![
-        PathBuf::from("./test262/test/language"),
-        PathBuf::from("./test262/test/built-ins"),
-        PathBuf::from("./test262/test/annexB"),
-        PathBuf::from("./test262/test/intl402"),
+        PathBuf::from("./test262/test"),
+        // PathBuf::from("./test262/test/built-ins"),
+        // PathBuf::from("./test262/test/annexB"),
+        // PathBuf::from("./test262/test/intl402"),
         // PathBuf::from("./test262/implementation-contributed"),
         // PathBuf::from("./test262/test/statements"),
     ]
@@ -196,48 +224,78 @@ fn main() {
         }
     }
 
-    for TestResult {
-        result,
-        name,
-        error,
-    } in results.iter()
-    {
-        match result {
-            SuiteResult::Success => println!("{}", name.green()),
-            SuiteResult::Skip => {
-                // println!("{}", name.yellow())
+    let compare = matches.is_present("compare");
+    let commit = matches.is_present("commit");
+    let input = read_to_string("./target/results.json").unwrap_or_else(|_| "{}".to_owned());
+
+    let mut previous: HashMap<_, _> = serde_json::from_str(&input).unwrap_or_default();
+
+    let differences: Vec<TestResult> = results
+        .into_iter()
+        .filter_map(
+            |result| match previous.insert(result.name.clone(), result.clone()) {
+                None => None,
+                Some(previous) => {
+                    if !compare || previous.result != result.result {
+                        Some(result)
+                    } else {
+                        None
+                    }
+                }
+            },
+        )
+        .collect();
+
+    if commit {
+        write(
+            "./target/results.json",
+            serde_json::to_string(&previous).unwrap(),
+        )
+        .unwrap();
+    }
+
+    for difference in differences.iter() {
+        match difference.result {
+            SuiteResult::Success => {
+                println!("{}", difference.name.green())
             }
             SuiteResult::Failure => {
-                println!("{}", name.red());
+                println!("{}", difference.name.red());
 
-                if let Some(error) = error {
-                    println!("  {}", error.red());
+                if let Some(error) = &difference.error {
+                    println!("{}", error.red());
                 }
             }
+            _ => (),
         }
     }
 
-    println!(
-        "{} suites succeeded",
-        results
-            .iter()
-            .filter(|f| f.result == SuiteResult::Success)
-            .count()
-    );
-    println!(
-        "{} suites failed",
-        results
-            .iter()
-            .filter(|f| f.result == SuiteResult::Failure)
-            .count()
-    );
-    println!(
-        "{} suites skipped",
-        results
-            .iter()
-            .filter(|f| f.result == SuiteResult::Skip)
-            .count()
-    );
+    let success_count = differences
+        .iter()
+        .filter(|f| f.result == SuiteResult::Success)
+        .count();
 
-    // println!("{:#?}", test_compiled.load(&global));
+    let skip_count = differences
+        .iter()
+        .filter(|f| f.result == SuiteResult::Skip)
+        .count();
+
+    let failure_count = differences
+        .iter()
+        .filter(|f| f.result == SuiteResult::Failure)
+        .count();
+
+    if compare {
+        println!("{} new suites succeeded", success_count);
+        println!("{} new suites failed", failure_count);
+        println!("{} new suites skipped", skip_count);
+
+        if failure_count > 0 || skip_count > 0 {
+            std::process::exit(1);
+        }
+    } else {
+        println!("{} suites succeeded", success_count);
+        println!("{} suites failed", failure_count);
+        println!("{} suites skipped", skip_count);
+    }
 }
