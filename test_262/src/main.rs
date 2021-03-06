@@ -148,6 +148,8 @@ enum SuiteResult {
 struct TestResult {
     result: SuiteResult,
     name: String,
+
+    #[serde(skip_serializing)]
     error: Option<String>,
 }
 
