@@ -1,7 +1,6 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::ops::RuntimeFrame;
 use crate::result::JsResult;
-use crate::value::{BuiltIn, CustomFunctionReference, FunctionReference, RuntimeValue};
+use crate::value::{FunctionReference, RuntimeValue};
 use crate::vm::JsThread;
 use crate::{ExecutionError, InternalError};
 use std::cell::{RefCell, RefMut};
@@ -10,7 +9,6 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::Write;
 use std::rc::Rc;
-use std::thread::Thread;
 
 pub(crate) trait ObjectMethods<'a> {
     fn create() -> Object<'a>;

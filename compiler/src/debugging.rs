@@ -1,4 +1,4 @@
-use crate::value::{Reference, RuntimeValue};
+use crate::value::RuntimeValue;
 use colored::Colorize;
 use std::cmp::Ordering;
 use std::fmt::{Formatter, Result, Write};
@@ -31,15 +31,6 @@ impl<'a, 'b> Renderer<'a, 'b> {
             current_depth: 1,
             formatter,
             representation: Representation::Compact,
-        }
-    }
-
-    pub fn full(formatter: &'b mut Formatter<'a>) -> Self {
-        Renderer {
-            max_depth: 3,
-            current_depth: 0,
-            formatter,
-            representation: Representation::Full,
         }
     }
 
@@ -115,7 +106,6 @@ impl<'a, 'b> Renderer<'a, 'b> {
 #[derive(Copy, Clone, PartialEq)]
 pub enum Representation {
     Compact,
-    Full,
     Debug,
 }
 
@@ -141,21 +131,21 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
                     "{}{}",
                     if reference.strict { "." } else { "?." },
                     &reference.name,
-                ));
+                ))?;
 
                 render.end_internal()?;
                 Ok(())
             }
             (Representation::Compact, RuntimeValue::Reference(reference)) => match &*reference.base
             {
-                RuntimeValue::Object(obj) => {
+                RuntimeValue::Object(_obj) => {
                     render
                         .formatter
                         .write_fmt(format_args!(".{}", reference.name))?;
 
                     Ok(())
                 }
-                RuntimeValue::Function(_, obj) => {
+                RuntimeValue::Function(_, _obj) => {
                     render
                         .formatter
                         .write_fmt(format_args!(".{}", reference.name))?;

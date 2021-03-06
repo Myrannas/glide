@@ -1,51 +1,12 @@
 use crate::compiler::compile_eval;
-use crate::object::{JsObject, Object, ObjectMethods};
-use crate::ops::RuntimeFrame;
-use crate::parser::ast::Statement::Continue;
-use crate::result::{ExecutionError, JsResult};
+use crate::object::{Object, ObjectMethods};
+use crate::result::JsResult;
 use crate::value::{BuiltIn, BuiltinFn, CustomFunctionReference, FunctionReference, RuntimeValue};
 use crate::vm::JsThread;
-use crate::{parse_input, CompilerOptions, InternalError};
-use std::cell::RefCell;
-use std::convert::TryInto;
-use std::fmt::Error;
+use crate::{parse_input, InternalError};
 use std::rc::Rc;
 
-fn object_constructor<'a, 'b>(
-    args: &[Option<RuntimeValue<'a>>],
-    thread: &mut JsThread<'a>,
-    _: &RuntimeValue<'a>,
-    _context: Option<&RuntimeValue<'a>>,
-) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-    Ok(Some(RuntimeValue::Object(Object::create())))
-}
-
-fn array_constructor<'a, 'b>(
-    args: &[Option<RuntimeValue<'a>>],
-    thread: &mut JsThread<'a>,
-    _: &RuntimeValue<'a>,
-    _context: Option<&RuntimeValue<'a>>,
-) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-    Ok(Some(RuntimeValue::Object(Rc::new(RefCell::new(
-        JsObject {
-            prototype: None,
-            indexed_properties: Some(vec![]),
-            properties: None,
-            name: None,
-        },
-    )))))
-}
-
-fn boolean_constructor<'a, 'b>(
-    args: &[Option<RuntimeValue<'a>>],
-    thread: &mut JsThread<'a>,
-    _: &RuntimeValue<'a>,
-    _context: Option<&RuntimeValue<'a>>,
-) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-    Ok(Some(Object::create().into()))
-}
-
-fn eval<'a, 'b>(
+fn eval<'a>(
     args: &[Option<RuntimeValue<'a>>],
     frame: &mut JsThread<'a>,
     _value: &RuntimeValue<'a>,
@@ -58,15 +19,13 @@ fn eval<'a, 'b>(
             let code = match parse_input(&input) {
                 Ok(code) => code,
                 Err(err) => {
-                    frame.throw(err);
-                    return Ok(None);
+                    return Err(err.into());
                 }
             };
             let function = match compile_eval(frame.current_function(), &input, code) {
                 Ok(code) => code,
                 Err(err) => {
-                    frame.throw(err);
-                    return Ok(None);
+                    return Err(err.into());
                 }
             };
 
@@ -86,9 +45,9 @@ fn eval<'a, 'b>(
     }
 }
 
-fn string_length<'a, 'b>(
-    args: &[Option<RuntimeValue<'a>>],
-    thread: &mut JsThread<'a>,
+fn string_length<'a>(
+    _args: &[Option<RuntimeValue<'a>>],
+    _thread: &mut JsThread<'a>,
     value: &RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
@@ -131,86 +90,12 @@ impl<'a> Helpers<'a> for Object<'a> {
             Rc::new(key.into()),
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(Box::new(value.into())),
-                op: |_, thread, _, context| Ok(Some(context.unwrap().clone())),
+                op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
                 desired_args: 0,
             })),
             None,
         )
     }
-}
-
-// trait FrameHelpers<'a> {
-//     fn with_args(
-//         &mut self,
-//         expect: usize,
-//         op: impl Fn(&RuntimeFrame, &[Option<&RuntimeValue<'a>>]) -> JsResult<'a>,
-//     ) -> JsResult<'a>;
-// }
-//
-// impl<'a, 'b, 'c> FrameHelpers<'a> for RuntimeFrame<'a, 'b, 'c> {
-//     #[inline]
-//     fn with_args(
-//         &mut self,
-//         expect: usize,
-//         op: impl Fn(&RuntimeFrame, &[Option<&RuntimeValue<'a>>]) -> JsResult<'a>,
-//     ) -> JsResult<'a> {
-//         let args_count = self.stack.len() - 1;
-//         let required_arg_count = expect.min(8);
-//         let mut args: [Option<&RuntimeValue<'a>>; 8] = Default::default();
-//
-//         for i in 0..required_arg_count {
-//             if i < args_count {
-//                 args[i] = self.stack.get(self.stack.len() - i - 1);
-//             } else {
-//                 args[i] = None;
-//             }
-//         }
-//
-//         let result = op(self, &args[0..required_arg_count]);
-//
-//         for _ in 0..args_count {
-//             self.stack.pop();
-//         }
-//
-//         result
-//     }
-// }
-
-pub fn create_global<'a>() -> Object<'a> {
-    let globals = Object::create_named("globalThis", None);
-
-    globals.define_readonly_value("NaN", f64::NAN);
-
-    let string_prototype = Object::create();
-    let string_constructor = RuntimeValue::Function(
-        FunctionReference::BuiltIn(BuiltIn {
-            op: |args, thread, _, prototype| {
-                let prototype: Object<'a> = prototype.unwrap().clone().try_into()?;
-                let str_value: String = args[0]
-                    .clone()
-                    .map(|value| value.into())
-                    .unwrap_or_else(|| "".to_owned());
-                let str_obj = Object::create_named("String", Some(prototype));
-
-                str_obj.define_readonly_value(
-                    "___internal___string",
-                    RuntimeValue::String(Rc::new(str_value), str_obj.clone()),
-                );
-
-                Ok(Some(RuntimeValue::Object(str_obj)))
-            },
-            context: Some(Box::new(string_prototype.clone().into())),
-            desired_args: 1,
-        }),
-        string_prototype.clone(),
-    );
-
-    globals.define_readonly_value("String", string_constructor);
-    globals.define_readonly_builtin("Object", object_constructor, 0);
-    globals.define_readonly_builtin("Boolean", boolean_constructor, 0);
-    globals.define_readonly_builtin("Array", array_constructor, 0);
-
-    globals
 }
 
 #[derive(Clone)]
@@ -233,6 +118,12 @@ pub struct GlobalThis<'a> {
     pub(crate) wrappers: Primitives<'a>,
 }
 
+impl<'a> Default for GlobalThis<'a> {
+    fn default() -> Self {
+        GlobalThis::new()
+    }
+}
+
 impl<'a> GlobalThis<'a> {
     pub fn new() -> GlobalThis<'a> {
         let global_this = Object::create();
@@ -240,7 +131,7 @@ impl<'a> GlobalThis<'a> {
         let math = Object::create();
         math.define_readonly_builtin(
             "pow",
-            |_args, thread, _target, _context| Ok(Some(RuntimeValue::Undefined)),
+            |_args, _thread, _target, _context| Ok(Some(RuntimeValue::Undefined)),
             0,
         );
 
@@ -322,10 +213,12 @@ impl<'a> Primitives<'a> {
 }
 
 impl<'a> Errors<'a> {
+    #[allow(dead_code)]
     pub(crate) fn new_reference_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
         self.new_error(&self.reference_error, message.into()).into()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn new_syntax_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
         self.new_error(&self.syntax_error, message.into()).into()
     }

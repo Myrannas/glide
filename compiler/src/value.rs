@@ -1,12 +1,12 @@
-use crate::debugging::{DebugRepresentation, Renderer, Representation};
+use crate::debugging::{DebugRepresentation, Renderer};
 use crate::object::{JsObject, Object, ObjectMethods};
-use crate::ops::{JsContext, RuntimeFrame};
+use crate::ops::JsContext;
 use crate::result::ExecutionError;
 use crate::result::JsResult;
 use crate::vm::{Function, JsThread};
 use crate::InternalError;
-use std::cell::{RefCell, RefMut};
-use std::fmt::{Debug, Display, Formatter, Write};
+use std::cell::RefCell;
+use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
@@ -92,7 +92,6 @@ impl DebugRepresentation for StaticValue {
             StaticValue::GlobalThis => {
                 renderer.literal("globalThis")?;
             }
-            _ => {}
         };
 
         Ok(())
@@ -100,7 +99,7 @@ impl DebugRepresentation for StaticValue {
 }
 
 impl<'a> StaticValue {
-    pub(crate) fn to_runtime<'b, 'c>(&self, frame: &'c mut JsThread<'a>) -> RuntimeValue<'a> {
+    pub(crate) fn to_runtime<'c>(&self, frame: &'c mut JsThread<'a>) -> RuntimeValue<'a> {
         match self {
             StaticValue::Undefined => RuntimeValue::Undefined,
             StaticValue::Null => RuntimeValue::Null,
@@ -183,7 +182,7 @@ impl<'a> From<BuiltIn<'a>> for RuntimeValue<'a> {
 }
 
 impl<'a> BuiltIn<'a> {
-    pub(crate) fn apply<'b>(
+    pub(crate) fn apply(
         &self,
         args_count: usize,
         frame: &mut JsThread<'a>,
@@ -214,7 +213,7 @@ impl<'a> BuiltIn<'a> {
         }
     }
 
-    pub(crate) fn apply_return<'b>(
+    pub(crate) fn apply_return(
         &self,
         args_count: usize,
         frame: &mut JsThread<'a>,
@@ -248,7 +247,7 @@ pub(crate) type BuiltinFn<'a> = fn(
 ) -> JsResult<'a, Option<RuntimeValue<'a>>>;
 
 impl<'a> Debug for BuiltIn<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
         Ok(())
     }
 }
@@ -294,7 +293,7 @@ impl<'a> RuntimeValue<'a> {
         }
     }
 
-    pub(crate) fn non_strict_eq<'b, 'c>(&self, other: &Self, frame: &mut JsThread<'a>) -> bool {
+    pub(crate) fn non_strict_eq(&self, other: &Self, frame: &mut JsThread<'a>) -> bool {
         match (self, other) {
             (RuntimeValue::Undefined, RuntimeValue::Undefined) => true,
             (RuntimeValue::Boolean(b1), RuntimeValue::Boolean(b2)) => b1 == b2,
@@ -341,7 +340,7 @@ impl<'a> PartialEq for RuntimeValue<'a> {
 }
 
 impl<'a> RuntimeValue<'a> {
-    pub(crate) fn resolve<'b, 'c>(
+    pub(crate) fn resolve<'c>(
         self,
         thread: &'c mut JsThread<'a>,
     ) -> Result<Self, ExecutionError<'a>> {
@@ -365,14 +364,9 @@ impl<'a> RuntimeValue<'a> {
                     &RuntimeValue::Function(value, obj.clone()),
                 ),
                 RuntimeValue::Undefined => {
-                    let error: RuntimeValue<'a> = thread
-                        .global_this
-                        .errors
-                        .new_type_error(format!(
-                            "Cannot read property {} of undefined",
-                            reference.name
-                        ))
-                        .into();
+                    let error: RuntimeValue<'a> = thread.global_this.errors.new_type_error(
+                        format!("Cannot read property {} of undefined", reference.name),
+                    );
 
                     Err(error.into())
                 }
@@ -382,22 +376,32 @@ impl<'a> RuntimeValue<'a> {
         }
     }
 
-    pub(crate) fn update_reference<'b, 'c>(
+    pub(crate) fn update_reference(
         self,
         frame: &mut JsThread<'a>,
         value: RuntimeValue<'a>,
     ) -> JsResult<'a, ()> {
         match self {
             RuntimeValue::Internal(InternalValue::Local(index)) => {
-                Ok(frame.current_context().write(index, value))
+                frame.current_context().write(index, value);
+                Ok(())
             }
             RuntimeValue::Reference(reference) => match *reference.base {
-                RuntimeValue::Object(obj) => Ok(obj.set(reference.name, value)),
-                RuntimeValue::String(_, obj) => Ok(obj.set(reference.name, value)),
-                RuntimeValue::Function(_, obj) => Ok(obj.set(reference.name, value)),
+                RuntimeValue::Object(obj) => {
+                    obj.set(reference.name, value);
+                    Ok(())
+                }
+                RuntimeValue::String(_, obj) => {
+                    obj.set(reference.name, value);
+                    Ok(())
+                }
+                RuntimeValue::Function(_, obj) => {
+                    obj.set(reference.name, value);
+                    Ok(())
+                }
                 value => todo!("Unsupported type {:?}", value),
             },
-            other => InternalError::new_stackless("Unable to update").into(),
+            _ => InternalError::new_stackless("Unable to update").into(),
         }
     }
 }
@@ -495,7 +499,7 @@ impl<'a> From<&RuntimeValue<'a>> for String {
             RuntimeValue::String(str, ..) => str.as_ref().to_owned(),
             RuntimeValue::Undefined => "undefined".to_owned(),
             RuntimeValue::Null => "null".to_owned(),
-            RuntimeValue::Object(obj) => "[object Object]".to_owned(),
+            RuntimeValue::Object(_) => "[object Object]".to_owned(),
             value => todo!("Unsupported types {:?}", value),
         }
     }

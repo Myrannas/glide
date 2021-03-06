@@ -2,20 +2,18 @@ use crate::ops::{
     add, bind, call, call_new, catch, cjmp, div, duplicate, eq, get, get_null_safe, gt, gte,
     increment, instance_of, jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo, mul,
     ne, not_strict_eq, ret, rshift, rshift_u, set, strict_eq, sub, throw_value, truncate, type_of,
-    uncatch, Instruction, RuntimeFrame,
+    uncatch, Instruction,
 };
-use crate::parser::ast::Statement::Break;
+
 use crate::parser::ast::{
     BinaryOperator, BlockStatement, Expression, ForStatement, FunctionStatement, IfStatement,
     ParsedModule, Reference, ReturnStatement, Statement, ThrowStatement, TryStatement,
     UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
-use crate::result::{InternalError, JsResult, StaticJsResult, SyntaxError};
+use crate::result::{InternalError, StaticJsResult, SyntaxError};
+use crate::value::StaticValue;
 use crate::value::StaticValue::Local;
-use crate::value::{RuntimeValue, StaticValue};
 use crate::vm::{Function, FunctionInner, JsThread, Module};
-use crate::ExecutionError;
-use anyhow::{bail, Context, Error, Result};
 use log::debug;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -121,7 +119,7 @@ impl<'b> ChunkBuilder {
         ChunkBuilder {
             frame: self.frame,
             chunk_index,
-            options: self.options.clone(),
+            options: self.options,
         }
     }
 }
@@ -214,27 +212,23 @@ impl UnaryOperator {
     }
 }
 
-enum BreakStack<'a, 'b> {
+enum BreakStack {
     Root,
     Child {
-        label: Option<&'a str>,
         break_chunk: usize,
         continue_chunk: usize,
-        parent: Option<&'b BreakStack<'a, 'b>>,
     },
 }
 
-impl<'a, 'b> BreakStack<'a, 'b> {
-    fn new() -> BreakStack<'a, 'b> {
+impl BreakStack {
+    fn new() -> BreakStack {
         BreakStack::Root
     }
 
-    fn child(&'b self, break_chunk: usize, continue_chunk: usize) -> BreakStack<'a, 'b> {
+    fn child(&self, break_chunk: usize, continue_chunk: usize) -> BreakStack {
         BreakStack::Child {
-            label: None,
             break_chunk,
             continue_chunk,
-            parent: Some(&self),
         }
     }
 
@@ -266,7 +260,7 @@ impl<'a, 'c> ChunkBuilder {
         })
     }
 
-    fn compile_expression<'b>(
+    fn compile_expression(
         mut self,
         input: Expression<'a>,
         // options: CompilerOptions,
@@ -314,9 +308,7 @@ impl<'a, 'c> ChunkBuilder {
             Expression::Boolean(value) => {
                 self.append_with_constant(load, StaticValue::Boolean(value))
             }
-            Expression::String(str) => {
-                self.append_with_constant(load, StaticValue::String(str.to_owned()))
-            }
+            Expression::String(str) => self.append_with_constant(load, StaticValue::String(str)),
             Expression::Inc { reference, .. } => self
                 .compile_expression(Expression::Reference(reference))?
                 .append_with_constant(increment, StaticValue::Float(1.0)),
@@ -368,7 +360,7 @@ impl<'a, 'c> ChunkBuilder {
             }
 
             Expression::NewWithArgs { target, parameters } => {
-                // TODOME
+                // TODO ME
 
                 let args_len = parameters.len();
 
@@ -483,7 +475,7 @@ impl<'a, 'c> ChunkBuilder {
         mut self,
         input: Statement<'a>,
         next_block: Option<usize>,
-        break_stack: &'b BreakStack<'a, 'b>,
+        break_stack: &'b BreakStack,
     ) -> StaticJsResult<Self> {
         let chunk = match input {
             Statement::Return(ReturnStatement { expression }) => {
@@ -726,7 +718,7 @@ impl<'a, 'c> ChunkBuilder {
         self,
         statements: B,
         next_block: usize,
-        break_stack: &'b BreakStack<'a, 'b>,
+        break_stack: &'b BreakStack,
     ) -> StaticJsResult<Self> {
         let next = statements
             .into()
@@ -790,8 +782,10 @@ impl CompilerOptions {
     }
 }
 
-pub struct Eval {
-    chunks: Vec<Chunk>,
+impl Default for CompilerOptions {
+    fn default() -> Self {
+        CompilerOptions::new()
+    }
 }
 
 pub fn compile_eval<'a>(

@@ -8,22 +8,20 @@ extern crate serde;
 extern crate serde_json;
 extern crate serde_yaml;
 
-use crate::suite::{Negative, NegativeType, Phase, Suite, SuiteDetails};
+use crate::suite::{Negative, NegativeType, Phase, Suite};
 use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
 use compiler::{
-    compile, parse_input, CompilerOptions, ExecutionError, GlobalThis, JsThread, Module, Object,
-    StaticExecutionError,
+    compile, parse_input, CompilerOptions, GlobalThis, JsThread, Module, StaticExecutionError,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use std::env;
+use std::collections::BTreeMap;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
-fn bootstrap_harness<'a>() -> ModuleSet {
+fn bootstrap_harness() -> ModuleSet {
     let sta = read_to_string("./test262/harness/sta.js").unwrap();
     let assert = read_to_string("./test262/harness/assert.js").unwrap();
 
@@ -234,16 +232,10 @@ fn main() {
 
     let differences: Vec<TestResult> = results
         .into_iter()
-        .filter_map(
+        .filter(
             |result| match previous.insert(result.name.clone(), result.clone()) {
-                None => None,
-                Some(previous) => {
-                    if !compare || previous.result != result.result {
-                        Some(result)
-                    } else {
-                        None
-                    }
-                }
+                None => false,
+                Some(previous) => !compare || previous.result != result.result,
             },
         )
         .collect();

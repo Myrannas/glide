@@ -1,5 +1,4 @@
 use super::ast::{Expression, Reference};
-use crate::parser::ast::Expression::BinaryExpression;
 use crate::parser::ast::{
     BinaryOperator, BlockStatement, ForStatement, FunctionStatement, IfStatement, ParsedModule,
     ReturnStatement, Statement, ThrowStatement, TryStatement, UnaryOperator, VarDeclaration,
@@ -27,6 +26,7 @@ impl<'a> Parse<'a> for Expression<'a> {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq)]
 pub(crate) enum Error<'a> {
     Expected {
@@ -50,7 +50,7 @@ impl<'a> std::error::Error for Error<'a> {}
 
 pub(crate) fn pretty_print(input: &str, err: Error) -> String {
     match err {
-        Error::EndOfFile => format!("End of file"),
+        Error::EndOfFile => "End of file".to_string(),
         Error::SyntaxError { message } => message.to_owned(),
         Error::Expected {
             expected,
@@ -194,7 +194,7 @@ fn parse_object_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expre
         }
 
         if !input.consume_if(Token::Comma) {
-            input.expect(Token::CloseBrace);
+            input.expect(Token::CloseBrace)?;
             break;
         }
     }
@@ -325,7 +325,7 @@ fn parse_binary_expression<'a>(
     matcher: impl Fn(Token) -> Option<BinaryOperator>,
 ) -> Result<'a, Expression<'a>> {
     match input.lookahead() {
-        Some((token, span)) => match matcher(token) {
+        Some((token, _span)) => match matcher(token) {
             Some(operator) => {
                 input.next();
 
@@ -653,7 +653,7 @@ impl<'a> Parse<'a> for Statement<'a> {
 
                 Ok(Statement::Break)
             }
-            Some((Token::Break, ..)) => {
+            Some((Token::Continue, ..)) => {
                 input.next();
 
                 Ok(Statement::Continue)
@@ -855,7 +855,7 @@ pub(crate) fn parse<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, ParsedMod
 mod test {
     use super::super::lexer::Token;
     use super::*;
-    use crate::parser::hand_parser::{BlockStatement, FunctionStatement, Statement};
+    use crate::parser::hand_parser::{BlockStatement, FunctionStatement};
     use logos::Logos;
 
     #[test]

@@ -1,15 +1,12 @@
 use crate::compiler::{Chunk, FrameLocals};
 use crate::debugging::{DebugRepresentation, Renderer};
-use crate::object::{Object, ObjectMethods};
-use crate::ops::{CallStack, Instruction, JsContext as JSContext, JsContext, RuntimeFrame};
+use crate::ops::{Instruction, JsContext as JSContext, JsContext};
 use crate::primordials::GlobalThis;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
-use crate::value::{make_arguments, CustomFunctionReference, FunctionReference, RuntimeValue};
+use crate::value::{make_arguments, CustomFunctionReference, RuntimeValue};
 use crate::ExecutionError;
-use log::trace;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
-use std::ops::Range;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -28,6 +25,7 @@ impl Module {
 
 pub(crate) struct FunctionInner {
     pub(crate) chunks: Vec<Chunk>,
+    #[allow(dead_code)]
     pub(crate) stack_size: usize,
     pub(crate) local_size: usize,
     pub(crate) functions: Vec<Function>,
@@ -274,7 +272,7 @@ impl<'a> JsThread<'a> {
         target: RuntimeValue<'a>,
         CustomFunctionReference { function, context }: CustomFunctionReference<'a>,
         args: usize,
-        new: bool,
+        _new: bool,
     ) {
         if self.call_stack.len() > self.call_stack_limit {
             return self.throw(InternalError::new_stackless("Stack overflow"));

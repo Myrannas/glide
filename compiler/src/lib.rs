@@ -9,6 +9,7 @@ pub mod value;
 mod vm;
 
 extern crate anyhow;
+extern crate arr_macro;
 extern crate log;
 extern crate pretty_env_logger;
 extern crate thiserror;

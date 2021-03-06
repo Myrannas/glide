@@ -40,6 +40,7 @@ pub enum UnaryOperator {
     Add,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Expression<'a> {
     Float(f64),
@@ -70,10 +71,6 @@ pub(crate) enum Expression<'a> {
     Dec {
         reference: Reference<'a>,
         pre: bool,
-    },
-    Shift {
-        unsigned: bool,
-        left: bool,
     },
     BinaryExpression {
         left: Box<Expression<'a>>,

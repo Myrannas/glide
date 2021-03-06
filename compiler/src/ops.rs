@@ -1,23 +1,12 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::object::{Object, ObjectMethods};
-use crate::result::ExecutionError;
-use crate::value::CustomFunctionReference;
 use crate::value::{FunctionReference, Reference, RuntimeValue, StaticValue};
 use crate::vm::{Function, JsThread};
 use crate::InternalError;
-use log::trace;
 use std::cell::{Ref, RefCell};
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter, Write};
 use std::rc::Rc;
-
-#[derive(Debug)]
-pub(crate) struct RuntimeFrame<'a, 'b> {
-    pub(crate) context: JsContext<'a>,
-    pub(crate) stack: &'b mut Vec<RuntimeValue<'a>>,
-    pub(crate) global_this: Object<'a>,
-    pub(crate) call_stack: Rc<CallStack>,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct CallStack {
@@ -36,12 +25,6 @@ pub struct JsContext<'a> {
     inner: Rc<RefCell<JsContextInner<'a>>>,
 }
 
-impl<'a, 'b> RuntimeFrame<'a, 'b> {
-    pub(crate) fn function(&self) -> &Function {
-        &self.call_stack.function
-    }
-}
-
 impl PartialEq for JsContext<'_> {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
@@ -52,7 +35,6 @@ impl<'a, 'b> DebugRepresentation for JsContext<'a> {
     fn render(&self, render: &mut Renderer) -> std::fmt::Result {
         match render.representation {
             Representation::Compact => Ok(()),
-            Representation::Full => Ok(()),
             Representation::Debug => {
                 render.start_internal("CONTEXT")?;
                 let inner = self.inner.borrow();
@@ -95,10 +77,6 @@ impl<'a, 'b> JsContext<'a> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
-    fn parent(&self) -> Ref<Option<JsContext<'a>>> {
-        Ref::map(self.inner.borrow(), |value| &value.parent)
-    }
-
     pub(crate) fn with_parent(
         parent: Option<JsContext<'a>>,
         locals_size: usize,
@@ -135,24 +113,6 @@ impl<'a, 'b> JsContext<'a> {
     }
 }
 
-impl<'a> CallStack {
-    pub(crate) fn stack_trace(&self) -> Vec<String> {
-        let mut stack = Vec::new();
-
-        for frame in self.iter() {
-            stack.push(frame.function.name().into());
-        }
-
-        stack
-    }
-
-    fn iter(&self) -> ContextIter {
-        ContextIter {
-            next: Some(Rc::new(self.clone())),
-        }
-    }
-}
-
 impl Iterator for ContextIter {
     type Item = Rc<CallStack>;
 
@@ -161,7 +121,7 @@ impl Iterator for ContextIter {
 
         if let Some(current) = next {
             self.next = (&current.parent).clone();
-            Some(current.clone())
+            Some(current)
         } else {
             None
         }
@@ -322,7 +282,7 @@ macro_rules! resolve {
 }
 
 macro_rules! catch {
-    ($value:expr, $frame:ident) => (match $value {
+    ($frame: ident, $value:expr) => (match $value {
         Ok(value) => value,
         Err(err) => {
             $frame.throw(err);
@@ -331,7 +291,7 @@ macro_rules! catch {
     })
 }
 
-op!(add(val, frame) {
+op!(add(frame) {
     let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
     let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
 
@@ -406,7 +366,7 @@ op!(increment(val, frame) {
     
     let value: f64 = value.into();
 
-    target.update_reference(frame, RuntimeValue::Float(value + by));
+    catch!(frame, target.update_reference(frame, RuntimeValue::Float(value + by)));
 } step);
 
 op!(strict_eq(val, frame) {
@@ -687,8 +647,8 @@ op!(set(val, frame) {
     }).expect("Need an attribute");
 
     let target = resolve!(frame.stack.pop().expect("Need an target"), frame);
-    let obj: Object = catch!(resolve!(target, frame)
-        .try_into(), frame);
+    let obj: Object = catch!(frame, resolve!(target, frame)
+        .try_into());
 
     if let RuntimeValue::String(str, ..) = attribute {        
         obj.set(str, resolved_value);

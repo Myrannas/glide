@@ -1,8 +1,4 @@
 [workspace]
-name = "js"
-version = "0.1.0"
-authors = ["Michael Oates <michael@oates.dev>"]
-edition = "2018"
 
 members = [
     "compiler",
