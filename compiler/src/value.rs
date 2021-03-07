@@ -440,6 +440,7 @@ impl<'a> RuntimeValue<'a> {
                     }
                 };
             }
+            RuntimeValue::Function(..) => "function() { }".to_owned(),
             value => todo!("Unsupported types {:?}", value),
         };
 

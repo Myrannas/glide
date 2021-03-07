@@ -107,12 +107,24 @@ impl<'b> ChunkBuilder {
     }
 
     fn allocate_local(&mut self, id: &str) -> usize {
-        self.frame.local_size += 1;
-        self.frame
+        let existing_position = self
+            .frame
             .locals
-            .borrow_mut()
+            .borrow()
             .locals
-            .allocate(id.to_owned())
+            .iter()
+            .position(|existing| existing == id);
+
+        if let Some(existing) = existing_position {
+            existing
+        } else {
+            self.frame.local_size += 1;
+            self.frame
+                .locals
+                .borrow_mut()
+                .locals
+                .allocate(id.to_owned())
+        }
     }
 
     fn switch_to(self, chunk_index: usize) -> Self {
@@ -507,16 +519,21 @@ impl<'a, 'c> ChunkBuilder {
                 {
                     let idx = next.allocate_local(identifier);
 
-                    next = next
-                        .compile_expression(expression.unwrap_or(Expression::Undefined))?
-                        .append_with_constant(bind, StaticValue::Local(idx))
-                        .append(truncate);
-
-                    if !next.options.module {
+                    if let Some(expression) = expression {
                         next = next
-                            .append_with_constant(load, StaticValue::GlobalThis)
-                            .append_with_constant(load, StaticValue::Local(idx))
-                            .append_with_constant(set, StaticValue::String(identifier.to_owned()))
+                            .compile_expression(expression)?
+                            .append_with_constant(bind, StaticValue::Local(idx))
+                            .append(truncate);
+
+                        if !next.options.module {
+                            next = next
+                                .append_with_constant(load, StaticValue::GlobalThis)
+                                .append_with_constant(load, StaticValue::Local(idx))
+                                .append_with_constant(
+                                    set,
+                                    StaticValue::String(identifier.to_owned()),
+                                )
+                        }
                     }
                 }
 
