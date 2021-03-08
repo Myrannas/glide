@@ -3,7 +3,7 @@ extern crate quote;
 extern crate syn;
 
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{format_ident, quote, ToTokens};
 use syn::__private::TokenStream2;
 use syn::parse::{ParseBuffer, ParseStream};
 use syn::Lit;
@@ -49,29 +49,28 @@ impl BindingReturnType {
 
 struct Constructor {
     type_name: syn::Ident,
-    parameters: usize,
+    arguments: Arguments,
 }
 
 impl ToTokens for Constructor {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         let type_name = &self.type_name;
-        let parameters = self.parameters;
-
-        let args: Vec<TokenStream2> = (0..self.parameters)
-            .map(|i| quote! { args[#i].as_ref() })
-            .collect();
+        let arguments = &self.arguments;
+        let setup = &self.arguments.setup();
+        let arguments = &self.arguments.call();
 
         let output = quote! {
             object.define_value("constructor", crate::JsObject::new().callable(crate::BuiltIn {
                 context: Some(Box::new(object.clone().into())),
-                desired_args: #parameters,
                 op: |args, thread, receiver, context| {
                     let constructed = crate::JsObject::new()
                         .with_prototype(context.unwrap().as_object()?.clone());
 
+                    #setup
+
                     let mut obj = <#type_name>::new(&constructed, thread);
 
-                    obj.constructor(#(#args),*);
+                    obj.constructor(#arguments);
 
                     Ok(Some(constructed.into()))
                 }
@@ -86,7 +85,7 @@ struct StaticMethod {
     js_name: String,
     type_name: syn::Ident,
     method_name: syn::Ident,
-    parameters: usize,
+    arguments: Arguments,
     return_type: BindingReturnType,
 }
 
@@ -95,24 +94,24 @@ impl ToTokens for StaticMethod {
         let type_name = &self.type_name;
         let method_name = &self.method_name;
         let method_name_string = &self.js_name;
-        let parameters = self.parameters;
-
-        let args: Vec<TokenStream2> = (0..self.parameters)
-            .map(|i| quote! { args[#i].as_ref() })
-            .collect();
+        let setup = &self.arguments.setup();
+        let arguments = &self.arguments.call();
 
         let call = self.return_type.as_tokens(quote! {
-            <#type_name>::#method_name(#(#args),*)
+            <#type_name>::#method_name(#arguments)
         });
 
         let output = quote! {
-            object.define_value(#method_name_string, crate::JsObject::new().callable(crate::BuiltIn {
+            let method = crate::JsObject::new().callable(crate::BuiltIn {
                 context: None,
-                desired_args: #parameters,
-                op: |args, _, receiver, context| {
+                op: |args, thread, receiver, context| {
+                    #setup
                     #call
                 }
-            }));
+            });
+            method.define_value("name", #method_name_string.to_string());
+            method.define_value("length", crate::RuntimeValue::Float(1.0));
+            object.define_value(#method_name_string, method);
         };
 
         output.to_tokens(tokens);
@@ -123,8 +122,8 @@ struct Method {
     js_name: String,
     type_name: syn::Ident,
     method_name: syn::Ident,
-    parameters: usize,
     return_type: BindingReturnType,
+    arguments: Arguments,
 }
 
 impl ToTokens for Method {
@@ -132,24 +131,24 @@ impl ToTokens for Method {
         let type_name = &self.type_name;
         let method_name = &self.method_name;
         let method_name_string = &self.js_name;
-        let parameters = self.parameters;
-
-        let args: Vec<TokenStream2> = (0..self.parameters)
-            .map(|i| quote! { args[#i].as_ref() })
-            .collect();
+        let setup = &self.arguments.setup();
+        let arguments = &self.arguments.call();
 
         let call = self.return_type.as_tokens(quote! {
-            <#type_name>::new(receiver, thread).#method_name(#(#args),*)
+            <#type_name>::new(receiver, thread).#method_name(#arguments)
         });
 
         let output = quote! {
-            object.define_value(#method_name_string, crate::JsObject::new().callable(crate::BuiltIn {
+            let method = crate::JsObject::new().callable(crate::BuiltIn {
                 context: None,
-                desired_args: #parameters,
                 op: |args, thread, receiver, context| {
+                    #setup
                     #call
                 }
-            }));
+            });
+            method.define_value("length", crate::RuntimeValue::Float(1.0));
+            method.define_value("name", #method_name_string.to_string())    ;
+            object.define_value(#method_name_string, method);
         };
 
         output.to_tokens(tokens);
@@ -178,7 +177,6 @@ impl ToTokens for Getter {
                 std::rc::Rc::new(#method_name_string.to_owned()),
                 Some(crate::BuiltIn {
                     context: None,
-                    desired_args: 0,
                     op: |args, thread, receiver, context| {
                         #call
                     }
@@ -195,29 +193,79 @@ struct Callable {
     type_name: syn::Ident,
     method_name: syn::Ident,
     return_type: BindingReturnType,
-    parameters: usize,
+    arguments: Arguments,
+}
+
+enum Arguments {
+    List(usize),
+    Varargs,
+}
+
+impl Arguments {
+    fn setup(&self) -> TokenStream2 {
+        match self {
+            Arguments::List(size) => {
+                let args: Vec<TokenStream2> = (0..*size)
+                    .map(|i| {
+                        let arg_id = format_ident!("arg_{}", i);
+                        quote! { let #arg_id = thread.read_arg(args, #i); }
+                    })
+                    .collect();
+
+                quote! {
+                    #(#args)*
+                }
+            }
+            Varargs => {
+                quote! {
+                    let stack_len = thread.stack.len();
+                    let args = thread.stack[(stack_len - args)..stack_len].to_vec();
+                }
+            }
+        }
+    }
+
+    fn call(&self) -> TokenStream2 {
+        match self {
+            Arguments::List(size) => {
+                let args: Vec<TokenStream2> = (0..*size)
+                    .map(|i| {
+                        let arg_id = format_ident!("arg_{}", i);
+
+                        quote! { #arg_id.into() }
+                    })
+                    .collect();
+
+                quote! {
+                    #(#args),*
+                }
+            }
+            Varargs => {
+                quote! {
+                    args
+                }
+            }
+        }
+    }
 }
 
 impl ToTokens for Callable {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         let type_name = &self.type_name;
         let method_name = &self.method_name;
-        let parameters = self.parameters - 1;
-
-        let args: Vec<TokenStream2> = (0..(self.parameters - 1))
-            .map(|i| quote! { args[#i].as_ref() })
-            .collect();
+        let setup = &self.arguments.setup();
+        let arguments = &self.arguments.call();
 
         let call = self.return_type.as_tokens(quote! {
-            <#type_name>::#method_name(thread, #(#args),*)
+            <#type_name>::#method_name(thread, #arguments)
         });
 
         let output = quote! {
             object = object.callable(
                 crate::BuiltIn {
                     context: None,
-                    desired_args: #parameters,
                     op: |args, thread, receiver, context| {
+                        #setup
                         #call
                     }
                 });
@@ -259,6 +307,16 @@ pub fn getter(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn callable(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn varargs(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn constructor(_attr: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
@@ -306,6 +364,8 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             let mut uses_self = false;
             let mut is_getter = false;
             let mut is_callable = false;
+            let mut is_varargs = false;
+            let mut is_constructor = false;
             let mut remaining_args = 0;
             for input in inputs.iter() {
                 match input {
@@ -332,24 +392,36 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 if let Meta::Path(path) = attribute.parse_meta().unwrap() {
                     let path = path.get_ident().unwrap();
                     if path == "getter" {
-                        if remaining_args > 0 {
-                            return TokenStream::from(quote! {
-                                compile_error!("Cannot use args for getters");
-                            });
-                        }
                         is_getter = true;
                     } else if path == "callable" {
-                        if uses_self {
-                            return TokenStream::from(quote! {
-                                compile_error!("Callable cant reference self");
-                            });
-                        }
                         is_callable = true;
+                    } else if path == "varargs" {
+                        is_varargs = true;
+                    } else if path == "constructor" {
+                        is_constructor = true;
                     }
                 }
             }
 
-            if identifier == "constructor" {
+            if uses_self && is_callable {
+                return TokenStream::from(quote! {
+                    compile_error!("Callable cant reference self");
+                });
+            }
+
+            if is_getter && (is_varargs || remaining_args > 0) {
+                return TokenStream::from(quote! {
+                    compile_error!("Cannot use args for getters");
+                });
+            }
+
+            let arguments = if is_varargs {
+                Arguments::Varargs
+            } else {
+                Arguments::List(remaining_args)
+            };
+
+            if is_constructor {
                 if !uses_self {
                     return TokenStream::from(quote! {
                         compile_error!("Must reference self in a constructor");
@@ -357,7 +429,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 } else {
                     methods.push(Item::Constructor(Constructor {
                         type_name: type_name.clone(),
-                        parameters: remaining_args,
+                        arguments,
                     }));
                     continue;
                 }
@@ -373,9 +445,14 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 };
 
                 if is_callable {
+                    let arguments = match arguments {
+                        Arguments::Varargs => Arguments::Varargs,
+                        Arguments::List(size) => Arguments::List(size - 1),
+                    };
+
                     methods.push(Item::Callable(Callable {
                         type_name: type_name.clone(),
-                        parameters: remaining_args,
+                        arguments,
                         method_name: ident.clone(),
                         return_type,
                     }))
@@ -389,7 +466,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 } else if uses_self {
                     methods.push(Item::Method(Method {
                         type_name: type_name.clone(),
-                        parameters: remaining_args,
+                        arguments,
                         method_name: ident.clone(),
                         return_type,
                         js_name: identifier,
@@ -397,7 +474,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 } else {
                     methods.push(Item::StaticMethod(StaticMethod {
                         type_name: type_name.clone(),
-                        parameters: remaining_args,
+                        arguments,
                         method_name: ident.clone(),
                         return_type,
                         js_name: identifier,

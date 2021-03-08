@@ -201,6 +201,20 @@ fn parse_object_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expre
     Ok(Expression::ObjectLiteral { attributes })
 }
 
+fn parse_array_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+    let mut attributes = Vec::new();
+
+    while !input.consume_if(Token::CloseBracket) {
+        attributes.push(parse_expression(input)?);
+
+        if !input.consume_if(Token::Comma) {
+            input.expect(Token::CloseBracket)?;
+            break;
+        }
+    }
+    Ok(Expression::ArrayLiteral { attributes })
+}
+
 fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
     if input.lookahead_is(Token::OpenParen) {
         return parse_group(input);
@@ -220,6 +234,7 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
         }
         Some((Token::Boolean(value), ..)) => Ok(Expression::Boolean(value)),
         Some((Token::OpenBrace, ..)) => parse_object_literal(input),
+        Some((Token::OpenBracket, ..)) => parse_array_literal(input),
         Some((Token::Null, ..)) => Ok(Expression::Null),
         Some((Token::Void, ..)) => {
             parse_expression(input)?;
@@ -246,25 +261,17 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
     let mut expression = parse_value(input)?;
 
     loop {
-        let null_safe = match input.lookahead() {
-            Some((Token::Dot, ..)) => false,
-            Some((Token::NullSafe, ..)) => true,
+        let (null_safe, computed, call) = match input.lookahead() {
+            Some((Token::Dot, ..)) => (false, false, false),
+            Some((Token::NullSafe, ..)) => (true, false, false),
+            Some((Token::OpenBracket, ..)) => (false, true, false),
+            Some((Token::OpenParen, ..)) => (false, false, true),
             _ => break,
         };
 
         input.next();
 
-        let accessor = input.expect_id()?;
-
-        expression = Expression::Reference(Reference::Accessor {
-            expression: Box::new(expression),
-            accessor,
-            null_safe,
-        })
-    }
-
-    if is_new {
-        if input.consume_if(Token::OpenParen) {
+        expression = if call {
             let mut parameters = Vec::new();
 
             while !input.consume_if(Token::CloseParen) {
@@ -278,8 +285,41 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
                 input.expect(Token::Comma)?;
             }
 
+            Expression::Call {
+                expression: Box::new(expression),
+                parameters,
+            }
+        } else if computed {
+            let accessor = parse_expression(input)?;
+
+            let expression = Expression::Reference(Reference::ComputedAccessor {
+                expression: Box::new(expression),
+                accessor: Box::new(accessor),
+                null_safe,
+            });
+
+            input.expect(Token::CloseBracket)?;
+
+            expression
+        } else {
+            let accessor = input.expect_id()?;
+
+            Expression::Reference(Reference::Accessor {
+                expression: Box::new(expression),
+                accessor,
+                null_safe,
+            })
+        };
+    }
+
+    if is_new {
+        if let Expression::Call {
+            expression,
+            parameters,
+        } = expression
+        {
             Ok(Expression::NewWithArgs {
-                target: Box::new(expression),
+                target: expression,
                 parameters,
             })
         } else {
@@ -288,32 +328,6 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
                 parameters: vec![],
             })
         }
-    } else {
-        Ok(expression)
-    }
-}
-
-fn parse_call<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let expression = parse_accessor(input)?;
-
-    if input.consume_if(Token::OpenParen) {
-        let mut parameters = Vec::new();
-
-        while !input.consume_if(Token::CloseParen) {
-            parameters.push(parse_expression(input)?);
-
-            if !input.lookahead_is(Token::Comma) {
-                input.expect(Token::CloseParen)?;
-                break;
-            }
-
-            input.expect(Token::Comma)?;
-        }
-
-        Ok(Expression::Call {
-            expression: Box::new(expression),
-            parameters,
-        })
     } else {
         Ok(expression)
     }
@@ -346,36 +360,24 @@ fn parse_binary_expression<'a, T: LexerUtils<'a>>(
 }
 
 fn parse_unary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let result = match input.lookahead() {
-        Some((Token::LogicalNot, ..)) => {
-            input.next();
-            Expression::UnaryExpression {
-                value: Box::new(parse_call(input)?),
-                operator: UnaryOperator::LogicalNot,
-            }
+    let operator = match input.lookahead() {
+        Some((Token::LogicalNot, ..)) => Some(UnaryOperator::LogicalNot),
+        Some((Token::TypeOf, ..)) => Some(UnaryOperator::TypeOf),
+        Some((Token::Delete, ..)) => Some(UnaryOperator::Delete),
+        Some((Token::Sub, ..)) => Some(UnaryOperator::Sub),
+        Some((Token::Add, ..)) => Some(UnaryOperator::Add),
+        _ => None,
+    };
+
+    let result = if let Some(operator) = operator {
+        input.next();
+
+        Expression::UnaryExpression {
+            value: Box::new(parse_accessor(input)?),
+            operator,
         }
-        Some((Token::TypeOf, ..)) => {
-            input.next();
-            Expression::UnaryExpression {
-                value: Box::new(parse_call(input)?),
-                operator: UnaryOperator::TypeOf,
-            }
-        }
-        Some((Token::Sub, ..)) => {
-            input.next();
-            Expression::UnaryExpression {
-                value: Box::new(parse_call(input)?),
-                operator: UnaryOperator::Sub,
-            }
-        }
-        Some((Token::Add, ..)) => {
-            input.next();
-            Expression::UnaryExpression {
-                value: Box::new(parse_call(input)?),
-                operator: UnaryOperator::Add,
-            }
-        }
-        _ => parse_call(input)?,
+    } else {
+        parse_accessor(input)?
     };
 
     let result = match input.lookahead() {
@@ -474,8 +476,26 @@ fn parse_logical_or<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressio
     })
 }
 
+fn parse_ternary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+    let condition = parse_logical_or(input)?;
+
+    if input.consume_if(Token::QuestionMark) {
+        let if_true = parse_assignment(input)?;
+        input.expect(Token::Colon)?;
+        let if_false = parse_assignment(input)?;
+
+        Ok(Expression::ConditionalOperator {
+            condition: Box::new(condition),
+            if_true: Box::new(if_true),
+            if_false: Box::new(if_false),
+        })
+    } else {
+        Ok(condition)
+    }
+}
+
 fn parse_assignment<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    match parse_logical_or(input)? {
+    match parse_ternary(input)? {
         Expression::Reference(reference) => match input.lookahead() {
             Some((Token::Assign, ..)) => {
                 input.next();
@@ -800,31 +820,48 @@ impl<'a> Parse<'a> for ForStatement<'a> {
             (None, Some(Expression::parse(input)?))
         };
 
-        input.expect(Token::Semicolon)?;
+        let result = match input.next() {
+            Some((Token::Semicolon, ..)) => {
+                let condition = if !input.lookahead_is(Token::Semicolon) {
+                    Some(Expression::parse(input)?)
+                } else {
+                    None
+                };
+                input.expect(Token::Semicolon)?;
 
-        let condition = if !input.lookahead_is(Token::Semicolon) {
-            Some(Expression::parse(input)?)
-        } else {
-            None
+                let operation = if !input.lookahead_is(Token::CloseParen) {
+                    Some(Expression::parse(input)?)
+                } else {
+                    None
+                };
+                input.expect(Token::CloseParen)?;
+
+                let block = Statement::parse(input)?;
+
+                ForStatement::For {
+                    vars,
+                    expression,
+                    condition,
+                    operation,
+                    block: Box::new(block),
+                }
+            }
+            Some((Token::In, ..)) => {
+                let expression = parse_expression(input)?;
+
+                input.expect(Token::CloseParen)?;
+
+                ForStatement::ForIn {
+                    identifier: "",
+                    expression,
+                    block: BlockStatement::parse(input)?,
+                }
+            }
+            Some(other) => input.expected(vec![Token::Semicolon, Token::In], other)?,
+            _ => unreachable!(),
         };
-        input.expect(Token::Semicolon)?;
 
-        let operation = if !input.lookahead_is(Token::CloseParen) {
-            Some(Expression::parse(input)?)
-        } else {
-            None
-        };
-        input.expect(Token::CloseParen)?;
-
-        let block = Statement::parse(input)?;
-
-        Ok(ForStatement::VarList {
-            vars,
-            expression,
-            condition,
-            operation,
-            block: Box::new(block),
-        })
+        Ok(result)
     }
 }
 

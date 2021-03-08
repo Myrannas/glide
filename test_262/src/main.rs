@@ -23,18 +23,20 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
 fn bootstrap_harness() -> ModuleSet {
-    let sta = read_to_string("./test262/harness/sta.js").unwrap();
-    let assert = read_to_string("./test262/harness/assert.js").unwrap();
+    let mut modules = Vec::new();
+    for file in vec![
+        "./test262/harness/sta.js",
+        "./test262/harness/assert.js",
+        "./test262/harness/propertyHelper.js",
+    ] {
+        let sta = read_to_string(file).unwrap();
+        let sta_module = parse_input(&sta).unwrap();
+        let compiled = compile("assert.js", sta_module, CompilerOptions::new()).unwrap();
 
-    let sta_module = parse_input(&sta).unwrap();
-    let module = parse_input(&assert).unwrap();
-
-    let compiled = compile("assert.js", module, CompilerOptions::new()).unwrap();
-    let sta_compiled = compile("sta.js", sta_module, CompilerOptions::new()).unwrap();
-
-    ModuleSet {
-        modules: vec![compiled, sta_compiled],
+        modules.push(compiled);
     }
+
+    ModuleSet { modules }
 }
 
 struct ModuleSet {

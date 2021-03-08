@@ -1,7 +1,7 @@
 use crate::object::JsPrimitive;
 use crate::result::JsResult;
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
-use builtin::{callable, getter, named, prototype};
+use builtin::{callable, constructor, getter, named, prototype};
 use logos::Source;
 use std::rc::Rc;
 
@@ -28,20 +28,20 @@ impl<'a, 'b> JsString<'a, 'b> {
     }
 
     #[named("charAt")]
-    fn char_at(&mut self, index: Option<&RuntimeValue<'a>>) -> JsResult<'a> {
-        let start_at: f64 = index.unwrap_or(&RuntimeValue::Float(0.0)).into();
+    fn char_at(&mut self, index: Option<RuntimeValue<'a>>) -> JsResult<'a> {
+        let start_at: f64 = index.unwrap_or(RuntimeValue::Float(0.0)).into();
         let end_at: RuntimeValue<'a> = (start_at + 1.0).into();
         let start_at: RuntimeValue<'a> = start_at.into();
 
         println!("charAt {} {}", start_at, end_at);
 
-        self.substring(Some(&start_at), Some(&end_at))
+        self.substring(Some(start_at), Some(end_at))
     }
 
     fn substring(
         &mut self,
-        start_at: Option<&RuntimeValue<'a>>,
-        end_at: Option<&RuntimeValue<'a>>,
+        start_at: Option<RuntimeValue<'a>>,
+        end_at: Option<RuntimeValue<'a>>,
     ) -> JsResult<'a> {
         let string_value = self
             .object
@@ -50,8 +50,8 @@ impl<'a, 'b> JsString<'a, 'b> {
             .unwrap_or_default()
             .to_string(self.thread)?;
 
-        let start_at: f64 = start_at.unwrap_or(&RuntimeValue::Float(0.0)).into();
-        let end_at: f64 = end_at.unwrap_or(&RuntimeValue::Float(0.0)).into();
+        let start_at: f64 = start_at.unwrap_or(RuntimeValue::Float(0.0)).into();
+        let end_at: f64 = end_at.unwrap_or(RuntimeValue::Float(0.0)).into();
 
         let char_at = string_value
             .slice((start_at as usize)..(end_at as usize))
@@ -63,8 +63,8 @@ impl<'a, 'b> JsString<'a, 'b> {
         Ok(RuntimeValue::String(Rc::new(char_at)))
     }
 
-    fn constructor(&mut self, value: Option<&RuntimeValue<'a>>) -> JsResult<'a, ()> {
-        let value = value.unwrap_or_default();
+    #[constructor]
+    fn constructor(&mut self, value: RuntimeValue<'a>) -> JsResult<'a, ()> {
         let str = value.to_string(self.thread)?;
 
         self.object.wrap(JsPrimitive::String(str));
@@ -73,8 +73,7 @@ impl<'a, 'b> JsString<'a, 'b> {
     }
 
     #[callable]
-    fn callable(thread: &'b mut JsThread<'a>, value: Option<&RuntimeValue<'a>>) -> JsResult<'a> {
-        let value = value.unwrap_or_default();
+    fn callable(thread: &'b mut JsThread<'a>, value: RuntimeValue<'a>) -> JsResult<'a> {
         let str = value.to_string(thread)?;
 
         Ok(RuntimeValue::String(str))

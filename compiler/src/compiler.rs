@@ -1,8 +1,8 @@
 use crate::ops::{
-    add, bind, call, call_new, catch, cjmp, div, duplicate, eq, get, get_null_safe, gt, gte,
-    increment, instance_of, jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo, mul,
-    ne, not_strict_eq, resolve, ret, rshift, rshift_u, set, strict_eq, sub, throw_value, truncate,
-    type_of, uncatch, Instruction,
+    add, bind, call, call_new, catch, cjmp, delete, div, duplicate, eq, get, get_null_safe, gt,
+    gte, increment, instance_of, jmp, land, lnot, load, load_this, lor, lshift, lt, lte, modulo,
+    mul, ne, not_strict_eq, resolve, ret, rshift, rshift_u, set, strict_eq, sub, throw_value,
+    truncate, type_of, uncatch, Instruction,
 };
 
 use crate::parser::ast::{
@@ -220,6 +220,7 @@ impl UnaryOperator {
             UnaryOperator::LogicalNot => lnot,
             UnaryOperator::Sub => sub,
             UnaryOperator::Add => todo!("Not implemented"),
+            UnaryOperator::Delete => delete,
         }
     }
 }
@@ -367,6 +368,19 @@ impl<'a, 'c> ChunkBuilder {
                 .compile_expression(*target)?
                 .compile_expression(*expression)?
                 .append_with_constant(set, StaticValue::String(accessor.to_owned())),
+            Expression::Assign {
+                assign_to:
+                    Reference::ComputedAccessor {
+                        accessor,
+                        expression: target,
+                        ..
+                    },
+                expression,
+            } => self
+                .compile_expression(*target)?
+                .compile_expression(*accessor)?
+                .compile_expression(*expression)?
+                .append(set),
             Expression::Call {
                 expression,
                 parameters,
@@ -414,6 +428,41 @@ impl<'a, 'c> ChunkBuilder {
                             })
                     })?
             }
+            Expression::ArrayLiteral { attributes } => {
+                let mut next = self;
+
+                let attribute_count = attributes.len();
+                next = attributes
+                    .into_iter()
+                    .try_fold(next, |builder, expression| {
+                        builder.compile_expression(expression)
+                    })?;
+
+                next.append_with_constant(load, StaticValue::GlobalThis)
+                    .append_with_constant(get, StaticValue::String("Array".to_owned()))
+                    .append_with_constant(call_new, StaticValue::Float(attribute_count as f64))
+            }
+            Expression::ConditionalOperator {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                let mut next = self;
+
+                let if_true_chunk = next.allocate_chunk();
+                let if_false_chunk = next.allocate_chunk();
+                let next_chunk = next.allocate_chunk();
+
+                next.compile_expression(*condition)?
+                    .append_with_constant(cjmp, StaticValue::Branch(if_true_chunk, if_false_chunk))
+                    .switch_to(if_true_chunk)
+                    .compile_expression(*if_true)?
+                    .append_with_constant(jmp, StaticValue::Jump(next_chunk))
+                    .switch_to(if_false_chunk)
+                    .compile_expression(*if_false)?
+                    .append_with_constant(jmp, StaticValue::Jump(next_chunk))
+                    .switch_to(next_chunk)
+            }
             Expression::Reference(Reference::This) => self.append(load_this),
             Expression::Reference(Reference::Id(id)) => match self.resolve_identifier(id) {
                 Resolution::Resolved { local } => self.append_with_constant(load, Local(local)),
@@ -445,6 +494,21 @@ impl<'a, 'c> ChunkBuilder {
                     )
                 } else {
                     next.append_with_constant(get, StaticValue::String(accessor.to_string()))
+                }
+            }
+            Expression::Reference(Reference::ComputedAccessor {
+                expression,
+                accessor,
+                null_safe,
+            }) => {
+                let next = self
+                    .compile_expression(*expression)?
+                    .compile_expression(*accessor)?;
+
+                if null_safe {
+                    next.append(get_null_safe)
+                } else {
+                    next.append(get)
                 }
             }
             Expression::Function {
@@ -542,7 +606,7 @@ impl<'a, 'c> ChunkBuilder {
 
                 next
             }
-            Statement::For(ForStatement::VarList {
+            Statement::For(ForStatement::For {
                 expression,
                 operation,
                 condition,
@@ -594,6 +658,10 @@ impl<'a, 'c> ChunkBuilder {
 
                 next.append_with_constant(jmp, Jump(condition_index))
                     .switch_to(next_index)
+            }
+            Statement::For(ForStatement::ForIn { .. }) => {
+                self
+                // todo: Make this work
             }
             Statement::Function(FunctionStatement {
                 identifier,

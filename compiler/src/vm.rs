@@ -180,6 +180,14 @@ impl<'a> JsThread<'a> {
         &self.current_frame.current_function
     }
 
+    pub fn read_arg(&self, count: usize, index: usize) -> Option<RuntimeValue<'a>> {
+        if index > count {
+            None
+        } else {
+            self.stack.get(self.stack.len() - count).cloned()
+        }
+    }
+
     pub fn new(function: Function, global_this: GlobalThis<'a>) -> JsThread<'a> {
         let local_size = function.inner.local_size;
 

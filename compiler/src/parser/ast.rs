@@ -7,6 +7,11 @@ pub(crate) enum Reference<'a> {
         accessor: &'a str,
         null_safe: bool,
     },
+    ComputedAccessor {
+        expression: Box<Expression<'a>>,
+        accessor: Box<Expression<'a>>,
+        null_safe: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -38,6 +43,7 @@ pub enum UnaryOperator {
     LogicalNot,
     Sub,
     Add,
+    Delete,
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -61,8 +67,16 @@ pub(crate) enum Expression<'a> {
         expression: Box<Expression<'a>>,
         parameters: Vec<Expression<'a>>,
     },
+    ConditionalOperator {
+        condition: Box<Expression<'a>>,
+        if_true: Box<Expression<'a>>,
+        if_false: Box<Expression<'a>>,
+    },
     ObjectLiteral {
         attributes: Vec<(&'a str, Expression<'a>)>,
+    },
+    ArrayLiteral {
+        attributes: Vec<Expression<'a>>,
     },
     Inc {
         reference: Reference<'a>,
@@ -160,12 +174,17 @@ impl<'a> From<Box<Statement<'a>>> for BlockStatement<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum ForStatement<'a> {
-    VarList {
+    For {
         expression: Option<Expression<'a>>,
         vars: Option<VarStatement<'a>>,
         condition: Option<Expression<'a>>,
         operation: Option<Expression<'a>>,
         block: Box<Statement<'a>>,
+    },
+    ForIn {
+        identifier: &'a str,
+        expression: Expression<'a>,
+        block: BlockStatement<'a>,
     },
 }
 

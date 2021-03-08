@@ -1,5 +1,5 @@
-use super::builtins::errors;
 use super::builtins::prototype::Prototype;
+use super::builtins::{array, errors, function, number, objects, string};
 use crate::compiler::compile_eval;
 use crate::object::JsObject;
 use crate::parse_input;
@@ -9,12 +9,14 @@ use crate::vm::JsThread;
 use std::rc::Rc;
 
 fn eval<'a>(
-    args: &[Option<RuntimeValue<'a>>],
+    args: usize,
     frame: &mut JsThread<'a>,
     _value: &JsObject<'a>,
     _context: Option<&RuntimeValue<'a>>,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-    match &args[0] {
+    let argument = frame.read_arg(args, 0);
+
+    match argument {
         Some(RuntimeValue::String(str)) => {
             let input = str.as_ref().to_owned();
 
@@ -49,28 +51,17 @@ fn eval<'a>(
 }
 
 trait Helpers<'a> {
-    fn define_readonly_builtin<S: Into<String>>(
-        &self,
-        key: S,
-        getter: BuiltinFn<'a>,
-        desired_args: usize,
-    );
+    fn define_readonly_builtin<S: Into<String>>(&self, key: S, getter: BuiltinFn<'a>);
     fn define_readonly_value<S: Into<String>, V: Into<RuntimeValue<'a>>>(&self, key: S, value: V);
 }
 
 impl<'a> Helpers<'a> for JsObject<'a> {
-    fn define_readonly_builtin<S: Into<String>>(
-        &self,
-        key: S,
-        getter: BuiltinFn<'a>,
-        desired_args: usize,
-    ) {
+    fn define_readonly_builtin<S: Into<String>>(&self, key: S, getter: BuiltinFn<'a>) {
         self.define_property(
             Rc::new(key.into()),
             Some(FunctionReference::BuiltIn(BuiltIn {
                 op: getter,
                 context: None,
-                desired_args,
             })),
             None,
         )
@@ -82,7 +73,6 @@ impl<'a> Helpers<'a> for JsObject<'a> {
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(Box::new(value.into())),
                 op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
-                desired_args: 0,
             })),
             None,
         )
@@ -101,6 +91,9 @@ pub(crate) struct Errors<'a> {
 pub(crate) struct Primitives<'a> {
     string: JsObject<'a>,
     function: JsObject<'a>,
+    number: JsObject<'a>,
+    object: JsObject<'a>,
+    array: JsObject<'a>,
 }
 
 #[derive(Clone)]
@@ -129,7 +122,6 @@ impl<'a> GlobalThis<'a> {
             "eval",
             primitives.wrap_function(BuiltIn {
                 context: None,
-                desired_args: 1,
                 op: eval,
             }),
         );
@@ -146,16 +138,26 @@ impl<'a> GlobalThis<'a> {
 
 impl<'a> Primitives<'a> {
     fn init(global_this: &JsObject<'a>) -> Primitives<'a> {
-        let string_prototype: JsObject<'a> = super::builtins::string::JsString::bind(None);
-        let number_prototype: JsObject<'a> = super::builtins::number::JsNumber::bind(None);
-        let function_prototype = JsObject::new();
+        let object_prototype: JsObject<'a> = objects::JsObjectBase::bind(None);
+
+        let string_prototype: JsObject<'a> = string::JsString::bind(Some(&object_prototype));
+        let number_prototype: JsObject<'a> = number::JsNumber::bind(Some(&object_prototype));
+        let array_prototype: JsObject<'a> = array::JsArray::bind(Some(&object_prototype));
+
+        let function_prototype = function::JsFunction::bind(Some(&object_prototype));
 
         let primitives = Primitives {
             string: string_prototype.clone(),
             function: function_prototype.clone(),
+            object: object_prototype.clone(),
+            array: array_prototype.clone(),
+            number: number_prototype.clone(),
         };
 
         global_this.define_value("String", string_prototype);
+        global_this.define_value("Array", array_prototype);
+        global_this.define_value("Object", object_prototype);
+        global_this.define_value("Function", function_prototype);
         global_this.define_value("Number", number_prototype.clone());
         global_this.define_value(
             "parseInt",

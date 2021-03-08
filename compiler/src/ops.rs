@@ -366,6 +366,10 @@ op!(increment(val, frame) {
     catch!(frame, target.update_reference(frame, RuntimeValue::Float(value + by)));
 } step);
 
+op!(delete(val, frame) {
+    todo!("Not yet working");
+});
+
 op!(strict_eq(val, frame) {
     let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
     let l_prim = resolve!(l_ref, frame);

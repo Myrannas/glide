@@ -138,7 +138,9 @@ impl<'a> JsObject<'a> {
         self.get_borrowed(&key, frame)
     }
 
-    pub fn set(&self, key: Rc<String>, value: RuntimeValue<'a>) {
+    pub fn set(&self, key: Rc<String>, value: impl Into<RuntimeValue<'a>>) {
+        let value = value.into();
+
         if matches!(value, RuntimeValue::Internal(_)) {
             panic!("Can't write internal values to an object")
         }

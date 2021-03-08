@@ -11,10 +11,8 @@ pub(crate) struct JsError<'a, 'b> {
 
 #[prototype]
 impl<'a, 'b> JsError<'a, 'b> {
-    fn constructor(&self, message: Option<&RuntimeValue<'a>>) {
-        let message_as_string = message.unwrap_or_default();
-        self.object
-            .define_value("message", message_as_string.clone());
+    fn constructor(&self, message: RuntimeValue<'a>) {
+        self.object.define_value("message", message.clone());
     }
 
     #[named("toString")]

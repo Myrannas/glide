@@ -160,7 +160,6 @@ pub struct BuiltIn<'a> {
 
     // Option<Box<..>> to prevent infinite sized RuntimeValues
     pub(crate) context: Option<Box<RuntimeValue<'a>>>,
-    pub(crate) desired_args: usize,
 }
 
 impl<'a> PartialEq for BuiltIn<'a> {
@@ -175,11 +174,20 @@ impl<'a> From<BuiltIn<'a>> for FunctionReference<'a> {
     }
 }
 
+impl<'a> From<Option<RuntimeValue<'a>>> for RuntimeValue<'a> {
+    fn from(value: Option<RuntimeValue<'a>>) -> Self {
+        match value {
+            Some(value) => value,
+            None => RuntimeValue::Undefined,
+        }
+    }
+}
+
 impl<'a> BuiltIn<'a> {
     pub(crate) fn apply(
         &self,
-        args_count: usize,
-        frame: &mut JsThread<'a>,
+        arguments: usize,
+        thread: &mut JsThread<'a>,
         target: Option<JsObject<'a>>,
     ) {
         let context = match &self.context {
@@ -187,31 +195,34 @@ impl<'a> BuiltIn<'a> {
             None => None,
         };
 
-        let required_arg_count = self.desired_args.min(8);
-        let mut args: [Option<RuntimeValue<'a>>; 8] = Default::default();
+        // let required_arg_count = self.desired_args.min(8);
+        // let mut args: [Option<RuntimeValue<'a>>; 8] = Default::default();
+        //
+        // for i in (0..required_arg_count).rev() {
+        //     if i < args_count {
+        //         args[i] = frame.stack.pop();
+        //     } else {
+        //         args[i] = None;
+        //     }
+        // }
 
-        for i in (0..required_arg_count).rev() {
-            if i < args_count {
-                args[i] = frame.stack.pop();
-            } else {
-                args[i] = None;
-            }
-        }
+        let target = target.unwrap_or(thread.global_this.global_this.clone());
+        let result = (self.op)(arguments, thread, &target, context);
+        thread.stack.truncate(thread.stack.len() - arguments);
 
-        let target = target.unwrap_or(frame.global_this.global_this.clone());
-        match (self.op)(&args[0..required_arg_count], frame, &target, context) {
-            Ok(Some(result)) => frame.stack.push(result),
+        match result {
+            Ok(Some(result)) => thread.stack.push(result),
             Err(err) => {
-                frame.throw(err);
+                thread.throw(err);
             }
             _ => (),
-        }
+        };
     }
 
     pub(crate) fn apply_return(
         &self,
-        args_count: usize,
-        frame: &mut JsThread<'a>,
+        arguments: usize,
+        thread: &mut JsThread<'a>,
         target: Option<JsObject<'a>>,
     ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
         let context = match &self.context {
@@ -219,24 +230,15 @@ impl<'a> BuiltIn<'a> {
             None => None,
         };
 
-        let required_arg_count = self.desired_args.min(8);
-        let mut args: [Option<RuntimeValue<'a>>; 8] = Default::default();
-
-        for i in 0..required_arg_count {
-            if i < args_count {
-                args[i] = frame.stack.pop();
-            } else {
-                args[i] = None;
-            }
-        }
-
-        let target = target.unwrap_or(frame.global_this.global_this.clone());
-        (self.op)(&args[0..required_arg_count], frame, &target, context)
+        let target = target.unwrap_or(thread.global_this.global_this.clone());
+        let result = (self.op)(arguments, thread, &target, context);
+        thread.stack.truncate(thread.stack.len() - arguments);
+        result
     }
 }
 
 pub(crate) type BuiltinFn<'a> = fn(
-    args: &[Option<RuntimeValue<'a>>],
+    arguments: usize,
     frame: &mut JsThread<'a>,
     target: &JsObject<'a>,
     context: Option<&RuntimeValue<'a>>,
@@ -471,6 +473,12 @@ impl<'a> From<f64> for RuntimeValue<'a> {
     }
 }
 
+impl<'a> From<bool> for RuntimeValue<'a> {
+    fn from(value: bool) -> Self {
+        RuntimeValue::Boolean(value)
+    }
+}
+
 impl<'a> From<RuntimeValue<'a>> for bool {
     fn from(value: RuntimeValue<'a>) -> Self {
         (&value).into()
@@ -480,6 +488,12 @@ impl<'a> From<RuntimeValue<'a>> for bool {
 impl<'a> From<Rc<String>> for RuntimeValue<'a> {
     fn from(value: Rc<String>) -> Self {
         RuntimeValue::String(value)
+    }
+}
+
+impl<'a> From<String> for RuntimeValue<'a> {
+    fn from(value: String) -> Self {
+        RuntimeValue::String(Rc::new(value))
     }
 }
 
