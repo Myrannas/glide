@@ -27,6 +27,7 @@ fn normal<'a>(lex: &mut Lexer<'a, StringToken>) -> Option<char> {
 fn escaped<'a>(lex: &mut Lexer<'a, StringToken>) -> Option<char> {
     match lex.slice() {
         "\\n" => Some('\n'),
+        "\\0" => Some('\0'),
         _ => None,
     }
 }

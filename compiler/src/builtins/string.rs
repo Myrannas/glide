@@ -1,7 +1,9 @@
 use crate::object::JsPrimitive;
 use crate::result::JsResult;
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
-use builtin::{callable, getter, prototype};
+use builtin::{callable, getter, named, prototype};
+use logos::Source;
+use std::rc::Rc;
 
 pub(crate) struct JsString<'a, 'b> {
     object: &'b JsObject<'a>,
@@ -23,6 +25,42 @@ impl<'a, 'b> JsString<'a, 'b> {
         };
 
         Ok(str.len() as f64)
+    }
+
+    #[named("charAt")]
+    fn char_at(&mut self, index: Option<&RuntimeValue<'a>>) -> JsResult<'a> {
+        let start_at: f64 = index.unwrap_or(&RuntimeValue::Float(0.0)).into();
+        let end_at: RuntimeValue<'a> = (start_at + 1.0).into();
+        let start_at: RuntimeValue<'a> = start_at.into();
+
+        println!("charAt {} {}", start_at, end_at);
+
+        self.substring(Some(&start_at), Some(&end_at))
+    }
+
+    fn substring(
+        &mut self,
+        start_at: Option<&RuntimeValue<'a>>,
+        end_at: Option<&RuntimeValue<'a>>,
+    ) -> JsResult<'a> {
+        let string_value = self
+            .object
+            .get_wrapped_value()
+            .clone()
+            .unwrap_or_default()
+            .to_string(self.thread)?;
+
+        let start_at: f64 = start_at.unwrap_or(&RuntimeValue::Float(0.0)).into();
+        let end_at: f64 = end_at.unwrap_or(&RuntimeValue::Float(0.0)).into();
+
+        let char_at = string_value
+            .slice((start_at as usize)..(end_at as usize))
+            .map(&str::to_owned)
+            .unwrap_or("".to_owned());
+
+        println!("substring {} {} {}", start_at, end_at, char_at);
+
+        Ok(RuntimeValue::String(Rc::new(char_at)))
     }
 
     fn constructor(&mut self, value: Option<&RuntimeValue<'a>>) -> JsResult<'a, ()> {

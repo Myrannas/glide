@@ -95,6 +95,10 @@ impl<'a, 'b> JsContext<'a> {
     }
 
     pub(crate) fn write(&self, index: usize, value: RuntimeValue<'a>) {
+        if matches!(value, RuntimeValue::Internal(_)) {
+            panic!("Can't assign an internal to the context");
+        }
+
         self.inner.borrow_mut().locals[index] = value
     }
 
@@ -244,13 +248,24 @@ macro_rules! numeric_comparison_op {
         let l_prim = resolve!(l_ref, frame);
         let r_prim = resolve!(r_ref, frame);
 
-        // no strings yet
+        match (l_prim, r_prim) {
+            (RuntimeValue::String(s1), RuntimeValue::String(s2)) => {
 
-        let $r: f64 = l_prim.into();
-        let $l: f64 = r_prim.into();
+                let $l: &str = s1.as_ref();
+                let $r: &str = s2.as_ref();
 
-        frame.stack.push(RuntimeValue::Boolean($e));
-    } step););
+            frame.stack.push(RuntimeValue::Boolean($e))
+
+        }, (l_prim, r_prim) => {
+            // no strings yet
+
+                let $l: f64 = l_prim.into();
+                let $r: f64 = r_prim.into();
+
+                frame.stack.push(RuntimeValue::Boolean($e))
+            }
+        }
+    } step); );
 }
 
 macro_rules! resolve {
@@ -427,6 +442,8 @@ op!(lor(val, frame) {
     let l_prim = l_ref.clone();
     let l_prim = resolve!(l_prim, frame);
 
+    println!("{:?}", l_prim);
+
     let r: bool = l_prim.into();
 
     if r {
@@ -515,7 +532,7 @@ op!(load_this(val, frame) {
 } step);
 
 op!(bind(val, frame) {
-    let value = frame.stack.pop().expect("Expect a value to be present for assign");
+    let value = resolve!(frame.stack.pop().expect("Expect a value to be present for assign"), frame);
     if let Some(StaticValue::Local(variable)) = val {
         frame.current_context().write(*variable, value);
     } else {
@@ -548,12 +565,12 @@ op!(call(val, frame) {
 
         let fn_value = frame.stack.pop().expect("Expect a target");
 
-        let target = match fn_value.clone() {
+        let target = resolve!(match fn_value.clone() {
             RuntimeValue::Reference(Reference {
                 base, ..
             }) => *base,
             other => other
-        }.to_object(frame);
+        }, frame).to_object(frame);
 
         match resolve!(fn_value.clone(), frame) {
             RuntimeValue::Object(obj) if obj.is_callable() => {
@@ -584,13 +601,23 @@ op!(call_new(val, frame) {
             RuntimeValue::Object(obj) if obj.is_callable() => {
                 match obj.get_callable().unwrap() {
                     FunctionReference::Custom(function) => {
-                        let target = JsObject::new().with_name(function.function.name());
+                        let mut target = JsObject::new()
+                            .with_name(function.function.name());
+
+                        if let Some(prototype) = obj.prototype() {
+                            target = target.with_prototype(prototype);
+                        }
 
                         frame.call(target, function, v, true, false);
                     },
                     FunctionReference::BuiltIn(function) => {
-                        let obj = JsObject::new().into();
-                        function.apply(v, frame, obj);
+                        let mut target = JsObject::new();
+
+                        if let Some(prototype) = obj.prototype() {
+                            target = target.with_prototype(prototype);
+                        }
+
+                        function.apply(v, frame, Some(target));
                         frame.step();
                     },
                 }

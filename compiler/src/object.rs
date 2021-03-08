@@ -130,11 +130,19 @@ impl<'a> JsObject<'a> {
         self
     }
 
+    pub fn prototype(&self) -> Option<JsObject<'a>> {
+        self.inner.borrow().prototype.clone()
+    }
+
     pub fn get<'b, 'c>(&self, key: Rc<String>, frame: &'c mut JsThread<'a>) -> JsResult<'a> {
         self.get_borrowed(&key, frame)
     }
 
     pub fn set(&self, key: Rc<String>, value: RuntimeValue<'a>) {
+        if matches!(value, RuntimeValue::Internal(_)) {
+            panic!("Can't write internal values to an object")
+        }
+
         RefMut::map(self.inner.borrow_mut(), |f| {
             let inner = f.properties.get_or_insert_with(HashMap::new);
             inner.insert(key, Property::Value(value));
@@ -180,6 +188,19 @@ impl<'a> JsObject<'a> {
             inner.insert(Rc::new(key.into()), Property::Value(value.into()));
             inner
         });
+    }
+
+    pub(crate) fn read_simple_property(&self, key: impl Into<String>) -> RuntimeValue<'a> {
+        match self
+            .inner
+            .borrow()
+            .properties
+            .as_ref()
+            .and_then(|map| map.get(&key.into()))
+        {
+            Some(Property::Value(value)) => value.clone(),
+            _ => unreachable!(),
+        }
     }
 
     fn get_borrowed<'b, 'c>(&self, key: &Rc<String>, thread: &'c mut JsThread<'a>) -> JsResult<'a> {

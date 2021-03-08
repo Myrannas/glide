@@ -123,14 +123,8 @@ impl<'a> GlobalThis<'a> {
         let primitives = Primitives::init(&global_this);
         let errors = Errors::init(&global_this);
 
-        let math = JsObject::new();
-        math.define_readonly_builtin(
-            "pow",
-            |_args, _thread, _target, _context| Ok(Some(RuntimeValue::Undefined)),
-            0,
-        );
+        global_this.define_value("Math", super::builtins::math::JsMath::bind(None));
 
-        global_this.define_readonly_value("Math", math);
         global_this.define_readonly_value(
             "eval",
             primitives.wrap_function(BuiltIn {
@@ -152,7 +146,8 @@ impl<'a> GlobalThis<'a> {
 
 impl<'a> Primitives<'a> {
     fn init(global_this: &JsObject<'a>) -> Primitives<'a> {
-        let string_prototype = super::builtins::string::JsString::bind(None);
+        let string_prototype: JsObject<'a> = super::builtins::string::JsString::bind(None);
+        let number_prototype: JsObject<'a> = super::builtins::number::JsNumber::bind(None);
         let function_prototype = JsObject::new();
 
         let primitives = Primitives {
@@ -161,6 +156,11 @@ impl<'a> Primitives<'a> {
         };
 
         global_this.define_value("String", string_prototype);
+        global_this.define_value("Number", number_prototype.clone());
+        global_this.define_value(
+            "parseInt",
+            number_prototype.read_simple_property("parseInt"),
+        );
 
         primitives
     }

@@ -1,4 +1,4 @@
-use crate::value::RuntimeValue;
+use crate::value::{InternalValue, RuntimeValue};
 use crate::JsThread;
 use colored::Colorize;
 use std::cmp::Ordering;
@@ -163,6 +163,13 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
                 render.end_internal()?;
                 Ok(())
             }
+            (Representation::Debug, RuntimeValue::Internal(InternalValue::Local(local))) => {
+                render.start_internal("INTERNAL")?;
+                render.internal_key("index")?;
+                render.literal(&local.to_string())?;
+                render.end_internal()?;
+                Ok(())
+            }
             (Representation::Compact, RuntimeValue::Reference(reference)) => match &*reference.base
             {
                 RuntimeValue::Object(_obj) => {
@@ -173,7 +180,14 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
                     Ok(())
                 }
 
-                value => panic!("Unsupported object type {:?}", value),
+                value => {
+                    DebugRepresentation::render(value, render)?;
+                    render
+                        .formatter
+                        .write_fmt(format_args!(".{}", reference.name))?;
+
+                    Ok(())
+                }
             },
             (.., RuntimeValue::Float(value)) => render.literal(&format!("{}", value)),
             other => panic!("Unsupported debug view"),

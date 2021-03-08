@@ -14,6 +14,7 @@ extern crate builtin;
 extern crate log;
 extern crate pretty_env_logger;
 extern crate thiserror;
+extern crate rand;
 
 pub use compiler::{compile, CompilerOptions};
 pub use object::JsObject;

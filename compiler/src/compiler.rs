@@ -390,7 +390,10 @@ impl<'a, 'c> ChunkBuilder {
 
                 parameters
                     .into_iter()
-                    .try_fold(self, |next, expression| next.compile_expression(expression))?
+                    .try_fold(self, |next, expression| {
+                        next.compile_expression(expression)
+                            .map(|n| n.append(resolve))
+                    })?
                     .compile_expression(*target)?
                     .append_with_constant(call_new, StaticValue::Float(args_len as f64))
             }

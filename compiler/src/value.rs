@@ -105,7 +105,7 @@ impl<'a> StaticValue {
             StaticValue::Boolean(v) => RuntimeValue::Boolean(*v),
             StaticValue::Float(f) => RuntimeValue::Float(*f),
             StaticValue::String(s) => RuntimeValue::String(Rc::new(s.to_owned())),
-            StaticValue::Local(l) => frame.current_context().read(*l),
+            StaticValue::Local(l) => RuntimeValue::Internal(InternalValue::Local(*l)),
             StaticValue::Function(f) => {
                 let function = frame.current_function();
                 let child_function = function.child_function(*f).clone();
@@ -190,7 +190,7 @@ impl<'a> BuiltIn<'a> {
         let required_arg_count = self.desired_args.min(8);
         let mut args: [Option<RuntimeValue<'a>>; 8] = Default::default();
 
-        for i in 0..required_arg_count {
+        for i in (0..required_arg_count).rev() {
             if i < args_count {
                 args[i] = frame.stack.pop();
             } else {
@@ -277,7 +277,7 @@ impl<'a> RuntimeValue<'a> {
         match (self, other) {
             (RuntimeValue::Undefined, RuntimeValue::Undefined) => true,
             (RuntimeValue::Boolean(b1), RuntimeValue::Boolean(b2)) => b1 == b2,
-            (RuntimeValue::String(b1), RuntimeValue::String(b2)) => b1.eq(b2),
+            (RuntimeValue::String(b1), RuntimeValue::String(b2)) => b1.as_ref() == b2.as_ref(),
             (RuntimeValue::Float(b1), RuntimeValue::Float(b2)) => b1 == b2,
             (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => b1 == b2,
             (RuntimeValue::Null, RuntimeValue::Null) => true,
@@ -327,8 +327,7 @@ impl<'a> RuntimeValue<'a> {
         self,
         thread: &'c mut JsThread<'a>,
     ) -> Result<Self, ExecutionError<'a>> {
-        // println!("{:?}", self);
-        match self {
+        let result = match self.clone() {
             RuntimeValue::Internal(InternalValue::Local(index)) => {
                 Ok(thread.current_context().read(index))
             }
@@ -349,7 +348,9 @@ impl<'a> RuntimeValue<'a> {
                 value => todo!("Unsupported type {:?}", value),
             },
             other => Ok(other),
-        }
+        }?;
+
+        Ok(result)
     }
 
     pub(crate) fn update_reference(
@@ -369,7 +370,7 @@ impl<'a> RuntimeValue<'a> {
                 }
                 _ => Ok(()),
             },
-            _ => InternalError::new_stackless("Unable to update").into(),
+            value => InternalError::new_stackless(format!("Unable to update - {:?}", value)).into(),
         }
     }
 
