@@ -1,20 +1,21 @@
+use super::builtins::errors;
+use super::builtins::prototype::Prototype;
 use crate::compiler::compile_eval;
 use crate::object::JsObject;
+use crate::parse_input;
 use crate::result::JsResult;
-use crate::value::StaticValue::Object;
 use crate::value::{BuiltIn, BuiltinFn, CustomFunctionReference, FunctionReference, RuntimeValue};
 use crate::vm::JsThread;
-use crate::{parse_input, InternalError};
 use std::rc::Rc;
 
 fn eval<'a>(
     args: &[Option<RuntimeValue<'a>>],
     frame: &mut JsThread<'a>,
-    _value: &RuntimeValue<'a>,
+    _value: &JsObject<'a>,
     _context: Option<&RuntimeValue<'a>>,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     match &args[0] {
-        Some(RuntimeValue::String(str, ..)) => {
+        Some(RuntimeValue::String(str)) => {
             let input = str.as_ref().to_owned();
 
             let code = match parse_input(&input) {
@@ -44,18 +45,6 @@ fn eval<'a>(
             Ok(None)
         }
         _ => Ok(Some(RuntimeValue::Undefined)),
-    }
-}
-
-fn string_length<'a>(
-    _args: &[Option<RuntimeValue<'a>>],
-    _thread: &mut JsThread<'a>,
-    value: &RuntimeValue<'a>,
-    _context: Option<&RuntimeValue<'a>>,
-) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-    match value {
-        RuntimeValue::String(str, ..) => Ok(Some(RuntimeValue::Float(str.as_ref().len() as f64))),
-        _ => InternalError::new_stackless("Attempted to call string length on non-string").into(),
     }
 }
 
@@ -111,6 +100,7 @@ pub(crate) struct Errors<'a> {
 #[derive(Clone)]
 pub(crate) struct Primitives<'a> {
     string: JsObject<'a>,
+    function: JsObject<'a>,
 }
 
 #[derive(Clone)]
@@ -130,6 +120,9 @@ impl<'a> GlobalThis<'a> {
     pub fn new() -> GlobalThis<'a> {
         let global_this = JsObject::new();
 
+        let primitives = Primitives::init(&global_this);
+        let errors = Errors::init(&global_this);
+
         let math = JsObject::new();
         math.define_readonly_builtin(
             "pow",
@@ -140,20 +133,14 @@ impl<'a> GlobalThis<'a> {
         global_this.define_readonly_value("Math", math);
         global_this.define_readonly_value(
             "eval",
-            RuntimeValue::Function(
-                FunctionReference::BuiltIn(BuiltIn {
-                    context: None,
-                    desired_args: 1,
-                    op: eval,
-                }),
-                JsObject::new(),
-            ),
+            primitives.wrap_function(BuiltIn {
+                context: None,
+                desired_args: 1,
+                op: eval,
+            }),
         );
         global_this.define_readonly_value("undefined", RuntimeValue::Undefined);
         global_this.define_readonly_value("NaN", f64::NAN);
-
-        let primitives = Primitives::init(&global_this);
-        let errors = Errors::init(&global_this);
 
         GlobalThis {
             global_this,
@@ -165,52 +152,29 @@ impl<'a> GlobalThis<'a> {
 
 impl<'a> Primitives<'a> {
     fn init(global_this: &JsObject<'a>) -> Primitives<'a> {
-        let string_prototype = JsObject::new();
+        let string_prototype = super::builtins::string::JsString::bind(None);
+        let function_prototype = JsObject::new();
 
-        string_prototype.define_readonly_value(
-            "constructor",
-            BuiltIn {
-                op: |args, thread, _, ctx| {
-                    let value = args
-                        .get(0)
-                        .cloned()
-                        .unwrap()
-                        .unwrap_or(RuntimeValue::Undefined);
-                    let str = value.to_string(thread)?;
-                    let prototype = ctx.unwrap().as_object()?.clone();
-
-                    Ok(Some(RuntimeValue::String(str, prototype)))
-                },
-                desired_args: 1,
-                context: Some(Box::new(RuntimeValue::Object(string_prototype.clone()))),
-            },
-        );
-        string_prototype.define_readonly_builtin("length", string_length, 0);
-
-        let string_function = BuiltIn {
-            op: |args, thread, _, ctx| {
-                let value = args
-                    .get(0)
-                    .cloned()
-                    .unwrap()
-                    .unwrap_or(RuntimeValue::Undefined);
-                let str = value.to_string(thread)?;
-                let prototype = ctx.unwrap().as_object()?.clone();
-
-                Ok(Some(RuntimeValue::String(str, prototype)))
-            },
-            desired_args: 1,
-            context: Some(Box::new(RuntimeValue::Object(string_prototype.clone()))),
+        let primitives = Primitives {
+            string: string_prototype.clone(),
+            function: function_prototype.clone(),
         };
 
-        global_this.define_readonly_value(
-            "String",
-            RuntimeValue::Function(string_function.into(), string_prototype.clone()),
-        );
+        global_this.define_value("String", string_prototype);
 
-        Primitives {
-            string: string_prototype,
-        }
+        primitives
+    }
+
+    pub(crate) fn wrap_string(&self, string: Rc<String>) -> JsObject<'a> {
+        JsObject::new()
+            .wrapping(RuntimeValue::String(string))
+            .with_prototype(self.string.clone())
+    }
+
+    pub(crate) fn wrap_function(&self, function: impl Into<FunctionReference<'a>>) -> JsObject<'a> {
+        JsObject::new()
+            .callable(function)
+            .with_prototype(self.function.clone())
     }
 }
 
@@ -234,53 +198,14 @@ impl<'a> Errors<'a> {
 
         error.set(
             Rc::new("message".into()),
-            RuntimeValue::String(Rc::new(message.into()), JsObject::new()),
+            RuntimeValue::String(Rc::new(message.into())),
         );
 
         error
     }
 
     fn init(global_this: &JsObject<'a>) -> Errors<'a> {
-        let error = JsObject::new();
-
-        error.define_readonly_value(
-            "constructor",
-            BuiltIn {
-                context: None,
-                desired_args: 1,
-                op: |args, _, target, _| {
-                    let obj = target.as_object()?;
-
-                    let message = args
-                        .get(0)
-                        .cloned()
-                        .unwrap()
-                        .unwrap_or(RuntimeValue::Undefined);
-
-                    obj.set(Rc::new("message".into()), message);
-
-                    Ok(None)
-                },
-            },
-        );
-
-        error.define_readonly_value(
-            "toString",
-            BuiltIn {
-                context: None,
-                desired_args: 1,
-                op: |_args, thread, target, _| {
-                    let obj = target.as_object()?;
-
-                    let message = obj.get(Rc::new("message".into()), thread, target)?;
-
-                    Ok(Some(RuntimeValue::String(
-                        message.to_string(thread)?,
-                        JsObject::new(),
-                    )))
-                },
-            },
-        );
+        let error = errors::JsError::bind(None);
 
         let reference_error = JsObject::new().with_prototype(error.clone());
         let syntax_error = JsObject::new().with_prototype(error.clone());

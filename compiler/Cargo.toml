@@ -16,3 +16,4 @@ logos = "0.12.0"
 thiserror = "1.0"
 colored = "2.0.0"
 arr_macro = "0.1.3"
+builtin = { path = "../builtin" }

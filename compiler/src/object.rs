@@ -2,13 +2,47 @@ use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::result::JsResult;
 use crate::value::{FunctionReference, RuntimeValue};
 use crate::vm::JsThread;
-use crate::{ExecutionError, InternalError};
 use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fmt::Write;
 use std::rc::Rc;
+
+#[derive(Clone, Debug)]
+pub enum JsPrimitive {
+    Undefined,
+    Null,
+    Boolean(bool),
+    Float(f64),
+    String(Rc<String>),
+}
+
+impl<'a> From<JsPrimitive> for RuntimeValue<'a> {
+    fn from(value: JsPrimitive) -> Self {
+        match value {
+            JsPrimitive::Undefined => RuntimeValue::Undefined,
+            JsPrimitive::Null => RuntimeValue::Null,
+            JsPrimitive::Boolean(value) => RuntimeValue::Boolean(value),
+            JsPrimitive::Float(value) => RuntimeValue::Float(value),
+            JsPrimitive::String(str) => RuntimeValue::String(str),
+        }
+    }
+}
+
+impl<'a> From<RuntimeValue<'a>> for JsPrimitive {
+    fn from(value: RuntimeValue<'a>) -> Self {
+        match value {
+            RuntimeValue::Undefined => JsPrimitive::Undefined,
+            RuntimeValue::Null => JsPrimitive::Null,
+            RuntimeValue::Boolean(b) => JsPrimitive::Boolean(b),
+            RuntimeValue::Float(f) => JsPrimitive::Float(f),
+            RuntimeValue::String(str) => JsPrimitive::String(str),
+            RuntimeValue::Object(_) => panic!("Cannot be wrapped"),
+            RuntimeValue::Reference(_) => panic!("Cannot be wrapped"),
+            RuntimeValue::Internal(_) => panic!("Cannot be wrapped"),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct JsObject<'a> {
@@ -21,6 +55,8 @@ struct JsObjectInner<'a> {
     pub(crate) indexed_properties: Option<Vec<RuntimeValue<'a>>>,
     pub(crate) name: Option<String>,
     pub(crate) prototype: Option<JsObject<'a>>,
+    pub(crate) wrapped: Option<JsPrimitive>,
+    pub(crate) callable: Option<FunctionReference<'a>>,
 }
 
 impl<'a> JsObject<'a> {
@@ -46,8 +82,37 @@ impl<'a> JsObject<'a> {
                 indexed_properties: None,
                 name: None,
                 prototype: None,
+                wrapped: None,
+                callable: None,
             })),
         }
+    }
+
+    pub fn is_callable(&self) -> bool {
+        self.inner.borrow().callable.is_some()
+    }
+
+    pub fn get_callable(&self) -> Option<FunctionReference<'a>> {
+        self.inner.borrow().callable.as_ref().cloned()
+    }
+
+    pub fn wrapping(self, value: impl Into<JsPrimitive>) -> Self {
+        self.inner.borrow_mut().wrapped = Some(value.into());
+        self
+    }
+
+    pub fn wrap(&self, value: impl Into<JsPrimitive>) {
+        self.inner.borrow_mut().wrapped = Some(value.into());
+    }
+
+    pub fn callable(self, value: impl Into<FunctionReference<'a>>) -> Self {
+        self.inner.borrow_mut().callable = Some(value.into());
+        self
+    }
+
+    pub fn get_wrapped_value(&self) -> Option<RuntimeValue<'a>> {
+        let value = self.inner.borrow();
+        value.wrapped.as_ref().cloned().map(|v| v.into())
     }
 
     pub fn with_prototype(self, prototype: Self) -> Self {
@@ -65,13 +130,8 @@ impl<'a> JsObject<'a> {
         self
     }
 
-    pub fn get<'b, 'c>(
-        &self,
-        key: Rc<String>,
-        frame: &'c mut JsThread<'a>,
-        target: &RuntimeValue<'a>,
-    ) -> JsResult<'a> {
-        self.get_borrowed(&key, frame, target)
+    pub fn get<'b, 'c>(&self, key: Rc<String>, frame: &'c mut JsThread<'a>) -> JsResult<'a> {
+        self.get_borrowed(&key, frame)
     }
 
     pub fn set(&self, key: Rc<String>, value: RuntimeValue<'a>) {
@@ -114,12 +174,15 @@ impl<'a> JsObject<'a> {
         });
     }
 
-    fn get_borrowed<'b, 'c>(
-        &self,
-        key: &Rc<String>,
-        thread: &'c mut JsThread<'a>,
-        target: &RuntimeValue<'a>,
-    ) -> JsResult<'a> {
+    pub(crate) fn define_value(&self, key: impl Into<String>, value: impl Into<RuntimeValue<'a>>) {
+        RefMut::map(self.inner.borrow_mut(), |f| {
+            let inner = f.properties.get_or_insert_with(HashMap::new);
+            inner.insert(Rc::new(key.into()), Property::Value(value.into()));
+            inner
+        });
+    }
+
+    fn get_borrowed<'b, 'c>(&self, key: &Rc<String>, thread: &'c mut JsThread<'a>) -> JsResult<'a> {
         let b = self.inner.borrow();
 
         if "prototype" == key.as_ref() {
@@ -147,7 +210,7 @@ impl<'a> JsObject<'a> {
                 getter: Some(FunctionReference::BuiltIn(function)),
                 ..
             }) => Ok(function
-                .apply_return(0, thread, target)?
+                .apply_return(0, thread, Some(self.clone()))?
                 .unwrap_or(RuntimeValue::Undefined)),
             _ => Ok(RuntimeValue::Undefined),
         }
@@ -163,21 +226,6 @@ impl<'a> Default for JsObject<'a> {
 impl<'a> From<JsObject<'a>> for RuntimeValue<'a> {
     fn from(obj: JsObject<'a>) -> Self {
         RuntimeValue::Object(obj)
-    }
-}
-
-impl<'a> TryInto<JsObject<'a>> for RuntimeValue<'a> {
-    type Error = ExecutionError<'a>;
-
-    fn try_into(self) -> JsResult<'a, JsObject<'a>> {
-        match self {
-            RuntimeValue::Object(obj) => Ok(obj),
-            RuntimeValue::Function(_, obj) => Ok(obj),
-            RuntimeValue::String(_, obj) => Ok(obj),
-            value => {
-                InternalError::new_stackless(format!("Incorrect object type {:?}", value)).into()
-            }
-        }
     }
 }
 

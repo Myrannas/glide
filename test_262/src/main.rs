@@ -13,7 +13,8 @@ use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
 use compiler::{
-    compile, parse_input, CompilerOptions, GlobalThis, JsThread, Module, StaticExecutionError,
+    compile, parse_input, CompilerOptions, ExecutionError, GlobalThis, JsThread, Module,
+    StaticExecutionError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

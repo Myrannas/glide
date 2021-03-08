@@ -1,3 +1,4 @@
+mod builtins;
 mod compiler;
 mod debugging;
 mod object;
@@ -8,8 +9,8 @@ mod result;
 pub mod value;
 mod vm;
 
-extern crate anyhow;
 extern crate arr_macro;
+extern crate builtin;
 extern crate log;
 extern crate pretty_env_logger;
 extern crate thiserror;
@@ -19,4 +20,5 @@ pub use object::JsObject;
 pub use parser::{parse_input, ParsedModule};
 pub use primordials::GlobalThis;
 pub use result::{ExecutionError, InternalError, StaticExecutionError, SyntaxError};
+pub use value::{BuiltIn, RuntimeValue};
 pub use vm::{JsThread, Module};

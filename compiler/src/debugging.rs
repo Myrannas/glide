@@ -149,8 +149,7 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
             (.., RuntimeValue::Undefined) => render.literal("undefined"),
             (.., RuntimeValue::Null) => render.literal("null"),
             (.., RuntimeValue::Object(obj)) => render.render(obj),
-            (.., RuntimeValue::Function(_, obj)) => render.render(obj),
-            (.., RuntimeValue::String(str, ..)) => render.string_literal(str),
+            (.., RuntimeValue::String(str)) => render.string_literal(str),
             (Representation::Debug, RuntimeValue::Reference(reference)) => {
                 render.start_internal("REF")?;
                 RuntimeValue::render(&reference.base, render)?;
@@ -167,13 +166,6 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
             (Representation::Compact, RuntimeValue::Reference(reference)) => match &*reference.base
             {
                 RuntimeValue::Object(_obj) => {
-                    render
-                        .formatter
-                        .write_fmt(format_args!(".{}", reference.name))?;
-
-                    Ok(())
-                }
-                RuntimeValue::Function(_, _obj) => {
                     render
                         .formatter
                         .write_fmt(format_args!(".{}", reference.name))?;

@@ -4,7 +4,6 @@ use crate::value::{FunctionReference, Reference, RuntimeValue, StaticValue};
 use crate::vm::{Function, JsThread};
 use crate::InternalError;
 use std::cell::{Ref, RefCell};
-use std::convert::TryInto;
 use std::fmt::{Debug, Formatter, Write};
 use std::rc::Rc;
 
@@ -17,7 +16,7 @@ pub(crate) struct CallStack {
 struct JsContextInner<'a> {
     locals: Vec<RuntimeValue<'a>>,
     parent: Option<JsContext<'a>>,
-    this: RuntimeValue<'a>,
+    this: JsObject<'a>,
 }
 
 #[derive(Clone)]
@@ -73,14 +72,14 @@ struct ContextIter {
 }
 
 impl<'a, 'b> JsContext<'a> {
-    pub(crate) fn this(&self) -> Ref<RuntimeValue<'a>> {
+    pub(crate) fn this(&self) -> Ref<JsObject<'a>> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
     pub(crate) fn with_parent(
         parent: Option<JsContext<'a>>,
         locals_size: usize,
-        this: RuntimeValue<'a>,
+        this: JsObject<'a>,
     ) -> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
@@ -254,24 +253,6 @@ macro_rules! numeric_comparison_op {
     } step););
 }
 
-macro_rules! logical_op {
-    ($i:ident($l:ident, $r:ident) => $e: expr) => (op!($i(frame) {
-        let l_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-        let r_ref = frame.stack.pop().expect("Stack should have at two values to use $i operator");
-
-        // let l_value = l_ref.resolve();
-        let l_prim = resolve!(l_ref, frame);
-        let r_prim = resolve!(r_ref, frame);
-
-        // no strings yet
-
-        let $r: bool = l_prim.into();
-        let $l: bool = r_prim.into();
-
-        frame.stack.push(RuntimeValue::Boolean($e));
-    } step););
-}
-
 macro_rules! resolve {
     ($value:expr, $frame:ident) => (match $value.resolve($frame) {
         Ok(value) => value,
@@ -304,7 +285,7 @@ op!(add(frame) {
             let r_str = catch!(frame, r_prim.to_string(frame));
             let string = l_str.as_ref().to_owned() + &r_str; 
             
-            let str = RuntimeValue::String(Rc::new(string), JsObject::new());
+            let str = RuntimeValue::String(Rc::new(string));
             frame.stack.push(str);
         },
         other => {
@@ -509,13 +490,13 @@ op!(type_of(val, frame) {
     let str = RuntimeValue::String(Rc::new(match l_prim {
         RuntimeValue::Boolean(_) => "boolean".to_owned(),
         RuntimeValue::Null => "null".to_owned(),
+        RuntimeValue::Object(obj) if obj.is_callable()=> "function".to_owned(),
         RuntimeValue::Object(_) => "object".to_owned(),
-        RuntimeValue::Function(..) => "function".to_owned(),
         RuntimeValue::String(..) => "string".to_owned(),
         RuntimeValue::Float(_) => "number".to_owned(),
         RuntimeValue::Undefined => "undefined".to_owned(),
         _ => "???".to_owned()
-    }), JsObject::new());
+    }));
 
     frame.stack.push(str);
 } step);
@@ -530,7 +511,7 @@ op!(load(val, frame) {
 
 op!(load_this(val, frame) {
     let this = frame.current_context().this().clone();
-   frame.stack.push(this);
+   frame.stack.push(RuntimeValue::Object(this));
 } step);
 
 op!(bind(val, frame) {
@@ -544,7 +525,7 @@ op!(bind(val, frame) {
 
 op!(ret(val, frame) {
     let return_value = if frame.is_new() {
-        frame.current_context().this().clone()
+        frame.current_context().this().clone().into()
     } else if let Some(return_value) = val {
         return_value.to_runtime(frame)
     } else {
@@ -571,16 +552,20 @@ op!(call(val, frame) {
             RuntimeValue::Reference(Reference {
                 base, ..
             }) => *base,
-            _ => RuntimeValue::Undefined
-        };
+            other => other
+        }.to_object(frame);
 
-        let function = match resolve!(fn_value.clone(), frame) {
-            RuntimeValue::Function(FunctionReference::Custom(function), object) => {
-                frame.call(target, function, v, false, false);
-            },
-            RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
-                function.apply(v, frame, &target);
-                frame.step();
+        match resolve!(fn_value.clone(), frame) {
+            RuntimeValue::Object(obj) if obj.is_callable() => {
+                match obj.get_callable().unwrap() {
+                    FunctionReference::Custom(function) => {
+                        frame.call(target, function, v, false, false);
+                    },
+                    FunctionReference::BuiltIn(function) => {
+                        function.apply(v, frame, Some(target));
+                        frame.step();
+                    },
+                }
             },
             _ => frame.throw(frame.global_this.errors.new_type_error(format!("{} is not a function", fn_value)))
         };
@@ -596,15 +581,19 @@ op!(call_new(val, frame) {
         let fn_value = frame.stack.pop().expect("Expect a target");
 
         match resolve!(fn_value, frame) {
-            RuntimeValue::Function(FunctionReference::Custom(function), object) => {
-                let target = JsObject::new().with_name(function.function.name()).with_prototype(object);
+            RuntimeValue::Object(obj) if obj.is_callable() => {
+                match obj.get_callable().unwrap() {
+                    FunctionReference::Custom(function) => {
+                        let target = JsObject::new().with_name(function.function.name());
 
-                frame.call(target.into(), function, v, true, false);
-            },
-            RuntimeValue::Function(FunctionReference::BuiltIn(function), ..) => {
-                let obj = JsObject::new().into();
-                function.apply(v, frame, &obj);
-                frame.step();
+                        frame.call(target, function, v, true, false);
+                    },
+                    FunctionReference::BuiltIn(function) => {
+                        let obj = JsObject::new().into();
+                        function.apply(v, frame, obj);
+                        frame.step();
+                    },
+                }
             },
             v => {
                 return frame.throw(InternalError::new_stackless(format!("Uncaught type error: {:?} is not a function", v)));
@@ -682,8 +671,7 @@ op!(set(val, frame) {
     }).expect("Need an attribute");
 
     let target = resolve!(frame.stack.pop().expect("Need an target"), frame);
-    let obj: JsObject = catch!(frame, resolve!(target, frame)
-        .try_into());
+    let obj: JsObject = resolve!(target, frame).to_object(frame);
 
     if let RuntimeValue::String(str, ..) = attribute {        
         obj.set(str, resolved_value);

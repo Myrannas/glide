@@ -4,8 +4,10 @@ mod lexer;
 mod strings;
 
 use crate::parser::hand_parser::pretty_print;
-use anyhow::{Context, Error, Result};
 use logos::Logos;
+
+use crate::result::{StaticJsResult, SyntaxError};
+pub use ast::ParsedModule;
 
 pub fn parse_input<'a>(input: &str) -> StaticJsResult<ParsedModule> {
     let mut lex = lexer::Token::lexer(input).spanned().peekable();
@@ -15,7 +17,3 @@ pub fn parse_input<'a>(input: &str) -> StaticJsResult<ParsedModule> {
         Ok(module) => Ok(module),
     }
 }
-
-use crate::result::{InternalError, JsResult, StaticJsResult, SyntaxError};
-use crate::ExecutionError;
-pub use ast::ParsedModule;

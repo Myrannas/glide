@@ -4,10 +4,10 @@ use crate::ops::{Instruction, JsContext as JSContext, JsContext};
 use crate::primordials::GlobalThis;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
 use crate::value::{make_arguments, CustomFunctionReference, FunctionReference, RuntimeValue};
-use crate::ExecutionError;
+use crate::{ExecutionError, JsObject};
 use log::trace;
 use std::cell::RefCell;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -192,11 +192,7 @@ impl<'a> JsThread<'a> {
                 current_chunk_index: 0,
                 index: 0,
                 stack_size: 0,
-                context: JSContext::with_parent(
-                    None,
-                    local_size,
-                    RuntimeValue::Object(global_this.global_this.clone()),
-                ),
+                context: JSContext::with_parent(None, local_size, global_this.global_this.clone()),
                 is_new: false,
             },
             global_this,
@@ -386,7 +382,7 @@ impl<'a> JsThread<'a> {
 
     pub(crate) fn call(
         &mut self,
-        target: RuntimeValue<'a>,
+        target: JsObject<'a>,
         CustomFunctionReference { function, context }: CustomFunctionReference<'a>,
         args: usize,
         new: bool,
@@ -472,14 +468,14 @@ impl<'a> JsThread<'a> {
 
     pub(crate) fn call_from_native(
         &mut self,
-        target: RuntimeValue<'a>,
+        target: JsObject<'a>,
         function_reference: FunctionReference<'a>,
         args: usize,
         new: bool,
     ) -> JsResult<'a, RuntimeValue<'a>> {
         match function_reference {
             FunctionReference::BuiltIn(builtin) => {
-                let result = builtin.apply_return(args, self, &target)?;
+                let result = builtin.apply_return(args, self, Some(target))?;
 
                 Ok(result.unwrap_or_default())
             }

@@ -1,12 +1,12 @@
 use crate::value::RuntimeValue;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stack {
     pub(crate) entries: Vec<StackTraceFrame>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StackTraceFrame {
     pub(crate) function: String,
     pub(crate) chunk: usize,
@@ -26,7 +26,7 @@ impl Display for Stack {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExecutionError<'a> {
     Thrown(RuntimeValue<'a>, Option<Stack>),
     InternalError(InternalError),
@@ -39,13 +39,13 @@ pub enum StaticExecutionError {
     InternalError(InternalError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InternalError {
     message: String,
     stack: Option<Stack>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SyntaxError {
     message: String,
     stack: Option<Stack>,
