@@ -5,8 +5,8 @@ authors = ["Michael Oates <michael@oates.dev>"]
 edition = "2018"
 
 [dependencies]
-compiler = { path = "../compiler", features=["eval"] }
-virtual_machine = { path = "../virtual_machine", features=["eval"] }
+glide_compiler = { path = "../compiler", features=["eval"] }
+glide_runtime = { path = "../runtime", features=["eval"] }
 anyhow = "1.0.38"
 colored = "2.0.0"
 log = { version = "0.4", features = ["max_level_trace"] }

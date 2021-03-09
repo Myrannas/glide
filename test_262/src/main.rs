@@ -3,7 +3,7 @@ mod suite;
 extern crate anyhow;
 extern crate clap;
 extern crate colored;
-extern crate compiler;
+extern crate glide_compiler;
 extern crate serde;
 extern crate serde_json;
 extern crate serde_yaml;
@@ -12,13 +12,13 @@ use crate::suite::{Negative, NegativeType, Phase, Suite};
 use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
-use compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
+use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
+use glide_runtime::{GlobalThis, JsFunction, JsThread};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use virtual_machine::{GlobalThis, JsFunction, JsThread};
 
 fn bootstrap_harness() -> ModuleSet {
     let mut modules = Vec::new();

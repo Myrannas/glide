@@ -1,5 +1,5 @@
 use anyhow::Context;
-use compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
+use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};

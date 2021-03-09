@@ -1,7 +1,7 @@
 use crate::function::CustomFunctionReference;
 use crate::result::{JsResult, SyntaxError};
 use crate::{ExecutionError, InternalError, JsFunction, JsObject, JsThread, RuntimeValue};
-use compiler::{
+use glide_compiler::{
     compile_eval, parse_input, CompilerError, InternalError as CompilationInternalError,
     SyntaxError as CompilationSyntaxError,
 };

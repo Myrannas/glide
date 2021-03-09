@@ -5,7 +5,7 @@ members = [
     "test_262",
     "builtin",
     "instruction_set",
-    "virtual_machine"
+    "runtime"
 ]
 
 [profile.release]

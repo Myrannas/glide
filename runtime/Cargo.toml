@@ -1,5 +1,5 @@
 [package]
-name = "virtual_machine"
+name = "glide_runtime"
 version = "0.1.0"
 authors = ["Michael Oates <michael@oates.dev>"]
 edition = "2018"
@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = []
-eval = ["compiler"]
+eval = ["glide_compiler"]
 
 [dependencies]
 anyhow = "1.0.38"
@@ -18,4 +18,4 @@ log={ version = "0.4.14" }
 rand = "0.8.3"
 ahash = "0.7.2"
 
-compiler = { optional = true, path = "../compiler", features=["eval"] }
+glide_compiler = { optional = true, path = "../compiler", features=["eval"] }
