@@ -1,5 +1,5 @@
 use anyhow::Context;
-use compiler::{compile, parse_input, CompilerOptions, Module, StaticExecutionError};
+use compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
@@ -7,7 +7,7 @@ use std::fs::read_to_string;
 use std::path::PathBuf;
 
 pub struct Suite {
-    pub module: Result<Module, StaticExecutionError>,
+    pub module: Result<Module, CompilerError>,
     pub details: SuiteDetails,
 }
 

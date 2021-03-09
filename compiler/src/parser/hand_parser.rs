@@ -187,7 +187,12 @@ fn parse_object_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expre
                 input.expect(Token::Colon)?;
                 let expression = parse_expression(input)?;
 
-                attributes.push((id, expression))
+                attributes.push((id.to_owned(), expression))
+            }
+            Some((Token::Float(value), ..)) => {
+                input.expect(Token::Colon)?;
+                let expression = parse_expression(input)?;
+                attributes.push((value.to_string(), expression))
             }
             Some(other) => input.expected(vec![Token::Id("")], other)?,
             _ => panic!("None!"),
@@ -205,6 +210,11 @@ fn parse_array_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expres
     let mut attributes = Vec::new();
 
     while !input.consume_if(Token::CloseBracket) {
+        if input.consume_if(Token::Comma) {
+            attributes.push(Expression::Undefined);
+            continue;
+        }
+
         attributes.push(parse_expression(input)?);
 
         if !input.consume_if(Token::Comma) {
@@ -263,7 +273,7 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
     loop {
         let (null_safe, computed, call) = match input.lookahead() {
             Some((Token::Dot, ..)) => (false, false, false),
-            Some((Token::NullSafe, ..)) => (true, false, false),
+            // Some((Token::NullSafe, ..)) => (true, false, false),
             Some((Token::OpenBracket, ..)) => (false, true, false),
             Some((Token::OpenParen, ..)) => (false, false, true),
             _ => break,

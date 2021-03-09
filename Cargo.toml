@@ -3,5 +3,7 @@
 members = [
     "compiler",
     "test_262",
-    "builtin"
+    "builtin",
+    "instruction_set",
+    "virtual_machine"
 ]

@@ -12,41 +12,39 @@ use crate::suite::{Negative, NegativeType, Phase, Suite};
 use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
-use compiler::{
-    compile, parse_input, CompilerOptions, ExecutionError, GlobalThis, JsThread, Module,
-    StaticExecutionError,
-};
+use compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
+use virtual_machine::{GlobalThis, JsFunction, JsThread};
 
 fn bootstrap_harness() -> ModuleSet {
     let mut modules = Vec::new();
     for file in vec![
         "./test262/harness/sta.js",
         "./test262/harness/assert.js",
-        "./test262/harness/propertyHelper.js",
+        // "./test262/harness/propertyHelper.js",
     ] {
         let sta = read_to_string(file).unwrap();
         let sta_module = parse_input(&sta).unwrap();
         let compiled = compile("assert.js", sta_module, CompilerOptions::new()).unwrap();
 
-        modules.push(compiled);
+        modules.push(JsFunction::load(compiled.init));
     }
 
     ModuleSet { modules }
 }
 
 struct ModuleSet {
-    modules: Vec<Module>,
+    modules: Vec<JsFunction>,
 }
 
 impl ModuleSet {
     fn load<'a>(&'a self, global_this: GlobalThis<'a>) {
         for module in self.modules.iter() {
-            JsThread::new(module.init.clone(), global_this.clone())
+            JsThread::new(module.clone(), global_this.clone())
                 .run()
                 .unwrap();
         }
@@ -107,7 +105,7 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     }) = details.negative
     {
         return match module {
-            Err(StaticExecutionError::SyntaxError(_)) => Ok(Outcome::Pass),
+            Err(CompilerError::SyntaxError(_)) => Ok(Outcome::Pass),
             Ok(..) => Err(Error::msg("Expected a compilation error")),
             Err(..) => Err(Error::msg("Expected a compilation error")),
         };
@@ -120,7 +118,9 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
 
         harness.load(global.clone());
 
-        let mut thread = JsThread::new(module.0?.init, global.clone());
+        let function = JsFunction::load(module.0?.init);
+
+        let mut thread = JsThread::new(function, global.clone());
         thread.set_cost_limit(cost_limit);
         match thread.run() {
             Ok(_) => Ok(()),
@@ -213,7 +213,7 @@ fn main() {
     for suite in suites {
         let suite_name = suite.to_str().unwrap().to_owned();
 
-        println!("Running suite {:80.80}", suite_name);
+        // printlnln!("Running suite {:80.80}", suite_name);
 
         match run_suite(
             suite.clone(),
@@ -221,7 +221,7 @@ fn main() {
             matches.value_of("limit").unwrap().parse().unwrap(),
         ) {
             Ok(Outcome::Pass) => {
-                println!("{}", "pass".green());
+                // println!("{}", "pass".green());
                 results.push(TestResult {
                     result: SuiteResult::Success,
                     name: suite_name,
@@ -229,7 +229,7 @@ fn main() {
                 })
             }
             Ok(Outcome::Skip) => {
-                println!("{}", "skip".yellow());
+                // println!("{}", "skip".yellow());
                 results.push(TestResult {
                     result: SuiteResult::Skip,
                     name: suite_name,
@@ -237,7 +237,7 @@ fn main() {
                 })
             }
             Err(err) => {
-                println!("{}", "fail".red());
+                // println!("{}", "fail".red());
                 results.push(TestResult {
                     result: SuiteResult::Failure,
                     name: suite_name,

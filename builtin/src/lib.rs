@@ -55,24 +55,20 @@ struct Constructor {
 impl ToTokens for Constructor {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         let type_name = &self.type_name;
-        let arguments = &self.arguments;
         let setup = &self.arguments.setup();
         let arguments = &self.arguments.call();
 
         let output = quote! {
-            object.define_value("constructor", crate::JsObject::new().callable(crate::BuiltIn {
-                context: Some(Box::new(object.clone().into())),
+            prototype.define_value("constructor", crate::JsObject::new().callable(crate::BuiltIn {
+                context: None,
                 op: |args, thread, receiver, context| {
-                    let constructed = crate::JsObject::new()
-                        .with_prototype(context.unwrap().as_object()?.clone());
-
                     #setup
 
-                    let mut obj = <#type_name>::new(&constructed, thread);
+                    let mut obj = <#type_name>::new(receiver, thread);
 
                     obj.constructor(#arguments);
 
-                    Ok(Some(constructed.into()))
+                    Ok(None)
                 }
             }));
         };
@@ -109,9 +105,11 @@ impl ToTokens for StaticMethod {
                     #call
                 }
             });
-            method.define_value("name", #method_name_string.to_string());
-            method.define_value("length", crate::RuntimeValue::Float(1.0));
-            object.define_value(#method_name_string, method);
+
+            let name: crate::string::JsPrimitiveString = #method_name_string.into();
+            method.define_value("name", name.clone());
+            method.define_value("length", 1.0);
+            prototype.define_value(name, method);
         };
 
         output.to_tokens(tokens);
@@ -146,9 +144,11 @@ impl ToTokens for Method {
                     #call
                 }
             });
-            method.define_value("length", crate::RuntimeValue::Float(1.0));
-            method.define_value("name", #method_name_string.to_string())    ;
-            object.define_value(#method_name_string, method);
+
+            let name: crate::string::JsPrimitiveString = #method_name_string.into();
+            method.define_value("length", 1.0);
+            method.define_value("name", name.clone());
+            prototype.define_value(name, method);
         };
 
         output.to_tokens(tokens);
@@ -173,8 +173,8 @@ impl ToTokens for Getter {
         });
 
         let output = quote! {
-            object.define_property(
-                std::rc::Rc::new(#method_name_string.to_owned()),
+            prototype.define_property(
+                #method_name_string,
                 Some(crate::BuiltIn {
                     context: None,
                     op: |args, thread, receiver, context| {
@@ -506,18 +506,20 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
         #constructor
 
         impl <'a, 'b> crate::builtins::prototype::Prototype<'a> for #self_type {
-            fn bind<'c>(prototype: Option<&JsObject<'a>>) -> crate::JsObject<'a> {
+            fn bind<'c>(parent_prototype: Option<&JsObject<'a>>) -> crate::JsObject<'a> {
+                let mut prototype = crate::JsObject::new();
                 let mut object = crate::JsObject::new();
 
-                if let Some(prototype) = prototype {
-                    object = object.with_prototype(prototype.clone());
+                if let Some(parent_prototype) = parent_prototype {
+                    object = object.with_prototype(parent_prototype.clone());
                 }
 
                 #(#methods)*
 
-                object.define_value("name", crate::RuntimeValue::String(std::rc::Rc::new(#name.to_owned())));
+                let type_name: crate::string::JsPrimitiveString = #name.into();
+                object.define_value("name", type_name);
 
-                object
+                object.with_prototype(prototype)
             }
         }
     })

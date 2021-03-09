@@ -73,7 +73,7 @@ pub(crate) enum Expression<'a> {
         if_false: Box<Expression<'a>>,
     },
     ObjectLiteral {
-        attributes: Vec<(&'a str, Expression<'a>)>,
+        attributes: Vec<(String, Expression<'a>)>,
     },
     ArrayLiteral {
         attributes: Vec<Expression<'a>>,

@@ -5,9 +5,12 @@ authors = ["Michael Oates <michael@oates.dev>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+opt-level = 3
 
 [dependencies]
-compiler = { path = "../compiler" }
+compiler = { path = "../compiler", features=["eval"] }
+virtual_machine = { path = "../virtual_machine", features=["eval"] }
 anyhow = "1.0.38"
 colored = "2.0.0"
 log = { version = "0.4", features = ["max_level_trace"] }

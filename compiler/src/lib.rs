@@ -1,25 +1,15 @@
-mod builtins;
 mod compiler;
-mod debugging;
-mod object;
-mod ops;
 mod parser;
-mod primordials;
-mod result;
-pub mod value;
-mod vm;
+pub mod result;
 
-extern crate arr_macro;
-extern crate builtin;
+extern crate anyhow;
+extern crate instruction_set;
 extern crate log;
-extern crate pretty_env_logger;
-extern crate thiserror;
-extern crate rand;
 
 pub use compiler::{compile, CompilerOptions};
-pub use object::JsObject;
+pub use instruction_set::Module;
 pub use parser::{parse_input, ParsedModule};
-pub use primordials::GlobalThis;
-pub use result::{ExecutionError, InternalError, StaticExecutionError, SyntaxError};
-pub use value::{BuiltIn, RuntimeValue};
-pub use vm::{JsThread, Module};
+pub use result::{CompilerError, InternalError, SyntaxError};
+
+#[cfg(feature = "eval")]
+pub use compiler::compile_eval;
