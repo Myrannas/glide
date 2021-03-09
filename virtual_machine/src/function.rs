@@ -1,9 +1,9 @@
 use crate::context::JsContext;
 use crate::debugging::{DebugRepresentation, Renderer};
-use crate::object::JsObject;
 use crate::result::JsResult;
-use crate::string::JsPrimitiveString;
-use crate::value::RuntimeValue;
+use crate::values::object::JsObject;
+use crate::values::string::JsPrimitiveString;
+use crate::values::value::RuntimeValue;
 use crate::vm::JsThread;
 use core::cmp::PartialEq;
 use core::convert::From;

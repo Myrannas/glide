@@ -1,6 +1,6 @@
 use crate::context::JsContext;
 use crate::function::{CustomFunctionReference, FunctionReference};
-use crate::value::{InternalValue, Reference};
+use crate::values::value::{InternalValue, Reference};
 use crate::{InternalError, JsThread, RuntimeValue};
 use instruction_set::{Constant, Environmental};
 

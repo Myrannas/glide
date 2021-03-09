@@ -1,10 +1,3 @@
-use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::function::FunctionReference;
-use crate::result::JsResult;
-use crate::string::JsPrimitiveString;
-use crate::value::RuntimeValue;
-use crate::vm::JsThread;
-use colored::Colorize;
 use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -12,41 +5,16 @@ use std::fmt::{Debug, Formatter, Pointer, Write};
 use std::hash::{BuildHasher, Hasher};
 use std::rc::Rc;
 
-#[derive(Clone, Debug)]
-pub enum JsPrimitive {
-    Undefined,
-    Null,
-    Boolean(bool),
-    Float(f64),
-    String(JsPrimitiveString),
-}
+use colored::Colorize;
 
-impl<'a> From<JsPrimitive> for RuntimeValue<'a> {
-    fn from(value: JsPrimitive) -> Self {
-        match value {
-            JsPrimitive::Undefined => RuntimeValue::Undefined,
-            JsPrimitive::Null => RuntimeValue::Null,
-            JsPrimitive::Boolean(value) => RuntimeValue::Boolean(value),
-            JsPrimitive::Float(value) => RuntimeValue::Float(value),
-            JsPrimitive::String(str) => RuntimeValue::String(str),
-        }
-    }
-}
+use crate::debugging::{DebugRepresentation, Renderer, Representation};
+use crate::function::FunctionReference;
+use crate::result::JsResult;
+use crate::values::primitives::JsPrimitive;
+use crate::vm::JsThread;
 
-impl<'a> From<RuntimeValue<'a>> for JsPrimitive {
-    fn from(value: RuntimeValue<'a>) -> Self {
-        match value {
-            RuntimeValue::Undefined => JsPrimitive::Undefined,
-            RuntimeValue::Null => JsPrimitive::Null,
-            RuntimeValue::Boolean(b) => JsPrimitive::Boolean(b),
-            RuntimeValue::Float(f) => JsPrimitive::Float(f),
-            RuntimeValue::String(str) => JsPrimitive::String(str),
-            RuntimeValue::Object(_) => panic!("Cannot be wrapped"),
-            RuntimeValue::Reference(_) => panic!("Cannot be wrapped"),
-            RuntimeValue::Internal(_) => panic!("Cannot be wrapped"),
-        }
-    }
-}
+use super::string::JsPrimitiveString;
+use super::value::RuntimeValue;
 
 #[derive(Clone)]
 pub struct JsObject<'a> {

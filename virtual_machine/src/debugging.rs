@@ -1,4 +1,4 @@
-use crate::value::{InternalValue, RuntimeValue};
+use super::values::value::{InternalValue, RuntimeValue};
 use crate::{JsObject, JsThread};
 use colored::Colorize;
 use std::cmp::Ordering;
@@ -139,46 +139,4 @@ pub trait DebugRepresentation {
     //         thread,
     //     }
     // }
-}
-
-impl<'a> DebugRepresentation for RuntimeValue<'a> {
-    fn render(&self, render: &mut Renderer) -> Result {
-        match (&render.representation, self) {
-            (.., RuntimeValue::Boolean(true)) => render.literal("true"),
-            (.., RuntimeValue::Boolean(false)) => render.literal("false"),
-            (.., RuntimeValue::Undefined) => render.literal("undefined"),
-            (.., RuntimeValue::Null) => render.literal("null"),
-            (.., RuntimeValue::Object(obj)) => render.render(obj),
-            (.., RuntimeValue::String(str)) => render.string_literal(str.as_ref()),
-            (Representation::Debug, RuntimeValue::Reference(reference)) => {
-                render.start_internal("REF")?;
-                JsObject::render(&reference.base, render)?;
-
-                render.formatter.write_fmt(format_args!(
-                    "{}{}",
-                    if reference.strict { "." } else { "?." },
-                    &reference.name,
-                ))?;
-
-                render.end_internal()?;
-                Ok(())
-            }
-            (Representation::Debug, RuntimeValue::Internal(InternalValue::Local(local))) => {
-                render.start_internal("INTERNAL")?;
-                render.internal_key("index")?;
-                render.literal(&local.to_string())?;
-                render.end_internal()?;
-                Ok(())
-            }
-            (Representation::Compact, RuntimeValue::Reference(reference)) => {
-                render
-                    .formatter
-                    .write_fmt(format_args!(".{}", reference.name))?;
-
-                Ok(())
-            }
-            (.., RuntimeValue::Float(value)) => render.literal(&format!("{}", value)),
-            other => panic!("Unsupported debug view"),
-        }
-    }
 }

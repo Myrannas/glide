@@ -1,9 +1,9 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, string};
 use crate::function::FunctionReference;
-use crate::object::JsObject;
-use crate::string::JsPrimitiveString;
-use crate::value::RuntimeValue;
+use crate::values::object::JsObject;
+use crate::values::string::JsPrimitiveString;
+use crate::values::value::RuntimeValue;
 use crate::BuiltIn;
 
 trait Helpers<'a> {

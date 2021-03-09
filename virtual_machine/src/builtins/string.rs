@@ -1,9 +1,8 @@
-use crate::object::JsPrimitive;
 use crate::result::JsResult;
-use crate::string::JsPrimitiveString;
+use crate::values::primitives::JsPrimitive;
+
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
 use builtin::{callable, constructor, getter, named, prototype};
-use std::rc::Rc;
 
 pub(crate) struct JsString<'a, 'b> {
     object: &'b JsObject<'a>,

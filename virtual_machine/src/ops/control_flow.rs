@@ -1,5 +1,5 @@
 use crate::function::FunctionReference;
-use crate::value::Reference;
+use crate::values::value::Reference;
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
 use instruction_set::Constant;
 

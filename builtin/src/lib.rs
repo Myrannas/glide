@@ -106,7 +106,7 @@ impl ToTokens for StaticMethod {
                 }
             });
 
-            let name: crate::string::JsPrimitiveString = #method_name_string.into();
+            let name: crate::JsPrimitiveString = #method_name_string.into();
             method.define_value("name", name.clone());
             method.define_value("length", 1.0);
             object.define_value(name, method);
@@ -145,7 +145,7 @@ impl ToTokens for Method {
                 }
             });
 
-            let name: crate::string::JsPrimitiveString = #method_name_string.into();
+            let name: crate::JsPrimitiveString = #method_name_string.into();
             method.define_value("length", 1.0);
             method.define_value("name", name.clone());
             prototype.define_value(name, method);
@@ -516,7 +516,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
 
                 #(#methods)*
 
-                let type_name: crate::string::JsPrimitiveString = #name.into();
+                let type_name: crate::JsPrimitiveString = #name.into();
                 object.define_value("name", type_name);
 
                 object.with_prototype(prototype)

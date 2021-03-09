@@ -1,13 +1,12 @@
 use crate::context::JsContext;
-use crate::debugging::Renderer;
 use crate::function::{CustomFunctionReference, FunctionReference, JsFunction};
-use crate::instruction_set::{Chunk, Local};
+use crate::instruction_set::Chunk;
 use crate::ops::Operand;
 use crate::primordials::GlobalThis;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
-use crate::value::{make_arguments, RuntimeValue};
+use crate::values::value::{make_arguments, RuntimeValue};
 use crate::{ExecutionError, JsObject};
-use instruction_set::{Function, Instruction};
+use instruction_set::Instruction;
 use log::trace;
 use std::fmt::{Debug, Formatter};
 

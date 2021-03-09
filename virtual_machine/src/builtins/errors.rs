@@ -1,5 +1,5 @@
 use crate::result::JsResult;
-use crate::value::RuntimeValue;
+use crate::values::value::RuntimeValue;
 use crate::{JsObject, JsThread};
 use builtin::{named, prototype};
 
