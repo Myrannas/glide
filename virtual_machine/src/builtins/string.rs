@@ -33,8 +33,6 @@ impl<'a, 'b> JsString<'a, 'b> {
         let end_at: RuntimeValue<'a> = (start_at + 1.0).into();
         let start_at: RuntimeValue<'a> = start_at.into();
 
-        println!("charAt {} {}", start_at, end_at);
-
         self.substring(Some(start_at), Some(end_at))
     }
 
@@ -54,8 +52,6 @@ impl<'a, 'b> JsString<'a, 'b> {
         let end_at: f64 = end_at.unwrap_or(RuntimeValue::Float(0.0)).into();
 
         let chars = string_value.as_ref()[(start_at as usize)..(end_at as usize)].to_owned();
-
-        println!("substring {} {} {}", start_at, end_at, chars);
 
         Ok(RuntimeValue::String(chars.into()))
     }

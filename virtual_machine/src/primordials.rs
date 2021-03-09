@@ -108,10 +108,7 @@ impl<'a> Primitives<'a> {
         global_this.define_value("Number", number_prototype.clone());
         global_this.define_value(
             "parseInt",
-            number_prototype
-                .prototype()
-                .unwrap()
-                .read_simple_property("parseInt"),
+            number_prototype.read_simple_property("parseInt"),
         );
 
         primitives
@@ -121,6 +118,18 @@ impl<'a> Primitives<'a> {
         JsObject::new()
             .wrapping(RuntimeValue::String(string))
             .with_prototype(self.string.clone())
+    }
+
+    pub(crate) fn wrap_number(&self, number: f64) -> JsObject<'a> {
+        JsObject::new()
+            .wrapping(RuntimeValue::Float(number))
+            .with_prototype(self.number.clone())
+    }
+
+    pub(crate) fn wrap_boolean(&self, number: bool) -> JsObject<'a> {
+        JsObject::new()
+            .wrapping(RuntimeValue::Boolean(number))
+            .with_prototype(self.number.clone()) // todo: Fixme
     }
 
     pub(crate) fn wrap_function(&self, function: impl Into<FunctionReference<'a>>) -> JsObject<'a> {

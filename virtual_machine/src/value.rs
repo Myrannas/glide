@@ -171,6 +171,8 @@ impl<'a> RuntimeValue<'a> {
         match self {
             RuntimeValue::String(str) => thread.global_this.wrappers.wrap_string(str.clone()),
             RuntimeValue::Object(obj) => obj.clone(),
+            RuntimeValue::Float(f) => thread.global_this.wrappers.wrap_number(*f),
+            RuntimeValue::Boolean(f) => thread.global_this.wrappers.wrap_boolean(*f),
             // RuntimeValue::Und(_, obj) => obj.clone(),
             _ => panic!(":( {:?}", self),
         }

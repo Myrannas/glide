@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod builtins;
 mod context;
 mod debugging;

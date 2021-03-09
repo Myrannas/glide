@@ -109,7 +109,7 @@ impl ToTokens for StaticMethod {
             let name: crate::string::JsPrimitiveString = #method_name_string.into();
             method.define_value("name", name.clone());
             method.define_value("length", 1.0);
-            prototype.define_value(name, method);
+            object.define_value(name, method);
         };
 
         output.to_tokens(tokens);

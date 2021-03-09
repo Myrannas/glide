@@ -143,14 +143,12 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
     thread.step();
 }
 
-#[inline]
 pub(crate) fn load_constant(thread: &mut JsThread, constant: &Constant) {
     thread.stack.push(constant.into());
 
     thread.step();
 }
 
-#[inline]
 pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environmental) {
     let value = match environmental {
         Environmental::GlobalThis => thread.global_this.global_this.clone(),

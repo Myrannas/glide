@@ -3,7 +3,6 @@ use crate::value::Reference;
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
 use instruction_set::Constant;
 
-#[inline]
 pub(crate) fn call(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
@@ -31,7 +30,6 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
     };
 }
 
-#[inline]
 pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
@@ -68,12 +66,10 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     }
 }
 
-#[inline]
 pub(crate) fn jump(thread: &mut JsThread, to: usize) {
     thread.jump(to)
 }
 
-#[inline]
 pub(crate) fn compare_jump(thread: &mut JsThread, if_true: usize, if_false: usize) {
     if pop!(thread) {
         thread.jump(if_true);
@@ -92,7 +88,6 @@ pub(crate) fn drop_catch(thread: &mut JsThread, chunk: usize) {
     thread.step();
 }
 
-#[inline]
 pub(crate) fn return_value(thread: &mut JsThread) {
     if thread.is_new() {
         let this = thread.current_context().this().clone();
@@ -105,7 +100,6 @@ pub(crate) fn return_value(thread: &mut JsThread) {
     };
 }
 
-#[inline]
 pub(crate) fn return_constant(thread: &mut JsThread, constant: &Constant) {
     if thread.is_new() {
         let this = thread.current_context().this().clone();

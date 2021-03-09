@@ -7,3 +7,6 @@ members = [
     "instruction_set",
     "virtual_machine"
 ]
+
+[profile.release]
+opt-level = 3

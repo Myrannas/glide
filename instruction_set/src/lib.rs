@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 extern crate serde;
 use serde::{Deserialize, Serialize};
 

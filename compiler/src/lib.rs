@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod compiler;
 mod parser;
 pub mod result;

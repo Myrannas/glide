@@ -1,6 +1,5 @@
 use crate::{JsThread, RuntimeValue};
 
-#[inline]
 pub(crate) fn equality<'a>(
     thread: &mut JsThread<'a>,
     operator: impl FnOnce(&mut JsThread<'a>, RuntimeValue<'a>, RuntimeValue<'a>) -> bool,
@@ -14,31 +13,26 @@ pub(crate) fn equality<'a>(
     thread.step();
 }
 
-#[inline]
 pub(crate) fn strict_equal_to(thread: &mut JsThread) {
     equality(thread, |_, left, right| left.strict_eq(&right))
 }
 
-#[inline]
 pub(crate) fn equal_to(thread: &mut JsThread) {
     equality(thread, |thread, left, right| {
         left.non_strict_eq(&right, thread)
     })
 }
 
-#[inline]
 pub(crate) fn not_strict_equal_to(thread: &mut JsThread) {
     equality(thread, |_, left, right| !left.strict_eq(&right))
 }
 
-#[inline]
 pub(crate) fn not_equal_to(thread: &mut JsThread) {
     equality(thread, |thread, left, right| {
         !left.non_strict_eq(&right, thread)
     })
 }
 
-#[inline]
 pub(crate) fn instance_of(thread: &mut JsThread) {
     let left: RuntimeValue = pop!(thread);
     let right: RuntimeValue = pop!(thread);
@@ -53,7 +47,6 @@ pub(crate) fn instance_of(thread: &mut JsThread) {
     thread.step();
 }
 
-#[inline]
 pub(crate) fn logical_or(thread: &mut JsThread, left: usize, right: usize) {
     let l_ref: RuntimeValue = thread.pop_stack();
 
@@ -71,7 +64,6 @@ pub(crate) fn logical_or(thread: &mut JsThread, left: usize, right: usize) {
     }
 }
 
-#[inline]
 pub(crate) fn logical_and(thread: &mut JsThread, left: usize, right: usize) {
     let l_ref: RuntimeValue = pop!(thread);
 
@@ -85,7 +77,7 @@ pub(crate) fn logical_and(thread: &mut JsThread, left: usize, right: usize) {
         thread.jump(right);
     }
 }
-#[inline]
+
 pub(crate) fn logical_not(thread: &mut JsThread) {
     let left: bool = pop!(thread);
 
@@ -134,12 +126,15 @@ fn numeric_comparison_op(
 pub(crate) fn greater_than(thread: &mut JsThread) {
     numeric_comparison_op(thread, |l, r| l > r, |l, r| l >= r)
 }
+
 pub(crate) fn greater_than_equal(thread: &mut JsThread) {
     numeric_comparison_op(thread, |l, r| l >= r, |l, r| l >= r)
 }
+
 pub(crate) fn less_than(thread: &mut JsThread) {
     numeric_comparison_op(thread, |l, r| l < r, |l, r| l >= r)
 }
+
 pub(crate) fn less_than_equal(thread: &mut JsThread) {
     numeric_comparison_op(thread, |l, r| l <= r, |l, r| l >= r)
 }

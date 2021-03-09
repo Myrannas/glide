@@ -22,6 +22,22 @@ impl<'a, 'b> JsArray<'a, 'b> {
         todo!("Reduce right is not supported")
     }
 
+    fn map(&mut self) -> JsResult<'a> {
+        todo!("map is not supported")
+    }
+
+    fn pop(&mut self) -> RuntimeValue<'a> {
+        if let Some(properties) = self.object.get_indexed_properties().as_mut() {
+            properties.pop().unwrap_or_default()
+        } else {
+            RuntimeValue::Undefined
+        }
+    }
+
+    fn isArray() -> bool {
+        false
+    }
+
     #[named("push")]
     #[varargs]
     fn push(&mut self, value: Vec<RuntimeValue<'a>>) {
