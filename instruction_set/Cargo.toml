@@ -1,0 +1,10 @@
+[package]
+name = "instruction_set"
+version = "0.1.0"
+authors = ["Michael Oates <michael@oates.dev>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0.124", features=["derive"] }
