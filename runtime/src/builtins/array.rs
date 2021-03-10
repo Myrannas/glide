@@ -1,6 +1,6 @@
 use crate::result::JsResult;
 use crate::{JsObject, JsThread, RuntimeValue};
-use builtin::{callable, constructor, named, prototype, varargs};
+use builtin::{callable, named, prototype, varargs};
 
 pub(crate) struct JsArray<'a, 'b> {
     object: &'b JsObject<'a>,
@@ -10,12 +10,8 @@ pub(crate) struct JsArray<'a, 'b> {
 #[prototype]
 impl<'a, 'b> JsArray<'a, 'b> {
     #[varargs]
-    #[constructor]
-    fn constructor(&mut self, args: Vec<RuntimeValue<'a>>) {}
-
-    #[varargs]
     #[callable]
-    fn callable(thread: &mut JsThread<'a>, args: Vec<RuntimeValue<'a>>) {}
+    fn callable(&mut self, is_new: bool, args: Vec<RuntimeValue<'a>>) {}
 
     #[named("reduceRight")]
     fn reduce_right() -> JsResult<'a> {
@@ -34,7 +30,8 @@ impl<'a, 'b> JsArray<'a, 'b> {
         }
     }
 
-    fn isArray() -> bool {
+    #[named("isArray")]
+    fn is_array() -> bool {
         false
     }
 

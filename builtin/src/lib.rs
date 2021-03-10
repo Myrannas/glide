@@ -61,7 +61,7 @@ impl ToTokens for Constructor {
         let output = quote! {
             prototype.define_value("constructor", crate::JsObject::new().callable(crate::BuiltIn {
                 context: None,
-                op: |args, thread, receiver, context| {
+                op: |args, thread, receiver, context, _new| {
                     #setup
 
                     let mut obj = <#type_name>::new(receiver, thread);
@@ -100,7 +100,7 @@ impl ToTokens for StaticMethod {
         let output = quote! {
             let method = crate::JsObject::new().callable(crate::BuiltIn {
                 context: None,
-                op: |args, thread, receiver, context| {
+                op: |args, thread, receiver, context, _new| {
                     #setup
                     #call
                 }
@@ -139,7 +139,7 @@ impl ToTokens for Method {
         let output = quote! {
             let method = crate::JsObject::new().callable(crate::BuiltIn {
                 context: None,
-                op: |args, thread, receiver, context| {
+                op: |args, thread, receiver, context, _new| {
                     #setup
                     #call
                 }
@@ -177,7 +177,7 @@ impl ToTokens for Getter {
                 #method_name_string,
                 Some(crate::BuiltIn {
                     context: None,
-                    op: |args, thread, receiver, context| {
+                    op: |args, thread, receiver, context, _new| {
                         #call
                     }
                 }.into()),
@@ -257,18 +257,20 @@ impl ToTokens for Callable {
         let arguments = &self.arguments.call();
 
         let call = self.return_type.as_tokens(quote! {
-            <#type_name>::#method_name(thread, #arguments)
+            <#type_name>::new(receiver, thread).#method_name(new, #arguments)
         });
 
         let output = quote! {
-            object = object.callable(
-                crate::BuiltIn {
-                    context: None,
-                    op: |args, thread, receiver, context| {
-                        #setup
-                        #call
-                    }
-                });
+            let callable = crate::BuiltIn {
+                context: None,
+                op: |args, thread, receiver, context, new| {
+                    #setup
+                    #call
+                }
+            };
+
+            object = object.callable(callable);
+            prototype.define_value("constructor", object.clone());
         };
 
         output.to_tokens(tokens);
@@ -276,7 +278,6 @@ impl ToTokens for Callable {
 }
 
 enum Item {
-    Constructor(Constructor),
     StaticMethod(StaticMethod),
     Method(Method),
     Getter(Getter),
@@ -286,7 +287,6 @@ enum Item {
 impl ToTokens for Item {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self {
-            Item::Constructor(constructor) => constructor.to_tokens(tokens),
             Item::Method(constructor) => constructor.to_tokens(tokens),
             Item::StaticMethod(constructor) => constructor.to_tokens(tokens),
             Item::Getter(constructor) => constructor.to_tokens(tokens),
@@ -312,11 +312,6 @@ pub fn callable(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn varargs(_attr: TokenStream, input: TokenStream) -> TokenStream {
-    input
-}
-
-#[proc_macro_attribute]
-pub fn constructor(_attr: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
@@ -397,15 +392,13 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                         is_callable = true;
                     } else if path == "varargs" {
                         is_varargs = true;
-                    } else if path == "constructor" {
-                        is_constructor = true;
                     }
                 }
             }
 
-            if uses_self && is_callable {
+            if !uses_self && is_callable {
                 return TokenStream::from(quote! {
-                    compile_error!("Callable cant reference self");
+                    compile_error!("Callable must reference self");
                 });
             }
 
@@ -421,65 +414,51 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 Arguments::List(remaining_args)
             };
 
-            if is_constructor {
-                if !uses_self {
-                    return TokenStream::from(quote! {
-                        compile_error!("Must reference self in a constructor");
-                    });
+            let return_type = if let ReturnType::Type(.., tpe) = output {
+                if is_result_type(tpe.as_ref()) {
+                    BindingReturnType::Result
                 } else {
-                    methods.push(Item::Constructor(Constructor {
-                        type_name: type_name.clone(),
-                        arguments,
-                    }));
-                    continue;
+                    BindingReturnType::Value
                 }
             } else {
-                let return_type = if let ReturnType::Type(.., tpe) = output {
-                    if is_result_type(tpe.as_ref()) {
-                        BindingReturnType::Result
-                    } else {
-                        BindingReturnType::Value
-                    }
-                } else {
-                    BindingReturnType::None
+                BindingReturnType::None
+            };
+
+            if is_callable {
+                let arguments = match arguments {
+                    Arguments::Varargs => Arguments::Varargs,
+                    Arguments::List(size) => Arguments::List(size - 1),
                 };
 
-                if is_callable {
-                    let arguments = match arguments {
-                        Arguments::Varargs => Arguments::Varargs,
-                        Arguments::List(size) => Arguments::List(size - 1),
-                    };
-
-                    methods.push(Item::Callable(Callable {
-                        type_name: type_name.clone(),
-                        arguments,
-                        method_name: ident.clone(),
-                        return_type,
-                    }))
-                } else if is_getter {
-                    methods.push(Item::Getter(Getter {
-                        type_name: type_name.clone(),
-                        method_name: ident.clone(),
-                        return_type,
-                        js_name: identifier,
-                    }))
-                } else if uses_self {
-                    methods.push(Item::Method(Method {
-                        type_name: type_name.clone(),
-                        arguments,
-                        method_name: ident.clone(),
-                        return_type,
-                        js_name: identifier,
-                    }))
-                } else {
-                    methods.push(Item::StaticMethod(StaticMethod {
-                        type_name: type_name.clone(),
-                        arguments,
-                        method_name: ident.clone(),
-                        return_type,
-                        js_name: identifier,
-                    }))
-                }
+                methods.push(Item::Callable(Callable {
+                    type_name: type_name.clone(),
+                    arguments,
+                    method_name: ident.clone(),
+                    return_type,
+                }))
+            } else if is_getter {
+                methods.push(Item::Getter(Getter {
+                    type_name: type_name.clone(),
+                    method_name: ident.clone(),
+                    return_type,
+                    js_name: identifier,
+                }))
+            } else if uses_self {
+                methods.push(Item::Method(Method {
+                    type_name: type_name.clone(),
+                    arguments,
+                    method_name: ident.clone(),
+                    return_type,
+                    js_name: identifier,
+                }))
+            } else {
+                methods.push(Item::StaticMethod(StaticMethod {
+                    type_name: type_name.clone(),
+                    arguments,
+                    method_name: ident.clone(),
+                    return_type,
+                    js_name: identifier,
+                }))
             }
         }
     }

@@ -2,7 +2,7 @@ use crate::result::JsResult;
 use crate::values::primitives::JsPrimitive;
 
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
-use builtin::{callable, constructor, getter, named, prototype};
+use builtin::{callable, getter, named, prototype};
 
 pub(crate) struct JsString<'a, 'b> {
     object: &'b JsObject<'a>,
@@ -55,19 +55,15 @@ impl<'a, 'b> JsString<'a, 'b> {
         Ok(RuntimeValue::String(chars.into()))
     }
 
-    #[constructor]
-    fn constructor(&mut self, value: RuntimeValue<'a>) -> JsResult<'a, ()> {
+    #[callable]
+    fn callable(&mut self, is_new: bool, value: RuntimeValue<'a>) -> JsResult<'a> {
         let str = value.to_string(self.thread)?;
 
-        self.object.wrap(JsPrimitive::String(str));
-
-        Ok(())
-    }
-
-    #[callable]
-    fn callable(thread: &'b mut JsThread<'a>, value: RuntimeValue<'a>) -> JsResult<'a> {
-        let str = value.to_string(thread)?;
-
-        Ok(RuntimeValue::String(str))
+        if is_new {
+            self.object.wrap(value);
+            Ok(RuntimeValue::Undefined)
+        } else {
+            Ok(RuntimeValue::String(str))
+        }
     }
 }

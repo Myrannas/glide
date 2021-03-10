@@ -24,6 +24,7 @@ pub(crate) fn eval<'a>(
     frame: &mut JsThread<'a>,
     _value: &JsObject<'a>,
     _context: Option<&RuntimeValue<'a>>,
+    _new: bool,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     let argument = frame.read_arg(args, 0);
 
@@ -45,8 +46,6 @@ pub(crate) fn eval<'a>(
                     return Err(err.into());
                 }
             };
-
-            println!("{:?}", function);
 
             let this = frame.current_context().this().clone();
             let context = frame.current_context().clone();

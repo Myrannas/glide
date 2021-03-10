@@ -17,7 +17,7 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
                 thread.call(target, function, args, false, false);
             }
             FunctionReference::BuiltIn(function) => {
-                function.apply(args, thread, Some(target));
+                function.apply(args, thread, Some(target), false);
                 thread.step();
             }
         },
@@ -51,7 +51,7 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
                     target = target.with_prototype(prototype);
                 }
 
-                function.apply(args, thread, Some(target.clone()));
+                function.apply(args, thread, Some(target.clone()), true);
 
                 thread.push_stack(target);
                 thread.step();

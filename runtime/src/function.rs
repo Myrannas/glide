@@ -53,7 +53,13 @@ impl<'a> From<BuiltIn<'a>> for FunctionReference<'a> {
 }
 
 impl<'a> BuiltIn<'a> {
-    pub fn apply(&self, arguments: usize, thread: &mut JsThread<'a>, target: Option<JsObject<'a>>) {
+    pub fn apply(
+        &self,
+        arguments: usize,
+        thread: &mut JsThread<'a>,
+        target: Option<JsObject<'a>>,
+        new: bool,
+    ) {
         let context = match &self.context {
             Some(value) => Some(value.as_ref()),
             None => None,
@@ -61,11 +67,15 @@ impl<'a> BuiltIn<'a> {
 
         let start_len = thread.stack.len() - arguments;
         let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
-        let result = (self.op)(arguments, thread, &target, context);
+        let result = (self.op)(arguments, thread, &target, context, new);
         thread.stack.truncate(start_len);
 
         match result {
-            Ok(Some(result)) => thread.stack.push(result),
+            Ok(Some(result)) => {
+                if !new {
+                    thread.stack.push(result)
+                }
+            }
             Err(err) => {
                 thread.throw(err);
             }
@@ -86,7 +96,7 @@ impl<'a> BuiltIn<'a> {
 
         let start_len = thread.stack.len() - arguments;
         let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
-        let result = (self.op)(arguments, thread, &target, context);
+        let result = (self.op)(arguments, thread, &target, context, false);
         thread.stack.truncate(start_len);
         result
     }
@@ -97,6 +107,7 @@ pub type BuiltinFn<'a> = fn(
     frame: &mut JsThread<'a>,
     target: &JsObject<'a>,
     context: Option<&RuntimeValue<'a>>,
+    new: bool,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>>;
 
 impl<'a> Debug for BuiltIn<'a> {

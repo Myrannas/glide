@@ -16,7 +16,7 @@ impl<'a> Helpers<'a> for JsObject<'a> {
             key.into(),
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(Box::new(value.into())),
-                op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
+                op: |_, _thread, _, context, _| Ok(Some(context.unwrap().clone())),
             })),
             None,
         )
