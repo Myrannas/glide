@@ -2,6 +2,7 @@
 
 extern crate serde;
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Formatter};
 
 type ChunkId = usize;
 type LocalId = usize;
@@ -77,23 +78,25 @@ pub enum Constant {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum LocalInit {
+    Constant(Constant),
+    Function(usize),
+}
+
+impl Default for LocalInit {
+    fn default() -> Self {
+        LocalInit::Constant(Constant::Undefined)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Environmental {
     GlobalThis,
     This,
     NewObject,
 }
 
-pub struct Chunk {
-    pub instructions: Vec<Instruction>,
-}
-
-impl Default for Chunk {
-    fn default() -> Self {
-        Chunk {
-            instructions: vec![],
-        }
-    }
-}
+pub type Chunk = Vec<Instruction>;
 
 #[derive(Clone)]
 pub struct Local {
@@ -103,11 +106,12 @@ pub struct Local {
 }
 
 pub struct Function {
-    pub chunks: Vec<Chunk>,
+    pub instructions: Vec<Instruction>,
     pub atoms: Vec<String>,
     pub functions: Vec<Function>,
     pub stack_size: usize,
     pub name: Option<String>,
+    pub locals_init: Vec<LocalInit>,
 
     pub local_size: usize,
     pub locals: Vec<Local>,

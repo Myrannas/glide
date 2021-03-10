@@ -7,7 +7,9 @@ use crate::parser::ast::{
 use crate::result::{CompilerError, InternalError, Result, SyntaxError};
 use instruction_set::Environmental::GlobalThis;
 use instruction_set::Instruction::*;
-use instruction_set::{Chunk, Constant, Environmental, Function, Instruction, Local, Module};
+use instruction_set::{
+    Chunk, Constant, Environmental, Function, Instruction, Local, LocalInit, Module,
+};
 use log::debug;
 
 macro_rules! internal_error {
@@ -69,7 +71,7 @@ struct ChunkBuilder {
 
 impl<'b> ChunkBuilder {
     fn append(mut self, instr: Instruction) -> Self {
-        self.frame.chunks[self.chunk_index].instructions.push(instr);
+        self.frame.chunks[self.chunk_index].push(instr);
 
         self
     }
@@ -107,6 +109,7 @@ enum Resolution {
 
 struct LocalAllocator {
     locals: Vec<Local>,
+    init: Vec<Option<LocalInit>>,
     current_id: usize,
 }
 
@@ -140,6 +143,8 @@ impl LocalAllocator {
             frame: 0,
         });
 
+        self.init.push(None);
+
         local
     }
 
@@ -147,6 +152,7 @@ impl LocalAllocator {
         LocalAllocator {
             current_id: 0,
             locals: vec![],
+            init: vec![],
         }
     }
 
@@ -164,6 +170,7 @@ impl LocalAllocator {
         LocalAllocator {
             locals,
             current_id: 0,
+            init: vec![],
         }
     }
 
@@ -172,6 +179,38 @@ impl LocalAllocator {
             .iter()
             .filter(|Local { frame, .. }| *frame == 0)
             .count()
+    }
+
+    fn set_init_value(&mut self, local: usize, expression: &Expression) -> bool {
+        let constant = if let Some(constant) = expression.constant() {
+            constant
+        } else {
+            return false;
+        };
+
+        if self.init.get(local).unwrap_or(&None).is_none() {
+            self.init[local] = Some(LocalInit::Constant(constant));
+
+            true
+        } else {
+            false
+        }
+    }
+
+    fn set_init_function(&mut self, local: usize, function_id: usize) -> bool {
+        if self.init.get(local).is_none() {
+            self.init[local] = Some(LocalInit::Function(function_id));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn get_init(&self) -> Vec<LocalInit> {
+        self.init
+            .iter()
+            .map(|v| v.clone().unwrap_or_default())
+            .collect()
     }
 }
 
@@ -259,6 +298,63 @@ enum BreakStack {
     },
 }
 
+fn freeze_instructions(mut chunks: Vec<Chunk>) -> Vec<Instruction> {
+    let mut labels = Vec::with_capacity(chunks.len());
+
+    for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
+        while let Some(Instruction::Jump { to }) = chunk.last() {
+            if *to == chunk_index + 1 {
+                chunk.pop();
+            } else {
+                break;
+            }
+        }
+    }
+
+    // println!("{:#?}", chunks);
+
+    let mut offset = 0;
+    for chunk in chunks.iter() {
+        labels.push(offset);
+        offset += chunk.len();
+    }
+
+    // println!("{:?}", labels);
+
+    let result: Vec<Instruction> = chunks
+        .into_iter()
+        .flatten()
+        .map(|i| match i {
+            Instruction::Jump { to: usize::MAX } => Instruction::Jump { to: usize::MAX },
+            Instruction::Jump { to } => Instruction::Jump { to: labels[to] },
+            Instruction::CompareJump { if_true, if_false } => Instruction::CompareJump {
+                if_true: labels[if_true],
+                if_false: labels[if_false],
+            },
+            Instruction::LogicalOr { left, right } => Instruction::LogicalOr {
+                left: labels[left],
+                right: labels[right],
+            },
+            Instruction::LogicalAnd { left, right } => Instruction::LogicalAnd {
+                left: labels[left],
+                right: labels[right],
+            },
+            Instruction::Catch { chunk } => Instruction::Catch {
+                chunk: labels[chunk],
+            },
+            Instruction::DropCatch { chunk } => Instruction::DropCatch {
+                chunk: labels[chunk],
+            },
+            i => i,
+        })
+        .collect();
+
+    // let results_with_indexes: Vec<(usize, &Instruction)> = result.iter().enumerate().collect();
+    // println!("{:#?}", results_with_indexes);
+
+    result
+}
+
 impl BreakStack {
     fn new() -> BreakStack {
         BreakStack::Root
@@ -294,9 +390,7 @@ impl<'a, 'c> ChunkBuilder {
 
     #[inline]
     fn allocate_chunk(&mut self) -> usize {
-        self.frame.chunks.allocate(Chunk {
-            instructions: Vec::new(),
-        })
+        self.frame.chunks.allocate(Vec::new())
     }
 
     #[inline]
@@ -571,13 +665,14 @@ impl<'a, 'c> ChunkBuilder {
             } => {
                 let identifier = identifier.unwrap_or("(anonymous)");
                 let function = self.frame.functions.allocate(Function {
-                    chunks: vec![],
+                    instructions: vec![],
                     atoms: vec![],
                     stack_size: 0,
                     functions: vec![],
                     name: Some(identifier.to_owned()),
                     locals: vec![],
                     local_size: 0,
+                    locals_init: vec![],
                 });
 
                 let allocator = self.frame.locals.child();
@@ -598,10 +693,11 @@ impl<'a, 'c> ChunkBuilder {
                     DEFAULT_OPTIONS,
                 )?;
 
-                frame.functions[function].chunks = chunks;
+                frame.functions[function].instructions = freeze_instructions(chunks);
                 frame.functions[function].functions = functions.into_iter().collect();
                 frame.functions[function].atoms = atoms;
                 frame.functions[function].local_size = locals.len();
+                frame.functions[function].locals_init = locals.get_init();
 
                 #[cfg(feature = "eval")]
                 {
@@ -648,9 +744,11 @@ impl<'a, 'c> ChunkBuilder {
                     let local = next.allocate_local(identifier);
 
                     if let Some(expression) = expression {
-                        next = next
-                            .compile_expression(expression)?
-                            .append(SetLocal { local });
+                        if !next.frame.locals.set_init_value(local, &expression) {
+                            next = next
+                                .compile_expression(expression)?
+                                .append(SetLocal { local });
+                        }
 
                         if !next.options.module {
                             let name = next.allocate_atom(identifier);
@@ -737,18 +835,23 @@ impl<'a, 'c> ChunkBuilder {
             }) => {
                 let local = self.allocate_local(identifier);
                 let function = self.frame.functions.allocate(Function {
-                    chunks: vec![],
+                    instructions: vec![],
                     stack_size: 0,
                     local_size: 0,
                     functions: vec![],
                     locals: vec![],
                     atoms: vec![],
                     name: Some(identifier.to_owned()),
+                    locals_init: vec![],
                 });
 
-                let mut next = self
-                    .append(GetFunction { function })
-                    .append(SetLocal { local });
+                let mut next = self;
+
+                if !next.frame.locals.set_init_function(local, function) {
+                    next = next
+                        .append(GetFunction { function })
+                        .append(SetLocal { local });
+                }
 
                 if !next.options.module {
                     let name = next.allocate_atom(identifier);
@@ -776,11 +879,12 @@ impl<'a, 'c> ChunkBuilder {
                     DEFAULT_OPTIONS,
                 )?;
 
-                frame.functions[function].chunks = chunks;
+                frame.functions[function].instructions = freeze_instructions(chunks);
                 frame.functions[function].local_size = locals.len();
                 frame.functions[function].functions =
                     functions.into_iter().map(From::from).collect();
                 frame.functions[function].atoms = atoms;
+                frame.functions[function].locals_init = locals.get_init();
 
                 #[cfg(feature = "eval")]
                 {
@@ -795,8 +899,8 @@ impl<'a, 'c> ChunkBuilder {
                 true_block,
                 false_block,
             }) => {
-                let next_index = self.allocate_chunk();
                 let if_index = self.allocate_chunk();
+                let next_index = self.allocate_chunk();
 
                 let else_index = if false_block.is_some() {
                     self.allocate_chunk()
@@ -856,10 +960,10 @@ impl<'a, 'c> ChunkBuilder {
                 catch_block,
                 catch_binding,
             }) => {
-                let next_index = self.allocate_chunk();
                 let try_index = self.allocate_chunk();
                 let catch_index = self.allocate_chunk();
                 let finally_index = self.allocate_chunk();
+                let next_index = self.allocate_chunk();
 
                 let mut next = self.append(Jump { to: try_index }).switch_to(try_index);
 
@@ -1011,6 +1115,7 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
         locals: LocalAllocator {
             locals,
             current_id: 0,
+            init: vec![],
         },
     };
 
@@ -1024,15 +1129,17 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
 
     let finalised = chunk.finalize();
     let locals_len = finalised.locals.len();
+    let locals_init = finalised.locals.get_init();
 
     Ok(Function {
         locals: finalised.locals.locals,
         functions: finalised.functions.into_iter().map(From::from).collect(),
-        chunks: finalised.chunks,
+        instructions: freeze_instructions(finalised.chunks),
         local_size: locals_len,
         atoms: finalised.atoms,
         stack_size: 0,
         name: Some("eval".to_owned()),
+        locals_init,
     })
 }
 
@@ -1052,6 +1159,7 @@ pub fn compile<'a>(
     )?;
 
     let local_size = frame.locals.len();
+    let locals_init = frame.locals.get_init();
 
     #[allow(unused_assignments)]
     let mut locals = vec![];
@@ -1062,13 +1170,14 @@ pub fn compile<'a>(
 
     Ok(Module {
         init: Function {
-            chunks: frame.chunks,
+            instructions: freeze_instructions(frame.chunks),
             stack_size: 0,
             local_size,
             functions: frame.functions.into_iter().map(From::from).collect(),
             name: Some("(anonymous)".to_owned()),
             atoms: frame.atoms,
             locals,
+            locals_init,
         },
     })
 }

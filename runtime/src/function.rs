@@ -1,17 +1,19 @@
 use crate::context::JsContext;
 use crate::debugging::{DebugRepresentation, Renderer};
+use crate::primordials::Primitives;
 use crate::result::JsResult;
 use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
 use crate::vm::JsThread;
+use crate::GlobalThis;
 use core::cmp::PartialEq;
 use core::convert::From;
 use core::fmt::{Debug, Formatter};
 use core::option::Option;
 use core::option::Option::{None, Some};
 use core::result::Result::{Err, Ok};
-use instruction_set::{Chunk, Function, Local};
+use instruction_set::{Chunk, Function, Instruction, Local, LocalInit};
 use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,25 +117,26 @@ pub struct JsFunction {
 }
 
 pub(crate) struct JsFunctionInner {
-    pub chunks: Vec<Chunk>,
+    pub instructions: Vec<Instruction>,
     pub atoms: Vec<JsPrimitiveString>,
     pub functions: Vec<JsFunction>,
 
     pub local_size: usize,
     pub locals: Vec<Local>,
+    pub locals_init: Vec<LocalInit>,
 
     #[allow(dead_code)]
     pub(crate) stack_size: usize,
     pub(crate) name: String,
 }
 
-impl Debug for JsFunction {
+impl<'a> Debug for JsFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.render(&mut Renderer::debug(f, 3))
     }
 }
 
-impl DebugRepresentation for JsFunction {
+impl<'a> DebugRepresentation for JsFunction {
     fn render(&self, f: &mut Renderer) -> std::fmt::Result {
         f.function(&self.inner.name)?;
 
@@ -143,14 +146,9 @@ impl DebugRepresentation for JsFunction {
 
         f.new_line()?;
 
-        for (i, chunk) in self.inner.chunks.iter().enumerate() {
-            f.internal_index(i)?;
+        for instruction in &self.inner.instructions {
+            f.formatter.write_fmt(format_args!("{:?}", instruction))?;
             f.new_line()?;
-
-            for instruction in &chunk.instructions {
-                f.formatter.write_fmt(format_args!("{:?}", instruction))?;
-                f.new_line()?;
-            }
         }
 
         f.end_internal()?;
@@ -159,36 +157,37 @@ impl DebugRepresentation for JsFunction {
     }
 }
 
-impl PartialEq for JsFunction {
+impl<'a> PartialEq for JsFunction {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
-impl JsFunction {
+impl<'a> JsFunction {
     pub fn load(function: Function) -> JsFunction {
         let Function {
-            chunks,
+            instructions,
             atoms,
             functions,
             stack_size,
             name,
             local_size,
             locals,
+            locals_init,
         } = function;
 
         let atoms = atoms.into_iter().map(JsPrimitiveString::from).collect();
-
-        let functions = functions.into_iter().map(JsFunction::load).collect();
+        let functions = functions.into_iter().map(|f| JsFunction::load(f)).collect();
 
         JsFunction {
             inner: Rc::new(JsFunctionInner {
-                chunks,
+                instructions,
                 atoms,
                 functions,
                 local_size,
                 locals,
                 stack_size,
+                locals_init,
                 name: name.unwrap_or_default(),
             }),
         }
@@ -210,11 +209,36 @@ impl JsFunction {
         &self.inner.locals
     }
 
-    pub fn get_chunk(&self, index: usize) -> Option<&Chunk> {
-        self.inner.chunks.get(index)
-    }
-
     pub fn get_atom(&self, index: usize) -> JsPrimitiveString {
         self.inner.atoms[index].clone()
+    }
+
+    pub(crate) fn init(
+        &self,
+        primitives: &Primitives<'a>,
+        parent_context: &JsContext<'a>,
+    ) -> Vec<RuntimeValue<'a>> {
+        self.inner
+            .locals_init
+            .iter()
+            .map(|local_init| match local_init {
+                LocalInit::Constant(constant) => RuntimeValue::from(constant),
+                LocalInit::Function(function_id) => {
+                    let function = self.inner.functions[*function_id].clone();
+                    let function_reference = CustomFunctionReference {
+                        function,
+                        parent_context: parent_context.clone(),
+                    };
+
+                    primitives
+                        .wrap_function(FunctionReference::Custom(function_reference))
+                        .into()
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn instructions(&self) -> &Vec<Instruction> {
+        &self.inner.instructions
     }
 }

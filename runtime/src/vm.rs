@@ -29,7 +29,6 @@ const END_OF_FRAME: usize = usize::MAX - 1;
 #[derive(Clone)]
 struct StackFrame<'a> {
     current_function: JsFunction,
-    current_chunk_index: usize,
     index: usize,
     context: JsContext<'a>,
     stack_size: usize,
@@ -39,9 +38,8 @@ struct StackFrame<'a> {
 impl<'a> Debug for StackFrame<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "{} ({}:{})",
+            "{} ({})",
             self.current_function.name(),
-            self.current_chunk_index,
             self.index
         ))
     }
@@ -49,7 +47,7 @@ impl<'a> Debug for StackFrame<'a> {
 
 #[derive(Debug)]
 struct CatchFrame {
-    chunk: usize,
+    instruction_index: usize,
     stack_frame: usize,
 }
 
@@ -60,14 +58,12 @@ impl<'a> From<&mut JsThread<'a>> for Stack {
             .iter()
             .map(|frame| StackTraceFrame {
                 function: frame.current_function.name().to_owned(),
-                chunk: frame.current_chunk_index,
                 offset: frame.index,
             })
             .collect();
 
         call_stack.push(StackTraceFrame {
             function: thread.current_frame.current_function.name().to_owned(),
-            chunk: thread.current_frame.current_chunk_index,
             offset: thread.current_frame.index,
         });
 
@@ -76,14 +72,6 @@ impl<'a> From<&mut JsThread<'a>> for Stack {
         Stack {
             entries: call_stack,
         }
-    }
-}
-
-impl<'a> StackFrame<'a> {
-    fn get_chunk(&self) -> &Chunk {
-        self.current_function
-            .get_chunk(self.current_chunk_index)
-            .unwrap()
     }
 }
 
@@ -116,7 +104,14 @@ impl<'a> JsThread<'a> {
     }
 
     pub fn new(function: JsFunction, global_this: GlobalThis<'a>) -> JsThread<'a> {
-        let local_size = function.local_size();
+        let root = JsContext::root(&global_this);
+
+        let context = JsContext::with_parent(
+            root,
+            global_this.global_this.clone(),
+            &function,
+            &global_this.wrappers,
+        );
 
         JsThread {
             stack: Vec::with_capacity(1024),
@@ -124,10 +119,9 @@ impl<'a> JsThread<'a> {
             catch_stack: Vec::new(),
             current_frame: StackFrame {
                 current_function: function,
-                current_chunk_index: 0,
                 index: 0,
                 stack_size: 0,
-                context: JsContext::with_parent(None, local_size, global_this.global_this.clone()),
+                context,
                 is_new: false,
             },
             global_this,
@@ -165,37 +159,39 @@ impl<'a> JsThread<'a> {
 
         if let Some(parent) = self.call_stack.pop() {
             self.current_frame = parent;
-        }
 
-        self.stack.truncate(self.current_frame.stack_size);
-        self.stack.push(value);
+            self.stack.truncate(self.current_frame.stack_size);
+            self.stack.push(value);
 
-        trace!("fixing catch stack {:?}", self.catch_stack);
+            trace!("fixing catch stack {:?}", self.catch_stack);
 
-        while let Some(CatchFrame { stack_frame, .. }) = self.catch_stack.last() {
-            trace!(
-                "attempting to fix catch stack {} {}",
-                *stack_frame,
-                self.call_stack.len()
-            );
-            if self.call_stack.len() < *stack_frame {
-                trace!("Dropping catch");
-                self.catch_stack.pop();
-            } else {
-                break;
+            while let Some(CatchFrame { stack_frame, .. }) = self.catch_stack.last() {
+                trace!(
+                    "attempting to fix catch stack {} {}",
+                    *stack_frame,
+                    self.call_stack.len()
+                );
+                if self.call_stack.len() < *stack_frame {
+                    trace!("Dropping catch");
+                    self.catch_stack.pop();
+                } else {
+                    break;
+                }
             }
+
+            trace!("finished fixing catch stack {:?}", self.catch_stack);
+
+            self.current_frame.index += 1;
+        } else {
+            self.current_frame.index = usize::MAX;
         }
-
-        trace!("finished fixing catch stack {:?}", self.catch_stack);
-
-        self.current_frame.index += 1
     }
 
     pub(crate) fn is_new(&self) -> bool {
         self.current_frame.is_new
     }
 
-    pub(crate) fn jump(&mut self, chunk_index: usize) {
+    pub(crate) fn jump(&mut self, instruction_index: usize) {
         if let Some(limit) = self.cost_limit {
             if limit > 0 {
                 self.cost_limit = Some(limit - 1)
@@ -204,8 +200,7 @@ impl<'a> JsThread<'a> {
             }
         }
 
-        self.current_frame.current_chunk_index = chunk_index;
-        self.current_frame.index = 0;
+        self.current_frame.index = instruction_index;
     }
 
     pub(crate) fn throw(&mut self, error: impl Into<ExecutionError<'a>>) {
@@ -235,7 +230,10 @@ impl<'a> JsThread<'a> {
             self.current_frame.index = END_OF_FRAME;
             self.error = Some(error);
         } else if let ExecutionError::Thrown(error, stack) = error {
-            let CatchFrame { chunk, stack_frame } = self.catch_stack.last().unwrap();
+            let CatchFrame {
+                instruction_index,
+                stack_frame,
+            } = self.catch_stack.last().unwrap();
 
             trace!(
                 "Starting to unwind the stack\n{:?}\n{:?}\n{:?}",
@@ -265,8 +263,7 @@ impl<'a> JsThread<'a> {
                 );
             }
 
-            self.current_frame.current_chunk_index = *chunk;
-            self.current_frame.index = 0;
+            self.current_frame.index = *instruction_index;
 
             self.stack.push(error);
         } else {
@@ -301,7 +298,7 @@ impl<'a> JsThread<'a> {
 
     pub(crate) fn catch(&mut self, chunk: usize) {
         self.catch_stack.push(CatchFrame {
-            chunk,
+            instruction_index: chunk,
             stack_frame: self.call_stack.len(),
         });
     }
@@ -310,11 +307,11 @@ impl<'a> JsThread<'a> {
         let catch = self.catch_stack.pop().unwrap();
 
         assert_eq!(self.call_stack.len(), catch.stack_frame);
-        assert_eq!(chunk, catch.chunk);
+        assert_eq!(chunk, catch.instruction_index);
     }
 
     fn next_instruction(&self) -> Instruction {
-        self.current_frame.get_chunk().instructions[self.current_frame.index].clone()
+        self.current_frame.current_function.instructions()[self.current_frame.index].clone()
     }
 
     pub(crate) fn call(
@@ -341,8 +338,12 @@ impl<'a> JsThread<'a> {
             }
         }
 
-        let new_context =
-            JsContext::with_parent(Some(context.clone()), function.local_size(), target.clone());
+        let new_context = JsContext::with_parent(
+            context.clone(),
+            target.clone(),
+            &function,
+            &self.global_this.wrappers,
+        );
 
         let stack_length = self.stack.len();
         let arguments = (stack_length - args)..stack_length;
@@ -359,7 +360,6 @@ impl<'a> JsThread<'a> {
         self.current_frame.stack_size = self.stack.len();
         let new_frame = StackFrame {
             current_function: function,
-            current_chunk_index: 0,
             index: 0,
             context: new_context,
             stack_size: 0,
@@ -377,10 +377,9 @@ impl<'a> JsThread<'a> {
     }
 
     pub fn run(&mut self) -> JsResult<'a, RuntimeValue<'a>> {
-        while self.current_frame.index < self.current_frame.get_chunk().instructions.len() {
+        while self.current_frame.index < self.current_frame.current_function.instructions().len() {
             trace!(
-                "{:3}:{:3} {:?}",
-                self.current_frame.current_chunk_index,
+                "{:3} {:?}",
                 self.current_frame.index,
                 self.next_instruction()
             );

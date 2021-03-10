@@ -9,17 +9,13 @@ pub struct Stack {
 #[derive(Debug, Clone)]
 pub struct StackTraceFrame {
     pub(crate) function: String,
-    pub(crate) chunk: usize,
     pub(crate) offset: usize,
 }
 
 impl Display for Stack {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for entry in &self.entries {
-            f.write_fmt(format_args!(
-                "{} ({}:{})\n",
-                entry.function, entry.chunk, entry.offset
-            ))?;
+            f.write_fmt(format_args!("{} ({})\n", entry.function, entry.offset))?;
         }
 
         Ok(())

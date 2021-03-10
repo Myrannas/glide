@@ -1,3 +1,5 @@
+use instruction_set::Constant;
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Reference<'a> {
     This,
@@ -100,6 +102,23 @@ pub(crate) enum Expression<'a> {
         arguments: Vec<&'a str>,
         statements: BlockStatement<'a>,
     },
+}
+
+impl<'a> Expression<'a> {
+    pub(crate) fn constant(&self) -> Option<Constant> {
+        // println!("Trying to turn {:?} into constant", self);
+
+        let constant = match self {
+            Expression::Float(f) => Constant::Float(*f),
+            Expression::Boolean(b) => Constant::Boolean(*b),
+            Expression::String(s) => Constant::String(s.to_owned()),
+            Expression::Null => Constant::Null,
+            Expression::Undefined => Constant::Undefined,
+            _ => return None,
+        };
+
+        Some(constant)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]

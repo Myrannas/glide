@@ -1,6 +1,8 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::function::JsFunction;
-use crate::{JsObject, RuntimeValue};
+use crate::primordials::Primitives;
+use crate::{GlobalThis, JsObject, RuntimeValue};
+use instruction_set::{Function, LocalInit};
 use std::cell::{Ref, RefCell};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -74,15 +76,26 @@ impl<'a, 'b> JsContext<'a> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
-    pub(crate) fn with_parent(
-        parent: Option<JsContext<'a>>,
-        locals_size: usize,
+    pub(crate) fn root(global_this: &GlobalThis<'a>) -> JsContext<'a> {
+        JsContext {
+            inner: Rc::new(RefCell::new(JsContextInner {
+                locals: vec![],
+                parent: None,
+                this: global_this.global_this.clone(),
+            })),
+        }
+    }
+
+    pub(crate) fn with_parent<'c>(
+        parent: JsContext<'a>,
         this: JsObject<'a>,
+        function: &'c JsFunction,
+        primitives: &Primitives<'a>,
     ) -> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
-                locals: vec![RuntimeValue::Undefined; locals_size + 1],
-                parent,
+                locals: function.init(primitives, &parent),
+                parent: Some(parent),
                 this,
             })),
         }
