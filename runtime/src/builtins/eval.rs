@@ -1,4 +1,4 @@
-use crate::function::CustomFunctionReference;
+use crate::function::{CustomFunctionReference, FunctionReference};
 use crate::result::{JsResult, SyntaxError};
 use crate::{ExecutionError, InternalError, JsFunction, JsObject, JsThread, RuntimeValue};
 use glide_compiler::{
@@ -46,21 +46,22 @@ pub(crate) fn eval<'a>(
                 }
             };
 
+            println!("{:?}", function);
+
             let this = frame.current_context().this().clone();
             let context = frame.current_context().clone();
 
-            frame.call(
+            let result = frame.call_from_native(
                 this,
-                CustomFunctionReference {
+                FunctionReference::Custom(CustomFunctionReference {
                     function: JsFunction::load(function),
                     parent_context: context,
-                },
+                }),
                 0,
                 false,
-                false,
-            );
+            )?;
 
-            Ok(None)
+            Ok(Some(result))
         }
         _ => Ok(Some(RuntimeValue::Undefined)),
     }

@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
+use std::time::Duration;
 
 fn bootstrap_harness() -> ModuleSet {
     let mut modules = Vec::new();
@@ -68,7 +69,7 @@ fn all_suites(path: PathBuf) -> std::io::Result<Vec<PathBuf>> {
 }
 
 enum Outcome {
-    Pass,
+    Pass(Duration),
     Skip,
 }
 
@@ -105,7 +106,7 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     }) = details.negative
     {
         return match module {
-            Err(CompilerError::SyntaxError(_)) => Ok(Outcome::Pass),
+            Err(CompilerError::SyntaxError(_)) => Ok(Outcome::Pass(Duration::from_secs(0))),
             Ok(..) => Err(Error::msg("Expected a compilation error")),
             Err(..) => Err(Error::msg("Expected a compilation error")),
         };
@@ -113,8 +114,10 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
 
     let module = AssertUnwindSafe(module);
 
-    match catch_unwind(|| {
+    let time = match catch_unwind(|| {
         let global = GlobalThis::new();
+
+        let start = std::time::Instant::now();
 
         harness.load(global.clone());
 
@@ -122,20 +125,21 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
 
         let mut thread = JsThread::new(function, global.clone());
         thread.set_cost_limit(cost_limit);
+
         match thread.run() {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(std::time::Instant::now() - start),
             Err(err) => {
                 let err: anyhow::Error = err.into();
                 Err(err).context(details)
             }
         }
     }) {
-        Ok(Ok(..)) => Ok(()),
+        Ok(Ok(duration)) => Ok(duration),
         Ok(Err(error)) => Err(Error::msg(format!("{:?}", error))),
         Err(error) => Err(Error::msg(format!("{:?}", error))),
     }?;
 
-    Ok(Outcome::Pass)
+    Ok(Outcome::Pass(time))
 }
 
 #[derive(PartialOrd, PartialEq, Serialize, Deserialize, Clone)]
@@ -209,19 +213,29 @@ fn main() {
 
     suites.sort();
 
+    let mut success_time = Duration::from_micros(0);
     let mut results: Vec<TestResult> = Vec::new();
     for suite in suites {
         let suite_name = suite.to_str().unwrap().to_owned();
 
-        // printlnln!("Running suite {:80.80}", suite_name);
+        print!("Running suite {:80.80}", suite_name);
 
         match run_suite(
             suite.clone(),
             &harness,
             matches.value_of("limit").unwrap().parse().unwrap(),
         ) {
-            Ok(Outcome::Pass) => {
-                // println!("{}", "pass".green());
+            Ok(Outcome::Pass(time)) => {
+                if time != Duration::from_micros(0) {
+                    println!(
+                        "{} in {:.1}us",
+                        "pass".green(),
+                        time.as_secs_f64() * 1_000_000.0
+                    );
+                } else {
+                    println!("{} (expected Syntax Error)", "pass".green());
+                }
+                success_time += time;
                 results.push(TestResult {
                     result: SuiteResult::Success,
                     name: suite_name,
@@ -229,7 +243,7 @@ fn main() {
                 })
             }
             Ok(Outcome::Skip) => {
-                // println!("{}", "skip".yellow());
+                println!("{}", "skip".yellow());
                 results.push(TestResult {
                     result: SuiteResult::Skip,
                     name: suite_name,
@@ -237,7 +251,7 @@ fn main() {
                 })
             }
             Err(err) => {
-                // println!("{}", "fail".red());
+                println!("{}", "fail".red());
                 results.push(TestResult {
                     result: SuiteResult::Failure,
                     name: suite_name,
@@ -320,6 +334,10 @@ fn main() {
         println!("{} new suites succeeded", success_count);
         println!("{} new suites failed", failure_count);
         println!("{} new suites skipped", skip_count);
+        println!(
+            "{:.3}ms successful test time",
+            success_time.as_secs_f64() * 1000.0
+        );
 
         if !differences.is_empty() {
             println!("Remember to update the ratchet with changes");
@@ -329,5 +347,9 @@ fn main() {
         println!("{} suites succeeded", success_count);
         println!("{} suites failed", failure_count);
         println!("{} suites skipped", skip_count);
+        println!(
+            "{:.3}ms successful test time",
+            success_time.as_secs_f64() * 1000.0
+        );
     }
 }

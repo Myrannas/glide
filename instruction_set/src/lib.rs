@@ -98,18 +98,21 @@ pub enum Environmental {
 
 pub type Chunk = Vec<Instruction>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Local {
     pub name: String,
     pub local: LocalId,
     pub frame: Frame,
+    pub argument: bool,
 }
 
+#[derive(Debug)]
 pub struct Function {
     pub instructions: Vec<Instruction>,
     pub atoms: Vec<String>,
     pub functions: Vec<Function>,
     pub stack_size: usize,
+    pub args_size: usize,
     pub name: Option<String>,
     pub locals_init: Vec<LocalInit>,
 

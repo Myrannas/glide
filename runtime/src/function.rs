@@ -59,9 +59,10 @@ impl<'a> BuiltIn<'a> {
             None => None,
         };
 
+        let start_len = thread.stack.len() - arguments;
         let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
         let result = (self.op)(arguments, thread, &target, context);
-        thread.stack.truncate(thread.stack.len() - arguments);
+        thread.stack.truncate(start_len);
 
         match result {
             Ok(Some(result)) => thread.stack.push(result),
@@ -83,9 +84,10 @@ impl<'a> BuiltIn<'a> {
             None => None,
         };
 
+        let start_len = thread.stack.len() - arguments;
         let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
         let result = (self.op)(arguments, thread, &target, context);
-        thread.stack.truncate(thread.stack.len() - arguments);
+        thread.stack.truncate(start_len);
         result
     }
 }
@@ -121,6 +123,7 @@ pub(crate) struct JsFunctionInner {
     pub atoms: Vec<JsPrimitiveString>,
     pub functions: Vec<JsFunction>,
 
+    pub args_size: usize,
     pub local_size: usize,
     pub locals: Vec<Local>,
     pub locals_init: Vec<LocalInit>,
@@ -174,6 +177,7 @@ impl<'a> JsFunction {
             local_size,
             locals,
             locals_init,
+            args_size,
         } = function;
 
         let atoms = atoms.into_iter().map(JsPrimitiveString::from).collect();
@@ -185,6 +189,7 @@ impl<'a> JsFunction {
                 atoms,
                 functions,
                 local_size,
+                args_size,
                 locals,
                 stack_size,
                 locals_init,
@@ -203,6 +208,10 @@ impl<'a> JsFunction {
 
     pub fn local_size(&self) -> usize {
         self.inner.local_size
+    }
+
+    pub fn args_size(&self) -> usize {
+        self.inner.args_size
     }
 
     pub(crate) fn locals(&self) -> &Vec<Local> {

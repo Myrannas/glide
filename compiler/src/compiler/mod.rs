@@ -5,6 +5,7 @@ use crate::parser::ast::{
 };
 
 use crate::result::{CompilerError, InternalError, Result, SyntaxError};
+use instruction_set::Constant::Undefined;
 use instruction_set::Environmental::GlobalThis;
 use instruction_set::Instruction::*;
 use instruction_set::{
@@ -30,6 +31,7 @@ macro_rules! syntax_error {
     };
 }
 
+#[derive(Debug)]
 struct Frame {
     chunks: Vec<Chunk>,
     functions: Vec<Function>,
@@ -76,7 +78,7 @@ impl<'b> ChunkBuilder {
         self
     }
 
-    fn allocate_local(&mut self, id: &str) -> usize {
+    fn allocate_local(&mut self, id: &str, argument: bool) -> usize {
         let existing_position = self
             .frame
             .locals
@@ -88,7 +90,9 @@ impl<'b> ChunkBuilder {
         if let Some(existing) = existing_position {
             existing
         } else {
-            self.frame.locals.allocate_identifier(id.to_owned())
+            self.frame
+                .locals
+                .allocate_identifier(id.to_owned(), argument)
         }
     }
 
@@ -107,6 +111,7 @@ enum Resolution {
     Unresolved,
 }
 
+#[derive(Debug)]
 struct LocalAllocator {
     locals: Vec<Local>,
     init: Vec<Option<LocalInit>>,
@@ -133,7 +138,7 @@ impl LocalAllocator {
         }
     }
 
-    fn allocate_identifier(&mut self, id: impl Into<String>) -> usize {
+    fn allocate_identifier(&mut self, id: impl Into<String>, argument: bool) -> usize {
         let local = self.current_id;
         self.current_id += 1;
 
@@ -141,6 +146,7 @@ impl LocalAllocator {
             name: id.into(),
             local,
             frame: 0,
+            argument,
         });
 
         self.init.push(None);
@@ -160,11 +166,19 @@ impl LocalAllocator {
         let locals: Vec<Local> = self
             .locals
             .iter()
-            .map(|Local { name, local, frame }| Local {
-                name: name.to_owned(),
-                local: *local,
-                frame: frame + 1,
-            })
+            .map(
+                |Local {
+                     name,
+                     local,
+                     frame,
+                     argument,
+                 }| Local {
+                    name: name.to_owned(),
+                    local: *local,
+                    frame: frame + 1,
+                    argument: *argument,
+                },
+            )
             .collect();
 
         LocalAllocator {
@@ -178,6 +192,17 @@ impl LocalAllocator {
         self.locals
             .iter()
             .filter(|Local { frame, .. }| *frame == 0)
+            .count()
+    }
+
+    fn args_len(&self) -> usize {
+        self.locals
+            .iter()
+            .filter(
+                |Local {
+                     frame, argument, ..
+                 }| *frame == 0 && *argument,
+            )
             .count()
     }
 
@@ -672,6 +697,7 @@ impl<'a, 'c> ChunkBuilder {
                     name: Some(identifier.to_owned()),
                     locals: vec![],
                     local_size: 0,
+                    args_size: 0,
                     locals_init: vec![],
                 });
 
@@ -697,6 +723,7 @@ impl<'a, 'c> ChunkBuilder {
                 frame.functions[function].functions = functions.into_iter().collect();
                 frame.functions[function].atoms = atoms;
                 frame.functions[function].local_size = locals.len();
+                frame.functions[function].args_size = locals.args_len();
                 frame.functions[function].locals_init = locals.get_init();
 
                 #[cfg(feature = "eval")]
@@ -741,7 +768,7 @@ impl<'a, 'c> ChunkBuilder {
                     expression,
                 } in declarations
                 {
-                    let local = next.allocate_local(identifier);
+                    let local = next.allocate_local(identifier, false);
 
                     if let Some(expression) = expression {
                         if !next.frame.locals.set_init_value(local, &expression) {
@@ -833,11 +860,12 @@ impl<'a, 'c> ChunkBuilder {
                 arguments,
                 statements: BlockStatement { statements },
             }) => {
-                let local = self.allocate_local(identifier);
+                let local = self.allocate_local(identifier, false);
                 let function = self.frame.functions.allocate(Function {
                     instructions: vec![],
                     stack_size: 0,
                     local_size: 0,
+                    args_size: 0,
                     functions: vec![],
                     locals: vec![],
                     atoms: vec![],
@@ -885,6 +913,7 @@ impl<'a, 'c> ChunkBuilder {
                     functions.into_iter().map(From::from).collect();
                 frame.functions[function].atoms = atoms;
                 frame.functions[function].locals_init = locals.get_init();
+                frame.functions[function].args_size = locals.args_len();
 
                 #[cfg(feature = "eval")]
                 {
@@ -987,7 +1016,7 @@ impl<'a, 'c> ChunkBuilder {
                         .append(DropCatch { chunk: catch_index });
 
                     if let Some(binding) = catch_binding {
-                        let binding = next.allocate_local(binding);
+                        let binding = next.allocate_local(binding, false);
                         next = next.append(SetLocal { local: binding });
                     }
 
@@ -1067,10 +1096,10 @@ fn compile_function<'a>(
         locals: parent.child(),
     };
 
-    frame.locals.allocate_identifier("arguments");
+    frame.locals.allocate_identifier("arguments", false);
 
     for argument in arguments {
-        frame.locals.allocate_identifier(argument);
+        frame.locals.allocate_identifier(argument, true);
     }
 
     let mut chunk = frame.new_chunk(options);
@@ -1108,7 +1137,7 @@ impl Default for CompilerOptions {
 
 #[cfg(feature = "eval")]
 pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function> {
-    let frame = Frame {
+    let mut frame = Frame {
         atoms: vec![],
         chunks: vec![],
         functions: vec![],
@@ -1116,8 +1145,17 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
             locals,
             current_id: 0,
             init: vec![],
-        },
+        }
+        .child(),
     };
+
+    let return_value = if let Some(Statement::Expression(_)) = input.block.last() {
+        true
+    } else {
+        false
+    };
+
+    frame.locals.allocate_identifier("arguments", false);
 
     let mut chunk = frame.new_chunk(CompilerOptions { module: true });
     for statement in input.block.into_iter() {
@@ -1125,10 +1163,19 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
             .compile_statement(statement, None, &BreakStack::new())?
             .0;
     }
-    chunk = chunk.append(Return);
+
+    if return_value {
+        chunk = chunk.append(Return);
+    } else {
+        chunk = chunk.append(ReturnConstant {
+            constant: Undefined,
+        })
+    }
 
     let finalised = chunk.finalize();
+
     let locals_len = finalised.locals.len();
+    let args_size = finalised.locals.args_len();
     let locals_init = finalised.locals.get_init();
 
     Ok(Function {
@@ -1140,6 +1187,7 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
         stack_size: 0,
         name: Some("eval".to_owned()),
         locals_init,
+        args_size,
     })
 }
 
@@ -1160,6 +1208,7 @@ pub fn compile<'a>(
 
     let local_size = frame.locals.len();
     let locals_init = frame.locals.get_init();
+    let args_size = frame.locals.args_len();
 
     #[allow(unused_assignments)]
     let mut locals = vec![];
@@ -1178,6 +1227,7 @@ pub fn compile<'a>(
             atoms: frame.atoms,
             locals,
             locals_init,
+            args_size,
         },
     })
 }

@@ -325,7 +325,7 @@ impl<'a> JsThread<'a> {
         new: bool,
         native: bool,
     ) {
-        trace!("{} \n =====", function.name());
+        // println!("{} \n =====", function.name());
         if self.call_stack.len() > self.call_stack_limit {
             return self.throw(InternalError::new_stackless("Stack overflow"));
         }
@@ -348,7 +348,7 @@ impl<'a> JsThread<'a> {
         let stack_length = self.stack.len();
         let arguments = (stack_length - args)..stack_length;
 
-        for (write_to, read_from) in arguments.clone().enumerate().take(function.local_size()) {
+        for (write_to, read_from) in arguments.clone().enumerate().take(function.args_size()) {
             new_context.write(write_to + 1, self.stack[read_from].clone())
         }
 
@@ -399,11 +399,11 @@ impl<'a> JsThread<'a> {
     pub(crate) fn call_from_native(
         &mut self,
         target: JsObject<'a>,
-        function_reference: FunctionReference<'a>,
+        function_reference: impl Into<FunctionReference<'a>>,
         args: usize,
         new: bool,
     ) -> JsResult<'a, RuntimeValue<'a>> {
-        match function_reference {
+        match function_reference.into() {
             FunctionReference::BuiltIn(builtin) => {
                 let result = builtin.apply_return(args, self, Some(target))?;
 
@@ -414,7 +414,7 @@ impl<'a> JsThread<'a> {
 
                 let result = self.run();
 
-                trace!("Returning from native call {:?}", result);
+                println!("Returning from native call {:?} {:?}", result, self.stack);
 
                 self.current_frame = self.call_stack.pop().unwrap();
 
