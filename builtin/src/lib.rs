@@ -49,28 +49,46 @@ impl BindingReturnType {
 
 struct Constructor {
     type_name: syn::Ident,
+    method_name: syn::Ident,
     arguments: Arguments,
+    return_type: BindingReturnType,
 }
 
 impl ToTokens for Constructor {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         let type_name = &self.type_name;
+        let method_name = &self.method_name;
         let setup = &self.arguments.setup();
         let arguments = &self.arguments.call();
 
+        let call_type = match self.return_type {
+            BindingReturnType::None => quote! {
+                obj.#method_name(#arguments)
+            },
+            BindingReturnType::Value => quote! {
+                obj.#method_name(#arguments)
+            },
+            BindingReturnType::Result => quote! {
+                obj.#method_name(#arguments)?
+            },
+        };
+
         let output = quote! {
-            prototype.define_value("constructor", crate::JsObject::new().callable(crate::BuiltIn {
+            let constructor: crate::values::function::FunctionReference = crate::BuiltIn {
                 context: None,
-                op: |args, thread, receiver, context, _new| {
+                op: |args, thread, receiver, context| {
                     #setup
 
                     let mut obj = <#type_name>::new(receiver, thread);
 
-                    obj.constructor(#arguments);
+                    #call_type;
 
                     Ok(None)
                 }
-            }));
+            }.into();
+
+            object.set_construct(constructor.clone());
+            prototype.define_value("constructor", object.clone());
         };
 
         output.to_tokens(tokens);
@@ -98,13 +116,13 @@ impl ToTokens for StaticMethod {
         });
 
         let output = quote! {
-            let method = crate::JsObject::new().callable(crate::BuiltIn {
+            let method = crate::JsObject::builder().with_callable(crate::BuiltIn {
                 context: None,
-                op: |args, thread, receiver, context, _new| {
+                op: |args, thread, receiver, context| {
                     #setup
                     #call
                 }
-            });
+            }).build();
 
             let name: crate::JsPrimitiveString = #method_name_string.into();
             method.define_value("name", name.clone());
@@ -137,13 +155,13 @@ impl ToTokens for Method {
         });
 
         let output = quote! {
-            let method = crate::JsObject::new().callable(crate::BuiltIn {
+            let method = crate::JsObject::builder().with_callable(crate::BuiltIn {
                 context: None,
-                op: |args, thread, receiver, context, _new| {
+                op: |args, thread, receiver, context| {
                     #setup
                     #call
                 }
-            });
+            }).build();
 
             let name: crate::JsPrimitiveString = #method_name_string.into();
             method.define_value("length", 1.0);
@@ -177,7 +195,7 @@ impl ToTokens for Getter {
                 #method_name_string,
                 Some(crate::BuiltIn {
                     context: None,
-                    op: |args, thread, receiver, context, _new| {
+                    op: |args, thread, receiver, context| {
                         #call
                     }
                 }.into()),
@@ -257,20 +275,18 @@ impl ToTokens for Callable {
         let arguments = &self.arguments.call();
 
         let call = self.return_type.as_tokens(quote! {
-            <#type_name>::new(receiver, thread).#method_name(new, #arguments)
+            <#type_name>::#method_name(thread, #arguments)
         });
 
         let output = quote! {
-            let callable = crate::BuiltIn {
-                context: None,
-                op: |args, thread, receiver, context, new| {
-                    #setup
-                    #call
-                }
-            };
-
-            object = object.callable(callable);
-            prototype.define_value("constructor", object.clone());
+            object.set_callable(
+                crate::BuiltIn {
+                    context: None,
+                    op: |args, thread, receiver, context| {
+                        #setup
+                        #call
+                    }
+                });
         };
 
         output.to_tokens(tokens);
@@ -278,6 +294,7 @@ impl ToTokens for Callable {
 }
 
 enum Item {
+    Constructor(Constructor),
     StaticMethod(StaticMethod),
     Method(Method),
     Getter(Getter),
@@ -287,6 +304,7 @@ enum Item {
 impl ToTokens for Item {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self {
+            Item::Constructor(constructor) => constructor.to_tokens(tokens),
             Item::Method(constructor) => constructor.to_tokens(tokens),
             Item::StaticMethod(constructor) => constructor.to_tokens(tokens),
             Item::Getter(constructor) => constructor.to_tokens(tokens),
@@ -312,6 +330,11 @@ pub fn callable(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn varargs(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn constructor(_attr: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
@@ -392,13 +415,15 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                         is_callable = true;
                     } else if path == "varargs" {
                         is_varargs = true;
+                    } else if path == "constructor" {
+                        is_constructor = true;
                     }
                 }
             }
 
-            if !uses_self && is_callable {
+            if uses_self && is_callable {
                 return TokenStream::from(quote! {
-                    compile_error!("Callable must reference self");
+                    compile_error!("Callable cant reference self");
                 });
             }
 
@@ -424,7 +449,21 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 BindingReturnType::None
             };
 
-            if is_callable {
+            if is_constructor {
+                if !uses_self {
+                    return TokenStream::from(quote! {
+                        compile_error!("Must reference self in a constructor");
+                    });
+                } else {
+                    methods.push(Item::Constructor(Constructor {
+                        type_name: type_name.clone(),
+                        arguments,
+                        method_name: ident.clone(),
+                        return_type,
+                    }));
+                    continue;
+                }
+            } else if is_callable {
                 let arguments = match arguments {
                     Arguments::Varargs => Arguments::Varargs,
                     Arguments::List(size) => Arguments::List(size - 1),
@@ -466,7 +505,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
     let constructor = if !has_new {
         quote! {
             impl<'a, 'b> #self_type {
-                fn new(object: &'b crate::JsObject<'a>, thread: &'b mut JsThread<'a>) -> Self {
+                fn new(object: crate::JsObject<'a>, thread: &'b mut JsThread<'a>) -> Self {
                     Self {
                         object,
                         thread
@@ -490,7 +529,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 let mut object = crate::JsObject::new();
 
                 if let Some(parent_prototype) = parent_prototype {
-                    object = object.with_prototype(parent_prototype.clone());
+                    object.set_prototype(parent_prototype.clone());
                 }
 
                 #(#methods)*
@@ -498,7 +537,8 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 let type_name: crate::JsPrimitiveString = #name.into();
                 object.define_value("name", type_name);
 
-                object.with_prototype(prototype)
+                object.set_prototype(prototype);
+                object
             }
         }
     })

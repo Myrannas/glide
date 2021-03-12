@@ -1,11 +1,10 @@
 use crate::context::JsContext;
-use crate::function::{CustomFunctionReference, FunctionReference, JsFunction};
-use crate::instruction_set::Chunk;
 use crate::ops::Operand;
 use crate::primordials::GlobalThis;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
+use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::value::{make_arguments, RuntimeValue};
-use crate::{ExecutionError, JsObject};
+use crate::{ExecutionError, JsFunction, JsObject};
 use instruction_set::Instruction;
 use log::trace;
 use std::fmt::{Debug, Formatter};
@@ -354,7 +353,10 @@ impl<'a> JsThread<'a> {
 
         new_context.write(
             0,
-            make_arguments(arguments.map(|_| self.stack.pop().unwrap()).collect()),
+            make_arguments(
+                arguments.map(|_| self.stack.pop().unwrap()).collect(),
+                &self.global_this,
+            ),
         );
 
         self.current_frame.stack_size = self.stack.len();
@@ -378,10 +380,12 @@ impl<'a> JsThread<'a> {
 
     pub fn run(&mut self) -> JsResult<'a, RuntimeValue<'a>> {
         while self.current_frame.index < self.current_frame.current_function.instructions().len() {
+            let frame_index = self.current_frame.index;
+
             trace!(
                 "{:3} {:?}",
-                self.current_frame.index,
-                self.next_instruction()
+                frame_index,
+                DebuggableInstruction::new(&self.next_instruction(), self)
             );
 
             // trace!("{:?} \n result: {:?}", &chunk.instructions[index], frame);
@@ -420,6 +424,47 @@ impl<'a> JsThread<'a> {
 
                 result
             }
+        }
+    }
+}
+
+struct DebuggableInstruction<'a, 'b> {
+    instruction: &'a Instruction,
+    thread: &'a mut JsThread<'b>,
+}
+
+impl<'a, 'b> DebuggableInstruction<'a, 'b> {
+    fn new(instruction: &'a Instruction, thread: &'a mut JsThread<'b>) -> Self {
+        DebuggableInstruction {
+            instruction,
+            thread,
+        }
+    }
+}
+
+impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.instruction {
+            Instruction::GetNamed { name } => {
+                let atom = self.thread.current_frame.current_function.get_atom(*name);
+
+                f.debug_struct("GetNamed")
+                    .field("name", &atom.to_string())
+                    .finish()
+            }
+            Instruction::GetLocal { local } => f
+                .debug_struct("GetLocal")
+                .field("local", local)
+                .field("value", &self.thread.current_context().read(*local))
+                .finish(),
+            Instruction::SetNamed { name } => {
+                let atom = self.thread.current_frame.current_function.get_atom(*name);
+
+                f.debug_struct("GetNamed")
+                    .field("name", &atom.to_string())
+                    .finish()
+            }
+            instr => Instruction::fmt(instr, f),
         }
     }
 }

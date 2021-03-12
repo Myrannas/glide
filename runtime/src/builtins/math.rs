@@ -3,7 +3,7 @@ use builtin::prototype;
 use rand::prelude::*;
 
 pub(crate) struct JsMath<'a, 'b> {
-    object: &'b JsObject<'a>,
+    object: JsObject<'a>,
     thread: &'b mut JsThread<'a>,
 }
 

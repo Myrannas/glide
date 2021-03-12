@@ -1,5 +1,5 @@
-use crate::function::{CustomFunctionReference, FunctionReference};
 use crate::result::{JsResult, SyntaxError};
+use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::{ExecutionError, InternalError, JsFunction, JsObject, JsThread, RuntimeValue};
 use glide_compiler::{
     compile_eval, parse_input, CompilerError, InternalError as CompilationInternalError,
@@ -22,9 +22,8 @@ impl<'a> From<CompilerError> for ExecutionError<'a> {
 pub(crate) fn eval<'a>(
     args: usize,
     frame: &mut JsThread<'a>,
-    _value: &JsObject<'a>,
+    _value: JsObject<'a>,
     _context: Option<&RuntimeValue<'a>>,
-    _new: bool,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     let argument = frame.read_arg(args, 0);
 

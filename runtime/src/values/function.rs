@@ -6,14 +6,14 @@ use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
 use crate::vm::JsThread;
-use crate::GlobalThis;
+
 use core::cmp::PartialEq;
 use core::convert::From;
 use core::fmt::{Debug, Formatter};
 use core::option::Option;
 use core::option::Option::{None, Some};
 use core::result::Result::{Err, Ok};
-use instruction_set::{Chunk, Function, Instruction, Local, LocalInit};
+use instruction_set::{Function, Instruction, Local, LocalInit};
 use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,13 +53,7 @@ impl<'a> From<BuiltIn<'a>> for FunctionReference<'a> {
 }
 
 impl<'a> BuiltIn<'a> {
-    pub fn apply(
-        &self,
-        arguments: usize,
-        thread: &mut JsThread<'a>,
-        target: Option<JsObject<'a>>,
-        new: bool,
-    ) {
+    pub fn apply(&self, arguments: usize, thread: &mut JsThread<'a>, target: Option<JsObject<'a>>) {
         let context = match &self.context {
             Some(value) => Some(value.as_ref()),
             None => None,
@@ -67,14 +61,12 @@ impl<'a> BuiltIn<'a> {
 
         let start_len = thread.stack.len() - arguments;
         let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
-        let result = (self.op)(arguments, thread, &target, context, new);
+        let result = (self.op)(arguments, thread, target, context);
         thread.stack.truncate(start_len);
 
         match result {
             Ok(Some(result)) => {
-                if !new {
-                    thread.stack.push(result)
-                }
+                thread.stack.push(result);
             }
             Err(err) => {
                 thread.throw(err);
@@ -95,8 +87,8 @@ impl<'a> BuiltIn<'a> {
         };
 
         let start_len = thread.stack.len() - arguments;
-        let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
-        let result = (self.op)(arguments, thread, &target, context, false);
+        let mut target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
+        let result = (self.op)(arguments, thread, target, context);
         thread.stack.truncate(start_len);
         result
     }
@@ -105,9 +97,8 @@ impl<'a> BuiltIn<'a> {
 pub type BuiltinFn<'a> = fn(
     arguments: usize,
     frame: &mut JsThread<'a>,
-    target: &JsObject<'a>,
+    target: JsObject<'a>,
     context: Option<&RuntimeValue<'a>>,
-    new: bool,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>>;
 
 impl<'a> Debug for BuiltIn<'a> {

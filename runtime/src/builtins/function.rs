@@ -2,7 +2,7 @@ use crate::{JsObject, JsThread};
 use builtin::prototype;
 
 pub(crate) struct JsFunctionObject<'a, 'b> {
-    object: &'b JsObject<'a>,
+    object: JsObject<'a>,
     thread: &'b mut JsThread<'a>,
 }
 

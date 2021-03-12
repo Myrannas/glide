@@ -1,6 +1,6 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, string};
-use crate::function::FunctionReference;
+use crate::values::function::FunctionReference;
 use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
@@ -16,7 +16,7 @@ impl<'a> Helpers<'a> for JsObject<'a> {
             key.into(),
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(Box::new(value.into())),
-                op: |_, _thread, _, context, _| Ok(Some(context.unwrap().clone())),
+                op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
             })),
             None,
         )
@@ -38,6 +38,7 @@ pub(crate) struct Primitives<'a> {
     number: JsObject<'a>,
     object: JsObject<'a>,
     array: JsObject<'a>,
+    arguments: JsObject<'a>,
 }
 
 #[derive(Clone)]
@@ -99,6 +100,7 @@ impl<'a> Primitives<'a> {
             object: object_prototype.clone(),
             array: array_prototype.clone(),
             number: number_prototype.clone(),
+            arguments: array_prototype.clone(),
         };
 
         global_this.define_value("String", string_prototype);
@@ -115,31 +117,44 @@ impl<'a> Primitives<'a> {
     }
 
     pub(crate) fn wrap_string(&self, string: JsPrimitiveString) -> JsObject<'a> {
-        JsObject::new()
-            .wrapping(RuntimeValue::String(string))
+        JsObject::builder()
+            .with_wrapped_value(RuntimeValue::String(string))
             .with_prototype(self.string.clone())
+            .build()
     }
 
     pub(crate) fn wrap_number(&self, number: f64) -> JsObject<'a> {
-        JsObject::new()
-            .wrapping(RuntimeValue::Float(number))
+        JsObject::builder()
+            .with_wrapped_value(RuntimeValue::Float(number))
             .with_prototype(self.number.clone())
+            .build()
     }
 
     pub(crate) fn wrap_boolean(&self, number: bool) -> JsObject<'a> {
-        JsObject::new()
-            .wrapping(RuntimeValue::Boolean(number))
-            .with_prototype(self.number.clone()) // todo: Fixme
+        JsObject::builder()
+            .with_wrapped_value(RuntimeValue::Boolean(number))
+            .with_prototype(self.number.clone()) //todo: fixme
+            .build()
     }
 
     pub(crate) fn wrap_function(&self, function: impl Into<FunctionReference<'a>>) -> JsObject<'a> {
-        JsObject::new()
-            .callable(function)
+        JsObject::builder()
+            .with_callable(function)
             .with_prototype(self.function.clone())
+            .build()
+    }
+
+    pub(crate) fn wrap_arguments(&self, arguments: Vec<RuntimeValue<'a>>) -> JsObject<'a> {
+        JsObject::builder()
+            .with_indexed_properties(arguments)
+            .with_prototype(self.arguments.clone())
+            .build()
     }
 
     pub fn new_object(&self) -> JsObject<'a> {
-        JsObject::new().with_prototype(self.object.clone())
+        JsObject::builder()
+            .with_prototype(self.object.clone())
+            .build()
     }
 }
 
@@ -159,19 +174,18 @@ impl<'a> Errors<'a> {
     }
 
     fn new_error(&self, prototype: &JsObject<'a>, message: impl Into<String>) -> JsObject<'a> {
-        let error = JsObject::new().with_prototype(prototype.clone());
-
-        error.set("message".into(), message.into());
-
-        error
+        JsObject::builder()
+            .with_prototype(prototype.clone())
+            .with_property("message", message.into())
+            .build()
     }
 
     fn init(global_this: &JsObject<'a>) -> Errors<'a> {
         let error = errors::JsError::bind(None);
 
-        let reference_error = JsObject::new().with_prototype(error.clone());
-        let syntax_error = JsObject::new().with_prototype(error.clone());
-        let type_error = JsObject::new().with_prototype(error.clone());
+        let reference_error = JsObject::builder().with_prototype(error.clone()).build();
+        let syntax_error = JsObject::builder().with_prototype(error.clone()).build();
+        let type_error = JsObject::builder().with_prototype(error.clone()).build();
 
         global_this.define_readonly_value("ReferenceError", reference_error.clone());
         global_this.define_readonly_value("SyntaxError", syntax_error.clone());

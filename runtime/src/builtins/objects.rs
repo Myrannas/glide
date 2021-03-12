@@ -3,7 +3,7 @@ use crate::{JsObject, JsThread, RuntimeValue};
 use builtin::{named, prototype};
 
 pub(crate) struct JsObjectBase<'a, 'b> {
-    object: &'b JsObject<'a>,
+    object: JsObject<'a>,
     thread: &'b mut JsThread<'a>,
 }
 

@@ -1044,6 +1044,7 @@ impl<'a, 'c> ChunkBuilder {
             Statement::Continue => self.append(Jump {
                 to: break_stack.get_continue()?,
             }),
+            Statement::Class(_) => syntax_error!("Class statements not supported"),
         };
 
         Ok((chunk, false))

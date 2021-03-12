@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Pointer, Write};
@@ -8,13 +8,13 @@ use std::rc::Rc;
 use colored::Colorize;
 
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::function::FunctionReference;
 use crate::result::JsResult;
 use crate::values::primitives::JsPrimitive;
 use crate::vm::JsThread;
 
 use super::string::JsPrimitiveString;
 use super::value::RuntimeValue;
+use crate::values::function::FunctionReference;
 
 #[derive(Clone)]
 pub struct JsObject<'a> {
@@ -57,6 +57,7 @@ struct JsObjectInner<'a> {
     pub(crate) prototype: Option<JsObject<'a>>,
     pub(crate) wrapped: Option<JsPrimitive>,
     pub(crate) callable: Option<FunctionReference<'a>>,
+    pub(crate) construct: Option<FunctionReference<'a>>,
 }
 
 struct PropertyHasher {
@@ -85,7 +86,130 @@ impl BuildHasher for PropertyHasher {
     }
 }
 
+pub trait FunctionObject<'a> {
+    fn name(&self) -> Ref<Option<String>>;
+    fn construct<'b>(&'b self) -> Ref<'b, Option<FunctionReference<'a>>>;
+    fn callable<'b>(&'b self) -> Ref<'b, Option<FunctionReference<'a>>>;
+    fn prototype<'b>(&'b self) -> Ref<'b, Option<JsObject<'a>>>;
+    fn is_class_constructor(&self) -> bool;
+}
+
+struct ConstructorFunctionObject<'a> {
+    object: JsObject<'a>,
+}
+
+impl<'a> FunctionObject<'a> for ConstructorFunctionObject<'a> {
+    fn name(&self) -> Ref<Option<String>> {
+        Ref::map(self.object.inner.borrow(), |inner| &inner.name)
+    }
+
+    fn construct<'b>(&'b self) -> Ref<'b, Option<FunctionReference<'a>>> {
+        Ref::map(self.object.inner.borrow(), |inner| &inner.construct)
+    }
+
+    /*
+
+    https://262.ecma-international.org/11.0/#sec-ecmascript-function-objects-call-thisargument-argumentslist
+
+        Assert: F is an ECMAScript function object.
+        If F.[[IsClassConstructor]] is true, throw a TypeError exception.
+        Let callerContext be the running execution context.
+        Let calleeContext be PrepareForOrdinaryCall(F, undefined).
+        Assert: calleeContext is now the running execution context.
+        Perform OrdinaryCallBindThis(F, calleeContext, thisArgument).
+        Let result be OrdinaryCallEvaluateBody(F, argumentsList).
+        Remove calleeContext from the execution context stack and restore callerContext as the running execution context.
+        If result.[[Type]] is return, return NormalCompletion(result.[[Value]]).
+        ReturnIfAbrupt(result).
+        Return NormalCompletion(undefined).
+    */
+    fn callable<'b>(&'b self) -> Ref<'b, Option<FunctionReference<'a>>> {
+        Ref::map(self.object.inner.borrow(), |inner| &inner.callable)
+    }
+
+    fn prototype<'b>(&'b self) -> Ref<'b, Option<JsObject<'a>>> {
+        Ref::map(self.object.inner.borrow(), |inner| &inner.prototype)
+    }
+
+    fn is_class_constructor(&self) -> bool {
+        self.construct().is_some() && self.callable().is_none()
+    }
+}
+
+pub(crate) struct JsObjectBuilder<'a> {
+    inner: JsObjectInner<'a>,
+}
+
+impl<'a> JsObjectBuilder<'a> {
+    pub fn with_callable(mut self, function: impl Into<FunctionReference<'a>>) -> Self {
+        self.inner.callable = Some(function.into());
+        self
+    }
+
+    pub fn with_construct(mut self, function: impl Into<FunctionReference<'a>>) -> Self {
+        self.inner.construct = Some(function.into());
+        self
+    }
+
+    pub fn with_prototype(mut self, prototype: JsObject<'a>) -> Self {
+        self.inner.prototype = Some(prototype);
+        self
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.inner.name = Some(name.into());
+        self
+    }
+
+    pub fn with_wrapped_value(mut self, value: impl Into<JsPrimitive>) -> Self {
+        self.inner.wrapped = Some(value.into());
+        self
+    }
+
+    pub fn with_indexed_properties(mut self, properties: Vec<RuntimeValue<'a>>) -> Self {
+        self.inner.indexed_properties = Some(properties);
+        self
+    }
+
+    pub fn with_property(
+        mut self,
+        key: impl Into<JsPrimitiveString>,
+        value: impl Into<RuntimeValue<'a>>,
+    ) -> Self {
+        self.inner
+            .properties
+            .insert(key.into(), Property::Value(value.into()));
+        self
+    }
+
+    pub(crate) fn build(self) -> JsObject<'a> {
+        JsObject {
+            inner: Rc::new(RefCell::new(self.inner)),
+        }
+    }
+}
+
+impl<'a> Default for JsObjectInner<'a> {
+    fn default() -> Self {
+        JsObjectInner {
+            properties: HashMap::with_hasher(PropertyHasher { i: 0 }),
+            indexed_properties: None,
+            name: None,
+            prototype: None,
+            wrapped: None,
+            callable: None,
+            construct: None,
+        }
+    }
+}
+
 impl<'a> JsObject<'a> {
+    pub(crate) fn builder() -> JsObjectBuilder<'a> {
+        JsObjectBuilder {
+            inner: Default::default(),
+        }
+    }
+
     fn get_property(&self, key: &JsPrimitiveString) -> Option<Property<'a>> {
         self.inner
             .borrow()
@@ -103,37 +227,34 @@ impl<'a> JsObject<'a> {
 
     pub fn new() -> Self {
         JsObject {
-            inner: Rc::new(RefCell::new(JsObjectInner {
-                properties: HashMap::with_hasher(PropertyHasher { i: 0 }),
-                indexed_properties: None,
-                name: None,
-                prototype: None,
-                wrapped: None,
-                callable: None,
-            })),
+            inner: Rc::new(RefCell::new(Default::default())),
         }
     }
 
-    pub fn is_callable(&self) -> bool {
-        self.inner.borrow().callable.is_some()
+    pub fn function(&self) -> Option<impl FunctionObject<'a>> {
+        let is_callable = self.is_function();
+
+        if is_callable {
+            Some(ConstructorFunctionObject {
+                object: self.clone(),
+            })
+        } else {
+            None
+        }
     }
 
-    pub fn get_callable(&self) -> Option<FunctionReference<'a>> {
-        self.inner.borrow().callable.as_ref().cloned()
+    pub(crate) fn is_function(&self) -> bool {
+        let inner = self.inner.borrow();
+
+        inner.callable.is_some() || inner.construct.is_some()
     }
 
-    pub fn wrapping(self, value: impl Into<JsPrimitive>) -> Self {
-        self.inner.borrow_mut().wrapped = Some(value.into());
-        self
+    pub fn is_class_constructor(&self) -> bool {
+        self.inner.borrow().construct.is_some()
     }
 
     pub fn wrap(&self, value: impl Into<JsPrimitive>) {
         self.inner.borrow_mut().wrapped = Some(value.into());
-    }
-
-    pub fn callable(self, value: impl Into<FunctionReference<'a>>) -> Self {
-        self.inner.borrow_mut().callable = Some(value.into());
-        self
     }
 
     pub fn get_wrapped_value(&self) -> Option<RuntimeValue<'a>> {
@@ -141,19 +262,28 @@ impl<'a> JsObject<'a> {
         value.wrapped.as_ref().cloned().map(|v| v.into())
     }
 
-    pub fn with_prototype(self, prototype: Self) -> Self {
+    pub fn set_callable(&self, value: impl Into<FunctionReference<'a>>) {
+        self.inner.borrow_mut().callable = Some(value.into());
+    }
+
+    pub fn set_construct(&self, value: impl Into<FunctionReference<'a>>) {
+        self.inner.borrow_mut().construct = Some(value.into());
+    }
+
+    pub fn set_wrapped_value(&self, value: impl Into<JsPrimitive>) {
+        self.inner.borrow_mut().wrapped = Some(value.into());
+    }
+
+    pub fn set_prototype(&self, prototype: JsObject<'a>) {
         self.inner.borrow_mut().prototype = Some(prototype);
-        self
     }
 
-    pub fn with_name(self, name: impl Into<String>) -> Self {
+    pub fn set_name(&self, name: impl Into<String>) {
         self.inner.borrow_mut().name = Some(name.into());
-        self
     }
 
-    pub fn with_indexed_properties(self, properties: Vec<RuntimeValue<'a>>) -> Self {
+    pub fn set_indexed_properties(&self, properties: Vec<RuntimeValue<'a>>) {
         self.inner.borrow_mut().indexed_properties = Some(properties);
-        self
     }
 
     pub fn get_indexed_properties(&self) -> RefMut<Option<Vec<RuntimeValue<'a>>>> {
@@ -166,6 +296,16 @@ impl<'a> JsObject<'a> {
 
     pub fn get<'b>(&self, key: JsPrimitiveString, frame: &'b mut JsThread<'a>) -> JsResult<'a> {
         self.get_borrowed(&key, frame)
+    }
+
+    pub fn get_indexed<'b>(&self, key: usize, frame: &'b mut JsThread<'a>) -> JsResult<'a> {
+        let inner = self.inner.borrow();
+
+        if let Some(indexed_properties) = &inner.indexed_properties {
+            Ok(indexed_properties.get(key).cloned().unwrap_or_default())
+        } else {
+            self.get(key.to_string().into(), frame)
+        }
     }
 
     pub fn set(&self, key: JsPrimitiveString, value: impl Into<RuntimeValue<'a>>) {
@@ -181,7 +321,9 @@ impl<'a> JsObject<'a> {
             .insert(key, Property::Value(value));
     }
 
-    pub fn set_indexed(&self, key: usize, value: RuntimeValue<'a>) {
+    pub fn set_indexed(&self, key: usize, value: impl Into<RuntimeValue<'a>>) {
+        let value = value.into();
+
         {
             let mut object = self.inner.borrow_mut();
 
@@ -244,37 +386,44 @@ impl<'a> JsObject<'a> {
         key: &JsPrimitiveString,
         thread: &'b mut JsThread<'a>,
     ) -> JsResult<'a> {
-        let b = self.inner.borrow();
+        let function = {
+            let b = self.inner.borrow();
 
-        if "prototype" == key.as_ref() {
-            if let Some(prototype) = &b.prototype {
-                return Ok(RuntimeValue::Object(prototype.clone()));
+            if "prototype" == key.as_ref() {
+                if let Some(prototype) = &b.prototype {
+                    return Ok(RuntimeValue::Object(prototype.clone()));
+                }
             }
-        }
 
-        let property = self.get_property(key);
+            let property = self.get_property(key);
 
-        match property {
-            Some(Property::Value(value)) => Ok(value),
-            // Some(Property::Complex {
-            //     getter: Some(FunctionReference::Custom(CustomFunctionReference { function, .. })),
-            //     ..
-            // }) => function.execute(
-            //     None,
-            //     &mut Vec::new(),
-            //     0..0,
-            //     Some(thread.call_stack.clone()),
-            //     &thread.global_this,
-            //     target,
-            // ),
-            Some(Property::Complex {
-                getter: Some(FunctionReference::BuiltIn(function)),
-                ..
-            }) => Ok(function
-                .apply_return(0, thread, Some(self.clone()))?
-                .unwrap_or(RuntimeValue::Undefined)),
-            _ => Ok(RuntimeValue::Undefined),
-        }
+            match property {
+                Some(Property::Value(value)) => return Ok(value),
+                // Some(Property::Complex {
+                //     getter: Some(FunctionReference::Custom(CustomFunctionReference { function, .. })),
+                //     ..
+                // }) => function.execute(
+                //     None,
+                //     &mut Vec::new(),
+                //     0..0,
+                //     Some(thread.call_stack.clone()),
+                //     &thread.global_this,
+                //     target,
+                // ),
+                Some(Property::Complex {
+                    getter: Some(FunctionReference::BuiltIn(builtin)),
+                    ..
+                }) => builtin,
+                _ => return Ok(RuntimeValue::Undefined),
+            }
+        };
+
+        let result = function
+            .clone()
+            .apply_return(0, thread, Some(self.clone()))?
+            .unwrap_or(RuntimeValue::Undefined);
+
+        Ok(result)
     }
 }
 

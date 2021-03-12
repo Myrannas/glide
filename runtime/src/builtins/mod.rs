@@ -1,3 +1,4 @@
+pub(crate) mod arguments;
 pub(crate) mod array;
 pub(crate) mod errors;
 pub(crate) mod function;

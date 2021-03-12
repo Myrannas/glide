@@ -1,17 +1,17 @@
 use crate::result::JsResult;
 use crate::values::value::RuntimeValue;
 use crate::{JsObject, JsThread};
-use builtin::{callable, named, prototype};
+use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsError<'a, 'b> {
-    object: &'b JsObject<'a>,
+    object: JsObject<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
 #[prototype]
 impl<'a, 'b> JsError<'a, 'b> {
-    #[callable]
-    fn constructor(&mut self, is_new: bool, message: RuntimeValue<'a>) {
+    #[constructor]
+    fn constructor(&mut self, message: RuntimeValue<'a>) {
         self.object.define_value("message", message.clone());
     }
 

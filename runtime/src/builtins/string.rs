@@ -2,10 +2,10 @@ use crate::result::JsResult;
 use crate::values::primitives::JsPrimitive;
 
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
-use builtin::{callable, getter, named, prototype};
+use builtin::{callable, constructor, getter, named, prototype};
 
 pub(crate) struct JsString<'a, 'b> {
-    object: &'b JsObject<'a>,
+    object: JsObject<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -56,14 +56,27 @@ impl<'a, 'b> JsString<'a, 'b> {
     }
 
     #[callable]
-    fn callable(&mut self, is_new: bool, value: RuntimeValue<'a>) -> JsResult<'a> {
-        let str = value.to_string(self.thread)?;
+    fn callable(thread: &mut JsThread<'a>, value: Option<RuntimeValue<'a>>) -> JsResult<'a> {
+        let str = value
+            .unwrap_or_else(|| "".to_string().into())
+            .to_string(thread)?;
 
-        if is_new {
-            self.object.wrap(value);
-            Ok(RuntimeValue::Undefined)
-        } else {
-            Ok(RuntimeValue::String(str))
-        }
+        Ok(RuntimeValue::String(str))
+    }
+
+    #[constructor]
+    fn construct(&mut self, value: Option<RuntimeValue<'a>>) -> JsResult<'a, ()> {
+        let str = value
+            .unwrap_or_else(|| "".to_string().into())
+            .to_string(self.thread)?;
+
+        self.object.wrap(JsPrimitive::String(str));
+
+        Ok(())
+    }
+
+    #[named("localeCompare")]
+    fn locale_compare(&self) {
+        todo!("localeCompare is not yet supported")
     }
 }

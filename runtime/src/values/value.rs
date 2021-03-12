@@ -1,19 +1,85 @@
 use std::fmt::{Debug, Display, Formatter};
 
-use super::object::JsObject;
+use super::object::{FunctionObject, JsObject};
 use super::string::JsPrimitiveString;
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::result::ExecutionError;
 use crate::result::JsResult;
 use crate::vm::JsThread;
-use crate::InternalError;
+use crate::{GlobalThis, InternalError};
 use instruction_set::Constant;
 
 #[derive(Clone, Debug)]
-pub struct Reference<'a> {
-    pub(crate) base: Box<JsObject<'a>>,
-    pub(crate) name: JsPrimitiveString,
-    pub(crate) strict: bool,
+pub enum Reference<'a> {
+    String {
+        base: Box<JsObject<'a>>,
+        name: JsPrimitiveString,
+        strict: bool,
+    },
+    Number {
+        base: Box<JsObject<'a>>,
+        name: usize,
+        strict: bool,
+    },
+}
+
+impl<'a> DebugRepresentation for Reference<'a> {
+    fn render(&self, render: &mut Renderer) -> std::fmt::Result {
+        match (&render.representation, self) {
+            (Representation::Debug, Reference::String { base, name, strict }) => {
+                render.start_internal("REF")?;
+                JsObject::render(&base, render)?;
+
+                render.formatter.write_fmt(format_args!(
+                    "{}{}",
+                    if *strict { "." } else { "?." },
+                    &name,
+                ))?;
+
+                render.end_internal()?;
+                Ok(())
+            }
+            (Representation::Debug, Reference::Number { base, name, strict }) => {
+                render.start_internal("REF")?;
+                JsObject::render(&base, render)?;
+
+                render.formatter.write_fmt(format_args!(
+                    "{}{}",
+                    if *strict { "." } else { "?." },
+                    &name,
+                ))?;
+
+                render.end_internal()?;
+                Ok(())
+            }
+
+            (Representation::Compact, Reference::String { base, name, strict }) => {
+                render.start_internal("REF")?;
+
+                render.formatter.write_fmt(format_args!(
+                    "{}{}",
+                    if *strict { "." } else { "?." },
+                    &name,
+                ))?;
+
+                render.end_internal()?;
+                Ok(())
+            }
+            (Representation::Compact, Reference::Number { base, name, strict }) => {
+                render.start_internal("REF")?;
+
+                render.formatter.write_fmt(format_args!(
+                    "{}{}",
+                    if *strict { "." } else { "?." },
+                    &name,
+                ))?;
+
+                render.end_internal()?;
+                Ok(())
+            }
+            _ => unimplemented!("Unsupported debug view"),
+        }
+    }
 }
 
 impl<'a> From<Option<RuntimeValue<'a>>> for RuntimeValue<'a> {
@@ -109,7 +175,10 @@ impl<'a> RuntimeValue<'a> {
             RuntimeValue::Internal(InternalValue::Local(index)) => {
                 Ok(thread.current_context().read(index))
             }
-            RuntimeValue::Reference(reference) => reference.base.get(reference.name, thread),
+            RuntimeValue::Reference(Reference::String { base, name, .. }) => base.get(name, thread),
+            RuntimeValue::Reference(Reference::Number { base, name, .. }) => {
+                base.get_indexed(name, thread)
+            }
             other => Ok(other),
         }?;
 
@@ -126,8 +195,12 @@ impl<'a> RuntimeValue<'a> {
                 frame.current_context().write(index, value.into());
                 Ok(())
             }
-            RuntimeValue::Reference(reference) => {
-                reference.base.set(reference.name, value);
+            RuntimeValue::Reference(Reference::String { base, name, .. }) => {
+                base.set(name, value);
+                Ok(())
+            }
+            RuntimeValue::Reference(Reference::Number { base, name, .. }) => {
+                base.set_indexed(name, value);
                 Ok(())
             }
             value => InternalError::new_stackless(format!("Unable to update - {:?}", value)).into(),
@@ -147,9 +220,18 @@ impl<'a> RuntimeValue<'a> {
                 // println!("{:?}\n{:?}", obj, to_string);
 
                 match to_string {
-                    RuntimeValue::Object(function) if function.is_callable() => thread
-                        .call_from_native(obj.clone(), function.get_callable().unwrap(), 0, false)?
-                        .to_string(thread)?,
+                    RuntimeValue::Object(function) if function.function().is_some() => {
+                        let function = function.function().unwrap();
+                        let callable = function.callable();
+                        thread
+                            .call_from_native(
+                                obj.clone(),
+                                callable.as_ref().unwrap().clone(),
+                                0,
+                                false,
+                            )?
+                            .to_string(thread)?
+                    }
                     RuntimeValue::Undefined => "[Object object]".to_owned().into(),
                     _ => {
                         let error = thread
@@ -191,11 +273,11 @@ impl<'a> Display for RuntimeValue<'a> {
     }
 }
 
-pub(crate) fn make_arguments(arguments: Vec<RuntimeValue>) -> RuntimeValue {
-    JsObject::new()
-        .with_name("[Arguments]")
-        .with_indexed_properties(arguments)
-        .into()
+pub(crate) fn make_arguments<'a>(
+    arguments: Vec<RuntimeValue<'a>>,
+    global_this: &GlobalThis<'a>,
+) -> RuntimeValue<'a> {
+    global_this.wrappers.wrap_arguments(arguments).into()
 }
 
 #[derive(Clone, Debug)]
@@ -336,31 +418,12 @@ impl<'a> DebugRepresentation for RuntimeValue<'a> {
             (.., RuntimeValue::Null) => render.literal("null"),
             (.., RuntimeValue::Object(obj)) => render.render(obj),
             (.., RuntimeValue::String(str)) => render.string_literal(str.as_ref()),
-            (Representation::Debug, RuntimeValue::Reference(reference)) => {
-                render.start_internal("REF")?;
-                JsObject::render(&reference.base, render)?;
-
-                render.formatter.write_fmt(format_args!(
-                    "{}{}",
-                    if reference.strict { "." } else { "?." },
-                    &reference.name,
-                ))?;
-
-                render.end_internal()?;
-                Ok(())
-            }
+            (.., RuntimeValue::Reference(reference)) => reference.render(render),
             (Representation::Debug, RuntimeValue::Internal(InternalValue::Local(local))) => {
                 render.start_internal("INTERNAL")?;
                 render.internal_key("index")?;
                 render.literal(&local.to_string())?;
                 render.end_internal()?;
-                Ok(())
-            }
-            (Representation::Compact, RuntimeValue::Reference(reference)) => {
-                render
-                    .formatter
-                    .write_fmt(format_args!(".{}", reference.name))?;
-
                 Ok(())
             }
             (.., RuntimeValue::Float(value)) => render.literal(&format!("{}", value)),

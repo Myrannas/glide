@@ -91,7 +91,7 @@ pub(crate) fn type_of(thread: &mut JsThread) {
     let str = match left {
         RuntimeValue::Boolean(_) => "boolean".to_owned(),
         RuntimeValue::Null => "null".to_owned(),
-        RuntimeValue::Object(obj) if obj.is_callable() => "function".to_owned(),
+        RuntimeValue::Object(obj) if obj.is_function() => "function".to_owned(),
         RuntimeValue::Object(_) => "object".to_owned(),
         RuntimeValue::String(..) => "string".to_owned(),
         RuntimeValue::Float(_) => "number".to_owned(),

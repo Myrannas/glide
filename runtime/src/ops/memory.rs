@@ -1,11 +1,11 @@
 use crate::context::JsContext;
-use crate::function::{CustomFunctionReference, FunctionReference};
+use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::value::{InternalValue, Reference};
 use crate::{InternalError, JsThread, RuntimeValue};
 use instruction_set::{Constant, Environmental};
 
 pub(crate) fn set(thread: &mut JsThread) {
-    let value = pop!(thread);
+    let value: RuntimeValue = pop!(thread);
     let attribute = pop!(thread);
 
     let target: RuntimeValue = pop!(thread, "Need a target");
@@ -37,7 +37,7 @@ pub(crate) fn set(thread: &mut JsThread) {
 }
 
 pub(crate) fn get(thread: &mut JsThread) {
-    let attribute = pop!(thread);
+    let attribute: RuntimeValue = pop!(thread);
     let target: RuntimeValue = pop!(thread);
 
     if target == RuntimeValue::Undefined {
@@ -51,14 +51,20 @@ pub(crate) fn get(thread: &mut JsThread) {
 
     let target = target.to_object(thread);
 
-    if let RuntimeValue::String(str) = attribute {
-        thread.push_stack(RuntimeValue::Reference(Reference {
+    let reference = match attribute {
+        RuntimeValue::Float(index) => RuntimeValue::Reference(Reference::Number {
             base: Box::new(target),
-            name: str,
+            name: index as usize,
             strict: true,
-        }));
+        }),
+        value => RuntimeValue::Reference(Reference::String {
+            base: Box::new(target),
+            name: catch!(thread, value.to_string(thread)),
+            strict: true,
+        }),
     };
 
+    thread.push_stack(reference);
     thread.step();
 }
 
@@ -134,7 +140,7 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
 
     // println!("Get named, target {:?}.{}", target, atom);
 
-    thread.push_stack(RuntimeValue::Reference(Reference {
+    thread.push_stack(RuntimeValue::Reference(Reference::String {
         base: Box::new(target),
         name: atom,
         strict: true,

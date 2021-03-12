@@ -1,7 +1,6 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::function::JsFunction;
 use crate::primordials::Primitives;
-use crate::{GlobalThis, JsObject, RuntimeValue};
+use crate::{GlobalThis, JsFunction, JsObject, RuntimeValue};
 use std::cell::{Ref, RefCell};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;

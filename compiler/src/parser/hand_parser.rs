@@ -1,8 +1,8 @@
 use super::ast::{Expression, Reference};
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ForStatement, FunctionStatement, IfStatement, ParsedModule,
-    ReturnStatement, Statement, ThrowStatement, TryStatement, UnaryOperator, VarDeclaration,
-    VarStatement, WhileStatement,
+    BinaryOperator, BlockStatement, ClassMember, ClassStatement, ForStatement, FunctionStatement,
+    IfStatement, ParsedModule, ReturnStatement, Statement, ThrowStatement, TryStatement,
+    UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
@@ -96,7 +96,8 @@ type Result<'a, T> = std::result::Result<T, Error<'a>>;
 
 pub(crate) trait LexerUtils<'a>: Iterator<Item = (Token<'a>, Span)> {
     fn expect(&mut self, token: Token<'a>) -> Result<'a, ()>;
-    fn expected<T>(&self, expected: Vec<Token<'a>>, got: Self::Item) -> Result<'a, T>;
+    fn expect_one_of(&mut self, token: &[Token<'a>]) -> Result<'a, ()>;
+    fn expected<T>(&self, expected: &[Token<'a>], got: Self::Item) -> Result<'a, T>;
     fn expect_id(&mut self) -> Result<'a, &'a str>;
     fn lookahead_fn<T>(&mut self, transform: impl Fn(Option<&Self::Item>) -> T) -> T;
     fn lookahead(&mut self) -> Option<Self::Item>;
@@ -118,19 +119,27 @@ where
         }
 
         self.expected(
-            vec![token],
+            &[token],
             next.unwrap_or((Token::EndOfFile, 0..0)), // todo: figure out EOF
         )
     }
 
+    fn expect_one_of(&mut self, tokens: &[Token<'a>]) -> Result<'a, ()> {
+        let next = self.next().unwrap_or((Token::EndOfFile, 0..0));
+
+        if tokens.iter().position(|t| *t == next.0).is_some() {
+            return Ok(());
+        }
+
+        self.expected(
+            tokens, next, // todo: figure out EOF
+        )
+    }
+
     #[inline]
-    fn expected<X>(
-        &self,
-        tokens: Vec<Token<'a>>,
-        (token, span): (Token<'a>, Span),
-    ) -> Result<'a, X> {
+    fn expected<X>(&self, tokens: &[Token<'a>], (token, span): (Token<'a>, Span)) -> Result<'a, X> {
         Err(Expected {
-            expected: tokens,
+            expected: tokens.to_vec(),
             got: token,
             location: span,
         })
@@ -139,10 +148,7 @@ where
     fn expect_id(&mut self) -> Result<'a, &'a str> {
         match self.next() {
             Some((Token::Id(id), ..)) => Ok(id),
-            other => self.expected(
-                vec![Token::Id("")],
-                other.unwrap_or((Token::EndOfFile, 0..0)),
-            ),
+            other => self.expected(&[Token::Id("")], other.unwrap_or((Token::EndOfFile, 0..0))),
         }
     }
 
@@ -158,9 +164,9 @@ where
         peeked.cloned()
     }
 
-    fn lookahead_is(&mut self, transform: Token<'a>) -> bool {
-        if let Some((token, ..)) = self.peek() {
-            if *token == transform {
+    fn lookahead_is(&mut self, token: Token<'a>) -> bool {
+        if let Some((next_token, ..)) = self.peek() {
+            if *next_token == token {
                 return true;
             }
         }
@@ -194,7 +200,7 @@ fn parse_object_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expre
                 let expression = parse_expression(input)?;
                 attributes.push((value.to_string(), expression))
             }
-            Some(other) => input.expected(vec![Token::Id("")], other)?,
+            Some(other) => input.expected(&[Token::Id("")], other)?,
             _ => panic!("None!"),
         }
 
@@ -252,7 +258,7 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
             Ok(Expression::Undefined)
         }
         Some(other) => input.expected(
-            vec![
+            &[
                 Token::Id(""),
                 Token::Float(0.0),
                 Token::String(""),
@@ -662,6 +668,7 @@ impl<'a> Parse<'a> for Statement<'a> {
             Some((Token::Function, ..)) => FunctionStatement::parse(input).map(Statement::Function),
             Some((Token::If, ..)) => IfStatement::parse(input).map(Statement::If),
             Some((Token::Return, ..)) => ReturnStatement::parse(input).map(Statement::Return),
+            Some((Token::Class, ..)) => ClassStatement::parse(input).map(Statement::Class),
             Some((Token::While, ..)) => WhileStatement::parse(input).map(Statement::While),
             Some((Token::Var, ..)) => VarStatement::parse(input).map(Statement::Var),
             Some((Token::Try, ..)) => TryStatement::parse(input).map(Statement::Try),
@@ -776,6 +783,66 @@ impl<'a> Parse<'a> for TryStatement<'a> {
     }
 }
 
+impl<'a> Parse<'a> for ClassStatement<'a> {
+    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+        input.expect(Token::Class)?;
+
+        let name = input.expect_id()?;
+
+        let extends = if input.consume_if(Token::Extends) {
+            Some(Expression::parse(input)?)
+        } else {
+            None
+        };
+
+        input.expect(Token::OpenBrace)?;
+
+        let mut members = Vec::new();
+        while !input.consume_if(Token::CloseBrace) {
+            let is_static = input.consume_if(Token::Static);
+
+            let is_getter = if matches!(input.lookahead(), Some((Token::Id("get"), ..))) {
+                input.next();
+                true
+            } else {
+                false
+            };
+
+            let is_setter = if matches!(input.lookahead(), Some((Token::Id("set"), ..))) {
+                input.next();
+                true
+            } else {
+                false
+            };
+
+            match input.lookahead() {
+                Some((Token::Id(identifier), ..)) => {
+                    input.next();
+
+                    let arguments = parse_args_list(input)?;
+                    let statements = BlockStatement::parse(input)?;
+
+                    members.push(ClassMember::Function(FunctionStatement {
+                        identifier,
+                        arguments,
+                        statements,
+                    }))
+                }
+                Some(token) => return input.expected(&[Token::Id("constructor")], token),
+                _ => panic!(":("),
+            }
+
+            input.consume_if(Token::Semicolon);
+        }
+
+        Ok(ClassStatement {
+            name,
+            extends,
+            members,
+        })
+    }
+}
+
 impl<'a> Parse<'a> for ReturnStatement<'a> {
     fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, ReturnStatement<'a>> {
         input.expect(Token::Return)?;
@@ -867,7 +934,7 @@ impl<'a> Parse<'a> for ForStatement<'a> {
                     block: BlockStatement::parse(input)?,
                 }
             }
-            Some(other) => input.expected(vec![Token::Semicolon, Token::In], other)?,
+            Some(other) => input.expected(&[Token::Semicolon, Token::In], other)?,
             _ => unreachable!(),
         };
 

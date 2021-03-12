@@ -2,7 +2,7 @@ use logos::{Lexer, Logos};
 
 #[derive(Logos, Debug, PartialEq, Copy, Clone)]
 pub enum Token<'a> {
-    #[regex(r"-?[0-9]+(\.[0-9]+)?(e[+-]?[1-9][0-9]*)?", float)]
+    #[regex(r"[-]?[0-9]+(\.[0-9]+)?(e[+-]?[1-9][0-9]*)?", float)]
     Float(f64),
 
     #[regex(r"(true|false)", boolean)]
@@ -131,6 +131,12 @@ pub enum Token<'a> {
     #[token("finally")]
     Finally,
 
+    #[token("class")]
+    Class,
+
+    #[token("extends")]
+    Extends,
+
     #[token("await")]
     Await,
 
@@ -148,6 +154,9 @@ pub enum Token<'a> {
 
     #[token("else")]
     Else,
+
+    #[token("static")]
+    Static,
 
     #[token("(")]
     OpenParen,
