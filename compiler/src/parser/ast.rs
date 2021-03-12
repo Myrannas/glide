@@ -37,6 +37,7 @@ pub enum BinaryOperator {
     LogicalOr,
     LogicalAnd,
     InstanceOf,
+    In,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -128,6 +129,11 @@ pub(crate) struct ReturnStatement<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct VarStatement<'a> {
+    pub(crate) declarations: Vec<VarDeclaration<'a>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) struct ConstStatement<'a> {
     pub(crate) declarations: Vec<VarDeclaration<'a>>,
 }
 
@@ -229,6 +235,7 @@ pub(crate) enum Statement<'a> {
     Class(ClassStatement<'a>),
     While(WhileStatement<'a>),
     Var(VarStatement<'a>),
+    Const(ConstStatement<'a>),
     Expression(Expression<'a>),
     Try(TryStatement<'a>),
     For(ForStatement<'a>),

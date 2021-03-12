@@ -37,6 +37,7 @@ pub enum Instruction {
     GetCapture { local: LocalId, frame: Frame },
     GetNamed { name: Atom },
     GetFunction { function: usize },
+    GetClass { class: usize, extends: bool },
     Get,
 
     Delete,
@@ -66,6 +67,7 @@ pub enum Instruction {
     DropCatch { chunk: ChunkId },
     Duplicate,
     Resolve,
+    In,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -107,10 +109,21 @@ pub struct Local {
 }
 
 #[derive(Debug)]
+pub struct Class {
+    pub construct: Option<Function>,
+    pub name: Option<Atom>,
+
+    pub atoms: Vec<String>,
+
+    pub methods: Vec<Function>,
+}
+
+#[derive(Debug)]
 pub struct Function {
     pub instructions: Vec<Instruction>,
     pub atoms: Vec<String>,
     pub functions: Vec<Function>,
+    pub classes: Vec<Class>,
     pub stack_size: usize,
     pub args_size: usize,
     pub name: Option<String>,
@@ -118,6 +131,23 @@ pub struct Function {
 
     pub local_size: usize,
     pub locals: Vec<Local>,
+}
+
+impl Default for Function {
+    fn default() -> Self {
+        Function {
+            instructions: vec![],
+            atoms: vec![],
+            functions: vec![],
+            classes: vec![],
+            stack_size: 0,
+            args_size: 0,
+            name: None,
+            locals_init: vec![],
+            local_size: 0,
+            locals: vec![],
+        }
+    }
 }
 
 pub struct Module {

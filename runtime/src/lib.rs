@@ -16,7 +16,7 @@ extern crate colored;
 extern crate instruction_set;
 extern crate rand;
 
-pub use primordials::GlobalThis;
+pub use primordials::Realm;
 pub use result::{ExecutionError, InternalError};
 pub use values::function::{BuiltIn, JsFunction};
 pub use values::object::JsObject;

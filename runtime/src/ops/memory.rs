@@ -1,5 +1,4 @@
-use crate::context::JsContext;
-use crate::values::function::{CustomFunctionReference, FunctionReference};
+use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::value::{InternalValue, Reference};
 use crate::{InternalError, JsThread, RuntimeValue};
 use instruction_set::{Constant, Environmental};
@@ -120,6 +119,37 @@ pub(crate) fn get_function(thread: &mut JsThread, function_id: usize) {
         }));
 
     thread.push_stack(value);
+    thread.step();
+}
+
+pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
+    let function = thread.current_function();
+
+    let child_class = function.child_class(class_id).clone();
+
+    let prototype = if extends {
+        let prototype: RuntimeValue = pop!(thread);
+
+        match prototype {
+            RuntimeValue::Object(obj) => Prototype::Custom(obj),
+            RuntimeValue::Null => Prototype::Null,
+            value => {
+                return thread.throw(thread.global_this.errors.new_type_error(format!(
+                    "Class extends value {} is not a constructor or null",
+                    value,
+                )))
+            }
+        }
+    } else {
+        Prototype::Object
+    };
+
+    let class = catch!(
+        thread,
+        child_class.load(thread.current_context(), &thread.global_this, prototype)
+    );
+
+    thread.push_stack(class);
     thread.step();
 }
 

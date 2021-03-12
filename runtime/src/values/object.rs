@@ -26,12 +26,12 @@ impl<'a> Debug for JsObject<'a> {
         let inner = &self.inner.borrow();
 
         let name = if let Some(name) = &inner.name {
-            name.as_str()
+            name.clone()
         } else {
-            "[object Object]"
+            "[object Object]".into()
         };
 
-        let mut debug = f.debug_struct(name);
+        let mut debug = f.debug_struct(name.as_ref());
 
         for (key, value) in inner.properties.iter() {
             debug.field(key.as_ref(), value);
@@ -41,7 +41,7 @@ impl<'a> Debug for JsObject<'a> {
             debug.field("[[Prototype]]", prototype);
         }
 
-        if let Some(_) = &inner.callable {
+        if inner.callable.is_some() {
             debug.field("[[Callable]]", &"function() {}".to_owned());
         }
 
@@ -53,7 +53,7 @@ impl<'a> Debug for JsObject<'a> {
 struct JsObjectInner<'a> {
     pub(crate) properties: HashMap<JsPrimitiveString, Property<'a>, PropertyHasher>,
     pub(crate) indexed_properties: Option<Vec<RuntimeValue<'a>>>,
-    pub(crate) name: Option<String>,
+    pub(crate) name: Option<JsPrimitiveString>,
     pub(crate) prototype: Option<JsObject<'a>>,
     pub(crate) wrapped: Option<JsPrimitive>,
     pub(crate) callable: Option<FunctionReference<'a>>,
@@ -87,7 +87,7 @@ impl BuildHasher for PropertyHasher {
 }
 
 pub trait FunctionObject<'a> {
-    fn name(&self) -> Ref<Option<String>>;
+    fn name(&self) -> Ref<Option<JsPrimitiveString>>;
     fn construct<'b>(&'b self) -> Ref<'b, Option<FunctionReference<'a>>>;
     fn callable<'b>(&'b self) -> Ref<'b, Option<FunctionReference<'a>>>;
     fn prototype<'b>(&'b self) -> Ref<'b, Option<JsObject<'a>>>;
@@ -99,7 +99,7 @@ struct ConstructorFunctionObject<'a> {
 }
 
 impl<'a> FunctionObject<'a> for ConstructorFunctionObject<'a> {
-    fn name(&self) -> Ref<Option<String>> {
+    fn name(&self) -> Ref<Option<JsPrimitiveString>> {
         Ref::map(self.object.inner.borrow(), |inner| &inner.name)
     }
 
@@ -156,7 +156,7 @@ impl<'a> JsObjectBuilder<'a> {
         self
     }
 
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+    pub fn with_name(mut self, name: impl Into<JsPrimitiveString>) -> Self {
         self.inner.name = Some(name.into());
         self
     }
@@ -178,7 +178,7 @@ impl<'a> JsObjectBuilder<'a> {
     ) -> Self {
         self.inner
             .properties
-            .insert(key.into(), Property::Value(value.into()));
+            .insert(key.into(), Property::value(value.into()));
         self
     }
 
@@ -210,7 +210,7 @@ impl<'a> JsObject<'a> {
         }
     }
 
-    fn get_property(&self, key: &JsPrimitiveString) -> Option<Property<'a>> {
+    pub(crate) fn get_property(&self, key: &JsPrimitiveString) -> Option<Property<'a>> {
         self.inner
             .borrow()
             .properties
@@ -278,7 +278,7 @@ impl<'a> JsObject<'a> {
         self.inner.borrow_mut().prototype = Some(prototype);
     }
 
-    pub fn set_name(&self, name: impl Into<String>) {
+    pub fn set_name(&self, name: impl Into<JsPrimitiveString>) {
         self.inner.borrow_mut().name = Some(name.into());
     }
 
@@ -296,6 +296,10 @@ impl<'a> JsObject<'a> {
 
     pub fn get<'b>(&self, key: JsPrimitiveString, frame: &'b mut JsThread<'a>) -> JsResult<'a> {
         self.get_borrowed(&key, frame)
+    }
+
+    pub fn has<'b>(&self, key: JsPrimitiveString) -> bool {
+        self.inner.borrow().properties.contains_key(&key)
     }
 
     pub fn get_indexed<'b>(&self, key: usize, frame: &'b mut JsThread<'a>) -> JsResult<'a> {
@@ -318,7 +322,7 @@ impl<'a> JsObject<'a> {
         self.inner
             .borrow_mut()
             .properties
-            .insert(key, Property::Value(value));
+            .insert(key, Property::value(value));
     }
 
     pub fn set_indexed(&self, key: usize, value: impl Into<RuntimeValue<'a>>) {
@@ -351,11 +355,18 @@ impl<'a> JsObject<'a> {
         key: impl Into<JsPrimitiveString>,
         getter: Option<FunctionReference<'a>>,
         setter: Option<FunctionReference<'a>>,
+        enumerable: bool,
+        configurable: bool,
     ) {
-        self.inner
-            .borrow_mut()
-            .properties
-            .insert(key.into(), Property::Complex { getter, setter });
+        self.inner.borrow_mut().properties.insert(
+            key.into(),
+            Property::AccessorDescriptor {
+                getter,
+                setter,
+                enumerable,
+                configurable,
+            },
+        );
     }
 
     pub(crate) fn define_value(
@@ -366,7 +377,26 @@ impl<'a> JsObject<'a> {
         self.inner
             .borrow_mut()
             .properties
-            .insert(key.into(), Property::Value(value.into()));
+            .insert(key.into(), Property::value(value.into()));
+    }
+
+    pub(crate) fn define_value_property(
+        &self,
+        key: impl Into<JsPrimitiveString>,
+        value: impl Into<RuntimeValue<'a>>,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) {
+        self.inner.borrow_mut().properties.insert(
+            key.into(),
+            Property::DataDescriptor {
+                value: value.into(),
+                writable,
+                enumerable,
+                configurable,
+            },
+        );
     }
 
     pub(crate) fn read_simple_property(
@@ -376,7 +406,7 @@ impl<'a> JsObject<'a> {
         let key = key.into();
 
         match self.inner.borrow().properties.get(&key) {
-            Some(Property::Value(value)) => value.clone(),
+            Some(Property::DataDescriptor { value, .. }) => value.clone(),
             _ => unreachable!(),
         }
     }
@@ -398,7 +428,7 @@ impl<'a> JsObject<'a> {
             let property = self.get_property(key);
 
             match property {
-                Some(Property::Value(value)) => return Ok(value),
+                Some(Property::DataDescriptor { value, .. }) => return Ok(value),
                 // Some(Property::Complex {
                 //     getter: Some(FunctionReference::Custom(CustomFunctionReference { function, .. })),
                 //     ..
@@ -410,7 +440,7 @@ impl<'a> JsObject<'a> {
                 //     &thread.global_this,
                 //     target,
                 // ),
-                Some(Property::Complex {
+                Some(Property::AccessorDescriptor {
                     getter: Some(FunctionReference::BuiltIn(builtin)),
                     ..
                 }) => builtin,
@@ -447,18 +477,38 @@ impl<'a> PartialEq for JsObject<'a> {
 
 #[derive(Clone)]
 pub(crate) enum Property<'a> {
-    Value(RuntimeValue<'a>),
-    Complex {
+    DataDescriptor {
+        value: RuntimeValue<'a>,
+        configurable: bool,
+        enumerable: bool,
+        writable: bool,
+    },
+    AccessorDescriptor {
         getter: Option<FunctionReference<'a>>,
         setter: Option<FunctionReference<'a>>,
+        enumerable: bool,
+        configurable: bool,
     },
+}
+
+impl<'a> Property<'a> {
+    fn value(value: RuntimeValue<'a>) -> Property<'a> {
+        Property::DataDescriptor {
+            value,
+            configurable: true,
+            enumerable: true,
+            writable: true,
+        }
+    }
 }
 
 impl<'a> Debug for Property<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Property::Value(v) => v.fmt(f),
-            Property::Complex { .. } => f.write_fmt(format_args!("{}", "property".blue())),
+            Property::DataDescriptor { value, .. } => value.fmt(f),
+            Property::AccessorDescriptor { .. } => {
+                f.write_fmt(format_args!("{}", "property".blue()))
+            }
         }
     }
 }
@@ -486,8 +536,8 @@ impl<'a> DebugRepresentation for JsObject<'a> {
                 renderer.formatter.write_str(k.as_ref())?;
                 renderer.formatter.write_str(": ")?;
                 match v {
-                    Property::Value(v) => renderer.render(v)?,
-                    Property::Complex { .. } => renderer.literal("complex")?,
+                    Property::DataDescriptor { value, .. } => renderer.render(value)?,
+                    Property::AccessorDescriptor { .. } => renderer.literal("complex")?,
                 };
                 renderer.formatter.write_str(", ")?;
             }

@@ -88,7 +88,7 @@ impl ToTokens for Constructor {
             }.into();
 
             object.set_construct(constructor.clone());
-            prototype.define_value("constructor", object.clone());
+            prototype.define_value_property("constructor", object.clone(), false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -125,9 +125,9 @@ impl ToTokens for StaticMethod {
             }).build();
 
             let name: crate::JsPrimitiveString = #method_name_string.into();
-            method.define_value("name", name.clone());
-            method.define_value("length", 1.0);
-            object.define_value(name, method);
+            method.define_value_property("name", name.clone(), false, false, true);
+            method.define_value_property("length", 1.0, false, false, true);
+            object.define_value_property(name, method, false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -164,9 +164,9 @@ impl ToTokens for Method {
             }).build();
 
             let name: crate::JsPrimitiveString = #method_name_string.into();
-            method.define_value("length", 1.0);
-            method.define_value("name", name.clone());
-            prototype.define_value(name, method);
+            method.define_value_property("length", 1.0, false, false, true);
+            method.define_value_property("name", name.clone(), false, false, true);
+            prototype.define_value_property(name, method, false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -199,7 +199,9 @@ impl ToTokens for Getter {
                         #call
                     }
                 }.into()),
-                None
+                None,
+                false,
+                true
             );
         };
 
@@ -350,12 +352,23 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
 
     let self_type = &item.self_ty;
 
-    let type_name = if let Type::Path(type_path) = self_type.as_ref() {
+    let mut type_name = if let Type::Path(type_path) = self_type.as_ref() {
         let first_segment = &type_path.path.segments[0];
         first_segment.ident.clone()
     } else {
         unreachable!();
     };
+
+    let mut type_identifier = type_name.to_string();
+    for attribute in item.attrs.iter() {
+        if let Meta::List(meta) = attribute.parse_meta().unwrap() {
+            if meta.path.get_ident().unwrap() == "named" {
+                if let NestedMeta::Lit(Lit::Str(value)) = meta.nested.first().unwrap() {
+                    type_identifier = value.value();
+                }
+            }
+        }
+    }
 
     let mut has_new = false;
     let mut methods: Vec<Item> = Vec::new();
@@ -535,7 +548,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 #(#methods)*
 
                 let type_name: crate::JsPrimitiveString = #name.into();
-                object.define_value("name", type_name);
+                object.define_value_property("name", #type_identifier.to_string(), false, false, true);
 
                 object.set_prototype(prototype);
                 object

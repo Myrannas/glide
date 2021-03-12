@@ -1,6 +1,6 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::primordials::Primitives;
-use crate::{GlobalThis, JsFunction, JsObject, RuntimeValue};
+use crate::{JsFunction, JsObject, Realm, RuntimeValue};
 use std::cell::{Ref, RefCell};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -74,7 +74,7 @@ impl<'a, 'b> JsContext<'a> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
-    pub(crate) fn root(global_this: &GlobalThis<'a>) -> JsContext<'a> {
+    pub(crate) fn root(global_this: &Realm<'a>) -> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
                 locals: vec![],

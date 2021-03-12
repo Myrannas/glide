@@ -1,8 +1,8 @@
 use super::ast::{Expression, Reference};
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ClassMember, ClassStatement, ForStatement, FunctionStatement,
-    IfStatement, ParsedModule, ReturnStatement, Statement, ThrowStatement, TryStatement,
-    UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
+    BinaryOperator, BlockStatement, ClassMember, ClassStatement, ConstStatement, ForStatement,
+    FunctionStatement, IfStatement, ParsedModule, ReturnStatement, Statement, ThrowStatement,
+    TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
@@ -272,7 +272,7 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
 }
 
 fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
-    let is_new = input.consume_if(Token::New);
+    let mut is_new = input.consume_if(Token::New);
 
     let mut expression = parse_value(input)?;
 
@@ -301,9 +301,16 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
                 input.expect(Token::Comma)?;
             }
 
-            Expression::Call {
-                expression: Box::new(expression),
-                parameters,
+            if is_new {
+                Expression::NewWithArgs {
+                    target: Box::new(expression),
+                    parameters,
+                }
+            } else {
+                Expression::Call {
+                    expression: Box::new(expression),
+                    parameters,
+                }
             }
         } else if computed {
             let accessor = parse_expression(input)?;
@@ -328,25 +335,7 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
         };
     }
 
-    if is_new {
-        if let Expression::Call {
-            expression,
-            parameters,
-        } = expression
-        {
-            Ok(Expression::NewWithArgs {
-                target: expression,
-                parameters,
-            })
-        } else {
-            Ok(Expression::NewWithArgs {
-                target: Box::new(expression),
-                parameters: vec![],
-            })
-        }
-    } else {
-        Ok(expression)
-    }
+    Ok(expression)
 }
 
 fn parse_binary_expression<'a, T: LexerUtils<'a>>(
@@ -464,6 +453,7 @@ fn parse_comparison<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressio
         Token::LessThan => Some(BinaryOperator::LessThan),
         Token::LessThanEqual => Some(BinaryOperator::LessThanEqual),
         Token::InstanceOf => Some(BinaryOperator::InstanceOf),
+        Token::In => Some(BinaryOperator::In),
         _ => None,
     })
 }
@@ -662,6 +652,34 @@ impl<'a> Parse<'a> for VarStatement<'a> {
     }
 }
 
+impl<'a> Parse<'a> for ConstStatement<'a> {
+    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+        input.expect(Token::Const)?;
+
+        let mut declarations = Vec::new();
+        loop {
+            let identifier = input.expect_id()?;
+
+            let expression = if input.consume_if(Token::Assign) {
+                Some(parse_expression(input)?)
+            } else {
+                None
+            };
+
+            declarations.push(VarDeclaration {
+                identifier,
+                expression,
+            });
+
+            if !input.consume_if(Token::Comma) {
+                break;
+            }
+        }
+
+        Ok(ConstStatement { declarations })
+    }
+}
+
 impl<'a> Parse<'a> for Statement<'a> {
     fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Statement<'a>> {
         match input.lookahead() {
@@ -671,6 +689,7 @@ impl<'a> Parse<'a> for Statement<'a> {
             Some((Token::Class, ..)) => ClassStatement::parse(input).map(Statement::Class),
             Some((Token::While, ..)) => WhileStatement::parse(input).map(Statement::While),
             Some((Token::Var, ..)) => VarStatement::parse(input).map(Statement::Var),
+            Some((Token::Const, ..)) => ConstStatement::parse(input).map(Statement::Const),
             Some((Token::Try, ..)) => TryStatement::parse(input).map(Statement::Try),
             Some((Token::Throw, ..)) => ThrowStatement::parse(input).map(Statement::ThrowStatement),
             Some((Token::OpenBrace, ..)) => BlockStatement::parse(input).map(Statement::Block),

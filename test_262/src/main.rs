@@ -13,9 +13,9 @@ use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
 use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
-use glide_runtime::{GlobalThis, JsFunction, JsThread};
+use glide_runtime::{JsFunction, JsThread, Realm};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -43,7 +43,7 @@ struct ModuleSet {
 }
 
 impl ModuleSet {
-    fn load<'a>(&'a self, global_this: GlobalThis<'a>) {
+    fn load<'a>(&'a self, global_this: Realm<'a>) {
         for module in self.modules.iter() {
             JsThread::new(module.clone(), global_this.clone())
                 .run()
@@ -95,9 +95,12 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
         return Ok(Outcome::Skip);
     }
 
-    if let Some(..) = details.flags {
+    if let Some(flags) = &details.flags {
         // panic!("{:?}", details);
-        return Ok(Outcome::Skip);
+
+        if flags.len() > 1 || !flags.contains("generated") {
+            return Ok(Outcome::Skip);
+        }
     }
 
     if let Some(Negative {
@@ -115,7 +118,7 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     let module = AssertUnwindSafe(module);
 
     let time = match catch_unwind(|| {
-        let global = GlobalThis::new();
+        let global = Realm::new();
 
         let start = std::time::Instant::now();
 

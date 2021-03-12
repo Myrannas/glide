@@ -1,3 +1,4 @@
+use super::object::FunctionObject;
 use crate::context::JsContext;
 use crate::debugging::{DebugRepresentation, Renderer};
 use crate::primordials::Primitives;
@@ -7,6 +8,7 @@ use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
 use crate::vm::JsThread;
 
+use crate::Realm;
 use core::cmp::PartialEq;
 use core::convert::From;
 use core::fmt::{Debug, Formatter};
@@ -120,10 +122,90 @@ pub struct JsFunction {
     inner: Rc<JsFunctionInner>,
 }
 
+#[derive(Clone)]
+pub struct JsClass {
+    construct: Option<JsFunction>,
+    atoms: Vec<JsPrimitiveString>,
+    name: JsPrimitiveString,
+    methods: Vec<JsFunction>,
+}
+
+pub(crate) enum Prototype<'a> {
+    Object,
+    Null,
+    Custom(JsObject<'a>),
+}
+
+impl JsClass {
+    pub(crate) fn load<'a>(
+        &self,
+        context: &JsContext<'a>,
+        realm: &Realm<'a>,
+        prototype: Prototype<'a>,
+    ) -> JsResult<'a, RuntimeValue<'a>> {
+        let mut object_builder = JsObject::builder();
+
+        object_builder = match &prototype {
+            Prototype::Object => {
+                object_builder.with_prototype(realm.wrappers.new_object().prototype().unwrap())
+            }
+            Prototype::Custom(obj) => object_builder.with_prototype(obj.clone()),
+            Prototype::Null => object_builder,
+        };
+
+        if let Some(constructor) = &self.construct {
+            object_builder =
+                object_builder.with_construct(FunctionReference::Custom(CustomFunctionReference {
+                    function: constructor.clone(),
+                    parent_context: context.clone(),
+                }));
+        } else if let Prototype::Custom(obj) = prototype {
+            let callable = obj.function().and_then(|f| {
+                if let Some(construct) = f.construct().as_ref() {
+                    Some(construct.clone())
+                } else if let Some(callable) = f.callable().as_ref() {
+                    Some(callable.clone())
+                } else {
+                    None
+                }
+            });
+
+            if let Some(function) = callable {
+                object_builder = object_builder.with_construct(function);
+            } else {
+                return Err(realm
+                    .errors
+                    .new_type_error(format!(
+                        "Class extends value {:?} is not a constructor or null",
+                        obj
+                    ))
+                    .into());
+            }
+        }
+
+        object_builder = object_builder.with_name(self.name.clone());
+
+        for method in self.methods.iter() {
+            object_builder = object_builder.with_property(
+                method.name(),
+                realm
+                    .wrappers
+                    .wrap_function(FunctionReference::Custom(CustomFunctionReference {
+                        function: method.clone(),
+                        parent_context: context.clone(),
+                    })),
+            );
+        }
+
+        Ok(object_builder.build().into())
+    }
+}
+
 pub(crate) struct JsFunctionInner {
     pub instructions: Vec<Instruction>,
     pub atoms: Vec<JsPrimitiveString>,
     pub functions: Vec<JsFunction>,
+    pub classes: Vec<JsClass>,
 
     pub args_size: usize,
     pub local_size: usize,
@@ -169,7 +251,7 @@ impl<'a> PartialEq for JsFunction {
 }
 
 impl<'a> JsFunction {
-    pub fn load(function: Function) -> JsFunction {
+    pub fn load(function: Function) -> Self {
         let Function {
             instructions,
             atoms,
@@ -180,10 +262,23 @@ impl<'a> JsFunction {
             locals,
             locals_init,
             args_size,
+            classes,
         } = function;
 
         let atoms = atoms.into_iter().map(JsPrimitiveString::from).collect();
-        let functions = functions.into_iter().map(|f| JsFunction::load(f)).collect();
+        let functions = functions.into_iter().map(JsFunction::load).collect();
+        let classes = classes
+            .into_iter()
+            .map(|f| {
+                let name = f.atoms[0].clone();
+                JsClass {
+                    construct: f.construct.map(JsFunction::load),
+                    atoms: f.atoms.into_iter().map(JsPrimitiveString::from).collect(),
+                    name: name.into(),
+                    methods: f.methods.into_iter().map(JsFunction::load).collect(),
+                }
+            })
+            .collect();
 
         JsFunction {
             inner: Rc::new(JsFunctionInner {
@@ -195,6 +290,7 @@ impl<'a> JsFunction {
                 locals,
                 stack_size,
                 locals_init,
+                classes,
                 name: name.unwrap_or_default(),
             }),
         }
@@ -206,6 +302,10 @@ impl<'a> JsFunction {
 
     pub(crate) fn child_function(&self, index: usize) -> &JsFunction {
         &self.inner.functions[index]
+    }
+
+    pub(crate) fn child_class(&self, index: usize) -> &JsClass {
+        &self.inner.classes[index]
     }
 
     pub fn local_size(&self) -> usize {

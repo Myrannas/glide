@@ -6,7 +6,7 @@ use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::result::ExecutionError;
 use crate::result::JsResult;
 use crate::vm::JsThread;
-use crate::{GlobalThis, InternalError};
+use crate::{InternalError, Realm};
 use instruction_set::Constant;
 
 #[derive(Clone, Debug)]
@@ -275,7 +275,7 @@ impl<'a> Display for RuntimeValue<'a> {
 
 pub(crate) fn make_arguments<'a>(
     arguments: Vec<RuntimeValue<'a>>,
-    global_this: &GlobalThis<'a>,
+    global_this: &Realm<'a>,
 ) -> RuntimeValue<'a> {
     global_this.wrappers.wrap_arguments(arguments).into()
 }

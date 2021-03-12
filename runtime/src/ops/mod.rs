@@ -51,6 +51,7 @@ impl Operand for Instruction {
             Instruction::GetCapture { frame, local } => get_capture(thread, *frame, *local),
             Instruction::GetNamed { name } => get_named(thread, *name),
             Instruction::GetFunction { function } => get_function(thread, *function),
+            Instruction::GetClass { class, extends } => get_class(thread, *class, *extends),
             Instruction::Get => get(thread),
 
             Instruction::Delete => todo!("Not yet implemented"),
@@ -80,6 +81,7 @@ impl Operand for Instruction {
             Instruction::DropCatch { chunk } => drop_catch(thread, *chunk),
             Instruction::Duplicate => duplicate(thread),
             Instruction::Resolve => resolve(thread),
+            Instruction::In => in_operator(thread),
         }
     }
 }

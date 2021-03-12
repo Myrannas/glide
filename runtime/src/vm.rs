@@ -1,6 +1,6 @@
 use crate::context::JsContext;
 use crate::ops::Operand;
-use crate::primordials::GlobalThis;
+use crate::primordials::Realm;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::value::{make_arguments, RuntimeValue};
@@ -79,7 +79,7 @@ pub struct JsThread<'a> {
     call_stack: Vec<StackFrame<'a>>,
     catch_stack: Vec<CatchFrame>,
     current_frame: StackFrame<'a>,
-    pub(crate) global_this: GlobalThis<'a>,
+    pub(crate) global_this: Realm<'a>,
     error: Option<ExecutionError<'a>>,
     cost_limit: Option<usize>,
     call_stack_limit: usize,
@@ -102,7 +102,7 @@ impl<'a> JsThread<'a> {
         }
     }
 
-    pub fn new(function: JsFunction, global_this: GlobalThis<'a>) -> JsThread<'a> {
+    pub fn new(function: JsFunction, global_this: Realm<'a>) -> JsThread<'a> {
         let root = JsContext::root(&global_this);
 
         let context = JsContext::with_parent(

@@ -37,8 +37,23 @@ pub(crate) fn instance_of(thread: &mut JsThread) {
     let left: RuntimeValue = pop!(thread);
     let right: RuntimeValue = pop!(thread);
 
-    let result = if let RuntimeValue::Object(_) = left {
-        false
+    let result = if let (RuntimeValue::Object(left), RuntimeValue::Object(right)) = (left, right) {
+        if let Some(right_proto) = right.prototype() {
+            let mut left_proto = left.prototype();
+            let mut result = false;
+            while let Some(proto) = left_proto {
+                if proto == right_proto {
+                    result = true;
+                    break;
+                }
+
+                left_proto = proto.prototype();
+            }
+
+            result
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -120,6 +135,25 @@ fn numeric_comparison_op(
         (left, right) => thread.push_stack(num_op(left.into(), right.into())),
     }
 
+    thread.step();
+}
+
+pub(crate) fn in_operator(thread: &mut JsThread) {
+    let left: RuntimeValue = pop!(thread);
+    let right: RuntimeValue = pop!(thread);
+
+    let obj = if let RuntimeValue::Object(obj) = right {
+        obj
+    } else {
+        return thread.throw(thread.global_this.errors.new_type_error(format!(
+            "Cannot use 'in' operator to search for '{}' in {}",
+            left, right
+        )));
+    };
+
+    let name = catch!(thread, left.to_string(thread));
+
+    thread.push_stack(obj.has(name));
     thread.step();
 }
 

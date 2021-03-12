@@ -1,5 +1,5 @@
 use super::builtins::prototype::Prototype;
-use super::builtins::{array, errors, function, number, objects, string};
+use super::builtins::{array, errors, function, number, objects, promise, string};
 use crate::values::function::FunctionReference;
 use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
@@ -19,6 +19,8 @@ impl<'a> Helpers<'a> for JsObject<'a> {
                 op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
             })),
             None,
+            true,
+            true,
         )
     }
 }
@@ -42,24 +44,24 @@ pub(crate) struct Primitives<'a> {
 }
 
 #[derive(Clone)]
-pub struct GlobalThis<'a> {
+pub struct Realm<'a> {
     pub(crate) global_this: JsObject<'a>,
     pub(crate) errors: Errors<'a>,
     pub(crate) wrappers: Primitives<'a>,
 }
 
-impl<'a> Default for GlobalThis<'a> {
+impl<'a> Default for Realm<'a> {
     fn default() -> Self {
-        GlobalThis::new()
+        Realm::new()
     }
 }
 
-impl<'a> GlobalThis<'a> {
-    pub fn new() -> GlobalThis<'a> {
+impl<'a> Realm<'a> {
+    pub fn new() -> Realm<'a> {
         let global_this = JsObject::new();
 
         let primitives = Primitives::init(&global_this);
-        let errors = Errors::init(&global_this);
+        let errors = Errors::init(&global_this, &primitives.object);
 
         global_this.define_value("Math", super::builtins::math::JsMath::bind(None));
 
@@ -76,7 +78,7 @@ impl<'a> GlobalThis<'a> {
         global_this.define_readonly_value("undefined", RuntimeValue::Undefined);
         global_this.define_readonly_value("NaN", f64::NAN);
 
-        GlobalThis {
+        Realm {
             global_this,
             wrappers: primitives,
             errors,
@@ -93,6 +95,7 @@ impl<'a> Primitives<'a> {
         let array_prototype: JsObject<'a> = array::JsArray::bind(Some(&object_prototype));
 
         let function_prototype = function::JsFunctionObject::bind(Some(&object_prototype));
+        let promise_prototype = promise::JsPromise::bind(Some(&object_prototype));
 
         let primitives = Primitives {
             string: string_prototype.clone(),
@@ -107,6 +110,7 @@ impl<'a> Primitives<'a> {
         global_this.define_value("Array", array_prototype);
         global_this.define_value("Object", object_prototype);
         global_this.define_value("Function", function_prototype);
+        global_this.define_value("Promise", promise_prototype);
         global_this.define_value("Number", number_prototype.clone());
         global_this.define_value(
             "parseInt",
@@ -161,31 +165,41 @@ impl<'a> Primitives<'a> {
 impl<'a> Errors<'a> {
     #[allow(dead_code)]
     pub(crate) fn new_reference_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
-        self.new_error(&self.reference_error, message.into()).into()
+        self.new_error(&self.reference_error, "ReferenceError", message.into())
+            .into()
     }
 
     #[allow(dead_code)]
     pub(crate) fn new_syntax_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
-        self.new_error(&self.syntax_error, message.into()).into()
+        self.new_error(&self.syntax_error, "SyntaxError", message.into())
+            .into()
     }
 
     pub(crate) fn new_type_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
-        self.new_error(&self.type_error, message.into()).into()
+        self.new_error(&self.type_error, "TypeError", message.into())
+            .into()
     }
 
-    fn new_error(&self, prototype: &JsObject<'a>, message: impl Into<String>) -> JsObject<'a> {
+    fn new_error(
+        &self,
+        prototype: &JsObject<'a>,
+        name: &str,
+        message: impl Into<String>,
+    ) -> JsObject<'a> {
         JsObject::builder()
             .with_prototype(prototype.clone())
+            .with_name(name)
             .with_property("message", message.into())
             .build()
     }
 
-    fn init(global_this: &JsObject<'a>) -> Errors<'a> {
-        let error = errors::JsError::bind(None);
+    fn init(global_this: &JsObject<'a>, object_prototype: &JsObject<'a>) -> Errors<'a> {
+        let error = errors::JsError::bind(Some(object_prototype));
 
-        let reference_error = JsObject::builder().with_prototype(error.clone()).build();
         let syntax_error = JsObject::builder().with_prototype(error.clone()).build();
-        let type_error = JsObject::builder().with_prototype(error.clone()).build();
+
+        let type_error = errors::TypeError::bind(Some(&error));
+        let reference_error = errors::ReferenceError::bind(Some(&error));
 
         global_this.define_readonly_value("ReferenceError", reference_error.clone());
         global_this.define_readonly_value("SyntaxError", syntax_error.clone());

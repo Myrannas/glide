@@ -93,7 +93,7 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let target = JsObject::new();
 
     if let Some(name) = fn_object.name().as_ref() {
-        target.set_name(name);
+        target.set_name(name.clone());
     }
 
     if let Some(prototype) = fn_object.prototype().as_ref() {
