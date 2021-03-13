@@ -8,6 +8,7 @@ use crate::result::JsResult;
 use crate::vm::JsThread;
 use crate::{InternalError, Realm};
 use instruction_set::Constant;
+use std::ops::Index;
 
 #[derive(Clone, Debug)]
 pub enum Reference<'a> {
@@ -207,7 +208,7 @@ impl<'a> RuntimeValue<'a> {
         }
     }
 
-    pub(crate) fn to_string(&self, thread: &mut JsThread<'a>) -> JsResult<'a, JsPrimitiveString> {
+    pub fn to_string(&self, thread: &mut JsThread<'a>) -> JsResult<'a, JsPrimitiveString> {
         let result: JsPrimitiveString = match self {
             RuntimeValue::Float(v) => v.to_string().into(),
             RuntimeValue::Boolean(bool) => bool.to_string().into(),

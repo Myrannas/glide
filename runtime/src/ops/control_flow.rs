@@ -81,7 +81,7 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
     let resolved_value = resolve!(fn_value.clone(), thread);
-    let fn_object = catch!(thread, get_callable(thread, resolved_value));
+    let fn_object = catch!(thread, get_callable(thread, resolved_value.clone()));
 
     let callable = if let Some(callable) = fn_object.construct().as_ref() {
         callable.clone()
@@ -99,6 +99,8 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     if let Some(prototype) = fn_object.prototype().as_ref() {
         target.set_prototype(prototype.clone());
     }
+
+    target.set("constructor".into(), resolved_value);
 
     match callable {
         FunctionReference::Custom(function) => {

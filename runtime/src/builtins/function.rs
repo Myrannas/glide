@@ -1,5 +1,5 @@
 use crate::{JsObject, JsThread};
-use builtin::prototype;
+use builtin::{named, prototype};
 
 pub(crate) struct JsFunctionObject<'a, 'b> {
     object: JsObject<'a>,
@@ -7,4 +7,5 @@ pub(crate) struct JsFunctionObject<'a, 'b> {
 }
 
 #[prototype]
+#[named("Function")]
 impl<'a, 'b> JsFunctionObject<'a, 'b> {}

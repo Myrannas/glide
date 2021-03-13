@@ -203,24 +203,26 @@ pub enum Token<'a> {
     #[regex(r"[$a-zA-Z_][$a-zA-Z0-9_]*")]
     Id(&'a str),
 
-    #[regex(r"'([^'\n]|(\\'))*'", string)]
-    #[regex(r#""([^"\n]|(\\"))*""#, string)]
+    #[regex(r"'([^'\n\r]|(\\'))*'", string)]
+    #[regex(r#""([^"\n\r]|(\\"))*""#, string)]
     String(&'a str),
 
     #[regex(r"`[^`\n]*`", string)]
     TemplateString(&'a str),
 
-    #[regex(r"//[^\n]*", logos::skip)]
+    #[regex(r"//[^\u{000A}\u{000D}\u{2028}\u{2029}]*")]
     Comment,
 
-    #[regex(r"/\*(?:[^*]|\*[^/])*\*/", logos::skip)]
-    BlockComment,
+    #[regex(r"/\*(?:[^*]|\*[^/])*\*/", string)]
+    BlockComment(&'a str),
 
     #[error]
-    #[regex(r"[ \t\f]+", logos::skip)]
     Error,
 
-    #[regex(r"[\n]+")]
+    #[regex(r"[ \t\f]+", logos::skip)]
+    Whitespace,
+
+    #[regex(r"[\u{000A}\u{000D}\u{2028}\u{2029}]+")]
     NewLine,
 
     EndOfFile,

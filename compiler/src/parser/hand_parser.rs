@@ -121,6 +121,24 @@ impl<'a> WhitespaceTrackingLexer<'a> {
                 (Token::NewLine, ..) => {
                     self.previous_was_newline = true;
                 }
+                (Token::Comment, ..) => {}
+                (Token::BlockComment(comment), ..) => {
+                    if comment.contains('\n') {
+                        self.previous_was_newline = true;
+                    }
+
+                    if comment.contains('\r') {
+                        self.previous_was_newline = true;
+                    }
+
+                    if comment.contains('\u{2029}') {
+                        self.previous_was_newline = true;
+                    }
+
+                    if comment.contains('\u{2028}') {
+                        self.previous_was_newline = true;
+                    }
+                }
                 other => {
                     // println!("{:?}", other);
                     return Some(other);
@@ -166,7 +184,6 @@ impl<'a> WhitespaceTrackingLexer<'a> {
                 &[Token::Semicolon, Token::CloseBrace, Token::NewLine],
                 other,
             )
-            // panic!("Ohnoes")
         }
     }
 
@@ -433,6 +450,12 @@ fn parse_unary<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
 
     let result = match input.lookahead() {
         Some((Token::Inc, ..)) => {
+            if input.previous_was_newline {
+                return Err(Error::SyntaxError {
+                    message: "Invalid symbol before ++ symbol",
+                });
+            }
+
             input.next();
 
             if let Expression::Reference(reference) = result {
@@ -750,7 +773,7 @@ impl<'a> Parse<'a> for Statement<'a> {
 
                 Ok(Statement::Continue)
             }
-            Some(_) => {
+            Some(other) => {
                 let expression = parse_expression(input);
 
                 input.expect_end_of_statement()?;

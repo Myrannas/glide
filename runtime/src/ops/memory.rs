@@ -110,13 +110,13 @@ pub(crate) fn get_function(thread: &mut JsThread, function_id: usize) {
     let function = thread.current_function();
     let child_function = function.child_function(function_id).clone();
 
-    let value = thread
-        .global_this
-        .wrappers
-        .wrap_function(FunctionReference::Custom(CustomFunctionReference {
+    let value = thread.global_this.wrappers.wrap_function(
+        function.name(),
+        FunctionReference::Custom(CustomFunctionReference {
             function: child_function,
             parent_context: thread.current_context().clone(),
-        }));
+        }),
+    );
 
     thread.push_stack(value);
     thread.step();

@@ -13,7 +13,7 @@ use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
 use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
-use glide_runtime::{JsFunction, JsThread, Realm};
+use glide_runtime::{ExecutionError, FunctionObject, JsFunction, JsThread, Realm, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{read_dir, read_to_string, write};
@@ -30,6 +30,9 @@ fn bootstrap_harness() -> ModuleSet {
     ] {
         let sta = read_to_string(file).unwrap();
         let sta_module = parse_input(&sta).unwrap();
+
+        // println!("{:#?}", sta_module);
+
         let compiled = compile("assert.js", sta_module, CompilerOptions::new()).unwrap();
 
         modules.push(JsFunction::load(compiled.init));
@@ -129,11 +132,51 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
         let mut thread = JsThread::new(function, global.clone());
         thread.set_cost_limit(cost_limit);
 
-        match thread.run() {
-            Ok(_) => Ok(std::time::Instant::now() - start),
-            Err(err) => {
-                let err: anyhow::Error = err.into();
-                Err(err).context(details)
+        let result = thread.run();
+
+        if let Some(Negative {
+            phase: Phase::Runtime,
+            tpe: NegativeType::Test262Error,
+        }) = details.negative
+        {
+            match result {
+                Ok(_) => Err(Error::msg("Expected a Test262Error error")),
+                Err(ExecutionError::Thrown(RuntimeValue::Object(obj), ..)) => {
+                    let to_string = obj.get("toString".into(), &mut thread).unwrap();
+
+                    if let RuntimeValue::Object(fn_object) = to_string {
+                        let result = thread
+                            .call_from_native(
+                                obj.clone(),
+                                fn_object.function().unwrap().callable().clone().unwrap(),
+                                0,
+                                false,
+                            )
+                            .unwrap()
+                            .to_string(&mut thread)
+                            .unwrap();
+
+                        if result.as_ref().starts_with("Test262Error:") {
+                            Ok(std::time::Instant::now() - start)
+                        } else {
+                            Err(Error::msg("Expected a Test262Error error"))
+                        }
+                    } else {
+                        Err(Error::msg("Expected a Test262Error error"))
+                    }
+                }
+                Err(err) => {
+                    let err: anyhow::Error = err.into();
+                    Err(err).context(details)
+                }
+            }
+        } else {
+            match result {
+                Ok(_) => Ok(std::time::Instant::now() - start),
+                Err(err) => {
+                    let err: anyhow::Error = err.into();
+                    Err(err).context(details)
+                }
             }
         }
     }) {

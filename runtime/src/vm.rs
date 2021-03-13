@@ -400,7 +400,7 @@ impl<'a> JsThread<'a> {
         }
     }
 
-    pub(crate) fn call_from_native(
+    pub fn call_from_native(
         &mut self,
         target: JsObject<'a>,
         function_reference: impl Into<FunctionReference<'a>>,
@@ -417,8 +417,6 @@ impl<'a> JsThread<'a> {
                 self.call(target, custom, args, new, true);
 
                 let result = self.run();
-
-                println!("Returning from native call {:?} {:?}", result, self.stack);
 
                 self.current_frame = self.call_stack.pop().unwrap();
 

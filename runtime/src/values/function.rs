@@ -188,12 +188,13 @@ impl JsClass {
         for method in self.methods.iter() {
             object_builder = object_builder.with_property(
                 method.name(),
-                realm
-                    .wrappers
-                    .wrap_function(FunctionReference::Custom(CustomFunctionReference {
+                realm.wrappers.wrap_function(
+                    method.name(),
+                    FunctionReference::Custom(CustomFunctionReference {
                         function: method.clone(),
                         parent_context: context.clone(),
-                    })),
+                    }),
+                ),
             );
         }
 
@@ -337,12 +338,15 @@ impl<'a> JsFunction {
                 LocalInit::Function(function_id) => {
                     let function = self.inner.functions[*function_id].clone();
                     let function_reference = CustomFunctionReference {
-                        function,
+                        function: function.clone(),
                         parent_context: parent_context.clone(),
                     };
 
                     primitives
-                        .wrap_function(FunctionReference::Custom(function_reference))
+                        .wrap_function(
+                            function.name(),
+                            FunctionReference::Custom(function_reference),
+                        )
                         .into()
                 }
             })

@@ -69,10 +69,13 @@ impl<'a> Realm<'a> {
         {
             global_this.define_readonly_value(
                 "eval",
-                primitives.wrap_function(BuiltIn {
-                    context: None,
-                    op: super::builtins::eval::eval,
-                }),
+                primitives.wrap_function(
+                    "eval",
+                    BuiltIn {
+                        context: None,
+                        op: super::builtins::eval::eval,
+                    },
+                ),
             );
         }
         global_this.define_readonly_value("undefined", RuntimeValue::Undefined);
@@ -141,10 +144,16 @@ impl<'a> Primitives<'a> {
             .build()
     }
 
-    pub(crate) fn wrap_function(&self, function: impl Into<FunctionReference<'a>>) -> JsObject<'a> {
+    pub(crate) fn wrap_function(
+        &self,
+        name: impl Into<String>,
+        function: impl Into<FunctionReference<'a>>,
+    ) -> JsObject<'a> {
+        let function = function.into();
         JsObject::builder()
             .with_callable(function)
             .with_prototype(self.function.clone())
+            .with_property("name", name.into())
             .build()
     }
 

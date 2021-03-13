@@ -39,11 +39,14 @@ pub struct Negative {
 pub enum Phase {
     #[serde(rename = "parse")]
     Parse,
+    #[serde(rename = "runtime")]
+    Runtime,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum NegativeType {
     SyntaxError,
+    Test262Error,
 }
 
 impl Suite {
