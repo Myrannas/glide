@@ -328,7 +328,7 @@ impl<'a> JsObject<'a> {
     pub fn set_indexed(&self, key: usize, value: impl Into<RuntimeValue<'a>>) {
         let value = value.into();
 
-        {
+        if key < 10000 {
             let mut object = self.inner.borrow_mut();
 
             if let Some(indexed_properties) = &mut object.indexed_properties {

@@ -217,8 +217,11 @@ pub enum Token<'a> {
     BlockComment,
 
     #[error]
-    #[regex(r"[ \t\n\f]+", logos::skip)]
+    #[regex(r"[ \t\f]+", logos::skip)]
     Error,
+
+    #[regex(r"[\n]+")]
+    NewLine,
 
     EndOfFile,
 }

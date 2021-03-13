@@ -7,21 +7,27 @@ use crate::parser::ast::{
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
 use crate::parser::strings::parse_string;
-use logos::{Source, Span};
+use logos::{Lexer, Source, Span, SpannedIter};
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
 use std::iter::Peekable;
 use std::ops::Range;
 
+pub(crate) struct WhitespaceTrackingLexer<'a> {
+    pub(crate) lexer: SpannedIter<'a, Token<'a>>,
+    pub(crate) peeked: Option<Option<(Token<'a>, Span)>>,
+    pub(crate) previous_was_newline: bool,
+}
+
 trait Parse<'a>
 where
     Self: Sized,
 {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self>;
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self>;
 }
 
 impl<'a> Parse<'a> for Expression<'a> {
-    fn parse(input: &mut impl LexerUtils<'a, Item = (Token<'a>, Span)>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         parse_expression(input)
     }
 }
@@ -93,22 +99,38 @@ pub(crate) fn pretty_print(input: &str, err: Error) -> String {
 }
 
 type Result<'a, T> = std::result::Result<T, Error<'a>>;
+type LexerImpl<'a> = WhitespaceTrackingLexer<'a>;
 
-pub(crate) trait LexerUtils<'a>: Iterator<Item = (Token<'a>, Span)> {
-    fn expect(&mut self, token: Token<'a>) -> Result<'a, ()>;
-    fn expect_one_of(&mut self, token: &[Token<'a>]) -> Result<'a, ()>;
-    fn expected<T>(&self, expected: &[Token<'a>], got: Self::Item) -> Result<'a, T>;
-    fn expect_id(&mut self) -> Result<'a, &'a str>;
-    fn lookahead_fn<T>(&mut self, transform: impl Fn(Option<&Self::Item>) -> T) -> T;
-    fn lookahead(&mut self) -> Option<Self::Item>;
-    fn lookahead_is(&mut self, transform: Token<'a>) -> bool;
-    fn consume_if(&mut self, transform: Token<'a>) -> bool;
-}
+impl<'a> WhitespaceTrackingLexer<'a> {
+    fn peek(&mut self) -> Option<&(Token<'a>, Span)> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.next())
+        }
 
-impl<'a, T> LexerUtils<'a> for Peekable<T>
-where
-    T: Iterator<Item = (Token<'a>, Span)> + Sized,
-{
+        self.peeked.as_ref().unwrap().as_ref()
+    }
+
+    fn next(&mut self) -> Option<(Token<'a>, Span)> {
+        if let Some(peeked) = self.peeked.take() {
+            return peeked;
+        }
+
+        self.previous_was_newline = false;
+        while let Some(next) = self.lexer.next() {
+            match next {
+                (Token::NewLine, ..) => {
+                    self.previous_was_newline = true;
+                }
+                other => {
+                    // println!("{:?}", other);
+                    return Some(other);
+                }
+            }
+        }
+
+        None
+    }
+
     fn expect(&mut self, token: Token<'a>) -> Result<'a, ()> {
         let next = self.next();
 
@@ -122,6 +144,30 @@ where
             &[token],
             next.unwrap_or((Token::EndOfFile, 0..0)), // todo: figure out EOF
         )
+    }
+
+    fn expect_end_of_statement(&mut self) -> Result<'a, ()> {
+        let other = match self.peek() {
+            Some((Token::Semicolon, ..)) => {
+                self.next();
+                return Ok(());
+            }
+            Some((Token::CloseBrace, ..)) => {
+                return Ok(());
+            }
+            None => return Ok(()),
+            other => other.unwrap_or(&(Token::EndOfFile, 0..0)).clone(),
+        };
+
+        if self.previous_was_newline {
+            Ok(())
+        } else {
+            self.expected(
+                &[Token::Semicolon, Token::CloseBrace, Token::NewLine],
+                other,
+            )
+            // panic!("Ohnoes")
+        }
     }
 
     fn expect_one_of(&mut self, tokens: &[Token<'a>]) -> Result<'a, ()> {
@@ -153,13 +199,13 @@ where
     }
 
     #[inline]
-    fn lookahead_fn<X>(&mut self, transform: impl Fn(Option<&Self::Item>) -> X) -> X {
+    fn lookahead_fn<X>(&mut self, transform: impl Fn(Option<&(Token, Span)>) -> X) -> X {
         let peeked = self.peek();
         transform(peeked)
     }
 
     #[inline]
-    fn lookahead(&mut self) -> Option<Self::Item> {
+    fn lookahead(&mut self) -> Option<(Token<'a>, Span)> {
         let peeked = self.peek();
         peeked.cloned()
     }
@@ -184,7 +230,7 @@ where
     }
 }
 
-fn parse_object_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_object_literal<'a, 'b>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     let mut attributes = Vec::new();
 
     while !input.consume_if(Token::CloseBrace) {
@@ -212,7 +258,7 @@ fn parse_object_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expre
     Ok(Expression::ObjectLiteral { attributes })
 }
 
-fn parse_array_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_array_literal<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     let mut attributes = Vec::new();
 
     while !input.consume_if(Token::CloseBracket) {
@@ -231,7 +277,7 @@ fn parse_array_literal<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expres
     Ok(Expression::ArrayLiteral { attributes })
 }
 
-fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_value<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     if input.lookahead_is(Token::OpenParen) {
         return parse_group(input);
     }
@@ -271,7 +317,7 @@ fn parse_value<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
     }
 }
 
-fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_accessor<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     let mut is_new = input.consume_if(Token::New);
 
     let mut expression = parse_value(input)?;
@@ -338,9 +384,9 @@ fn parse_accessor<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
     Ok(expression)
 }
 
-fn parse_binary_expression<'a, T: LexerUtils<'a>>(
-    input: &mut T,
-    next: impl Fn(&mut T) -> Result<'a, Expression<'a>>,
+fn parse_binary_expression<'a>(
+    input: &mut LexerImpl<'a>,
+    next: impl Fn(&mut LexerImpl<'a>) -> Result<'a, Expression<'a>>,
     matcher: impl Fn(Token) -> Option<BinaryOperator>,
 ) -> Result<'a, Expression<'a>> {
     let mut left = next(input)?;
@@ -364,7 +410,7 @@ fn parse_binary_expression<'a, T: LexerUtils<'a>>(
     }
 }
 
-fn parse_unary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_unary<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     let operator = match input.lookahead() {
         Some((Token::LogicalNot, ..)) => Some(UnaryOperator::LogicalNot),
         Some((Token::TypeOf, ..)) => Some(UnaryOperator::TypeOf),
@@ -420,7 +466,7 @@ fn parse_unary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
     Ok(result)
 }
 
-fn parse_commutative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_commutative<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_unary, |token| match token {
         Token::Multiply => Some(BinaryOperator::Mul),
         Token::Divide => Some(BinaryOperator::Div),
@@ -429,7 +475,7 @@ fn parse_commutative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressi
     })
 }
 
-fn parse_associative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_associative<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_commutative, |token| match token {
         Token::Add => Some(BinaryOperator::Add),
         Token::Sub => Some(BinaryOperator::Sub),
@@ -437,7 +483,7 @@ fn parse_associative<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressi
     })
 }
 
-fn parse_shifts<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_shifts<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_associative, |token| match token {
         Token::LeftShift => Some(BinaryOperator::LeftShift),
         Token::RightShift => Some(BinaryOperator::RightShift),
@@ -446,7 +492,7 @@ fn parse_shifts<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a
     })
 }
 
-fn parse_comparison<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_comparison<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_shifts, |token| match token {
         Token::GreaterThan => Some(BinaryOperator::GreaterThan),
         Token::GreaterThanEqual => Some(BinaryOperator::GreaterThanEqual),
@@ -458,7 +504,7 @@ fn parse_comparison<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressio
     })
 }
 
-fn parse_equality<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_equality<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_comparison, |token| match token {
         Token::EqualTo => Some(BinaryOperator::EqualTo),
         Token::NotEqualTo => Some(BinaryOperator::NotEqualTo),
@@ -468,21 +514,21 @@ fn parse_equality<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<
     })
 }
 
-fn parse_logical_and<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_logical_and<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_equality, |token| match token {
         Token::LogicalAnd => Some(BinaryOperator::LogicalAnd),
         _ => None,
     })
 }
 
-fn parse_logical_or<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_logical_or<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_logical_and, |token| match token {
         Token::LogicalOr => Some(BinaryOperator::LogicalOr),
         _ => None,
     })
 }
 
-fn parse_ternary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_ternary<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     let condition = parse_logical_or(input)?;
 
     if input.consume_if(Token::QuestionMark) {
@@ -500,7 +546,7 @@ fn parse_ternary<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'
     }
 }
 
-fn parse_assignment<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_assignment<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     match parse_ternary(input)? {
         Expression::Reference(reference) => match input.lookahead() {
             Some((Token::Assign, ..)) => {
@@ -570,7 +616,7 @@ fn parse_assignment<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expressio
     }
 }
 
-fn parse_function_expression<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_function_expression<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     if input.consume_if(Token::Function) {
         let arguments = parse_args_list(input)?;
         let statements = BlockStatement::parse(input)?;
@@ -585,12 +631,12 @@ fn parse_function_expression<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, 
     }
 }
 
-fn parse_expression<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_expression<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_function_expression(input)
 }
 
 impl<'a> Parse<'a> for IfStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.expect(Token::If)?;
 
         let condition = parse_group(input)?;
@@ -611,7 +657,7 @@ impl<'a> Parse<'a> for IfStatement<'a> {
 }
 
 impl<'a> Parse<'a> for WhileStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.expect(Token::While)?;
 
         let condition = parse_group(input)?;
@@ -625,7 +671,7 @@ impl<'a> Parse<'a> for WhileStatement<'a> {
 }
 
 impl<'a> Parse<'a> for VarStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, VarStatement<'a>> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, VarStatement<'a>> {
         input.expect(Token::Var)?;
 
         let mut declarations = Vec::new();
@@ -653,7 +699,7 @@ impl<'a> Parse<'a> for VarStatement<'a> {
 }
 
 impl<'a> Parse<'a> for ConstStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.expect(Token::Const)?;
 
         let mut declarations = Vec::new();
@@ -681,7 +727,7 @@ impl<'a> Parse<'a> for ConstStatement<'a> {
 }
 
 impl<'a> Parse<'a> for Statement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Statement<'a>> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Statement<'a>> {
         match input.lookahead() {
             Some((Token::Function, ..)) => FunctionStatement::parse(input).map(Statement::Function),
             Some((Token::If, ..)) => IfStatement::parse(input).map(Statement::If),
@@ -707,7 +753,7 @@ impl<'a> Parse<'a> for Statement<'a> {
             Some(_) => {
                 let expression = parse_expression(input);
 
-                input.consume_if(Token::Semicolon);
+                input.expect_end_of_statement()?;
 
                 Ok(Statement::Expression(expression?))
             }
@@ -716,7 +762,7 @@ impl<'a> Parse<'a> for Statement<'a> {
     }
 }
 
-fn parse_args_list<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Vec<&'a str>> {
+fn parse_args_list<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Vec<&'a str>> {
     input.expect(Token::OpenParen)?;
 
     let mut arguments = Vec::new();
@@ -736,7 +782,7 @@ fn parse_args_list<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Vec<&'a st
     Ok(arguments)
 }
 
-fn parse_group<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>> {
+fn parse_group<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     input.expect(Token::OpenParen)?;
 
     let expr = parse_expression(input)?;
@@ -747,7 +793,7 @@ fn parse_group<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, Expression<'a>
 }
 
 impl<'a> Parse<'a> for BlockStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.next();
 
         let mut statements = Vec::new();
@@ -766,7 +812,7 @@ impl<'a> Parse<'a> for BlockStatement<'a> {
 }
 
 impl<'a> Parse<'a> for TryStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.expect(Token::Try)?;
 
         let try_block = BlockStatement::parse(input)?;
@@ -803,7 +849,7 @@ impl<'a> Parse<'a> for TryStatement<'a> {
 }
 
 impl<'a> Parse<'a> for ClassStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.expect(Token::Class)?;
 
         let name = input.expect_id()?;
@@ -863,7 +909,7 @@ impl<'a> Parse<'a> for ClassStatement<'a> {
 }
 
 impl<'a> Parse<'a> for ReturnStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, ReturnStatement<'a>> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, ReturnStatement<'a>> {
         input.expect(Token::Return)?;
 
         if input.lookahead_is(Token::Semicolon) {
@@ -879,7 +925,7 @@ impl<'a> Parse<'a> for ReturnStatement<'a> {
 }
 
 impl<'a> Parse<'a> for FunctionStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, FunctionStatement<'a>> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, FunctionStatement<'a>> {
         input.expect(Token::Function)?;
         let identifier = input.expect_id()?;
         let arguments = parse_args_list(input)?;
@@ -894,7 +940,7 @@ impl<'a> Parse<'a> for FunctionStatement<'a> {
 }
 
 impl<'a> Parse<'a> for ThrowStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, ThrowStatement<'a>> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, ThrowStatement<'a>> {
         input.expect(Token::Throw)?;
         let expression = parse_expression(input)?;
 
@@ -903,7 +949,7 @@ impl<'a> Parse<'a> for ThrowStatement<'a> {
 }
 
 impl<'a> Parse<'a> for ForStatement<'a> {
-    fn parse(input: &mut impl LexerUtils<'a>) -> Result<'a, Self> {
+    fn parse(input: &mut LexerImpl<'a>) -> Result<'a, Self> {
         input.expect(Token::For)?;
 
         input.expect(Token::OpenParen)?;
@@ -961,7 +1007,7 @@ impl<'a> Parse<'a> for ForStatement<'a> {
     }
 }
 
-pub(crate) fn parse<'a>(input: &mut impl LexerUtils<'a>) -> Result<'a, ParsedModule<'a>> {
+pub(crate) fn parse<'a>(input: &mut LexerImpl<'a>) -> Result<'a, ParsedModule<'a>> {
     let mut statements = Vec::new();
     while input.lookahead().is_some() {
         statements.push(Statement::parse(input)?);
@@ -984,11 +1030,11 @@ mod test {
     #[test]
     fn test_parse_function() {
         assert_eq!(
-            FunctionStatement::parse(
-                &mut Token::lexer("function hello(world, boom) { }")
-                    .spanned()
-                    .peekable()
-            ),
+            FunctionStatement::parse(&mut WhitespaceTrackingLexer {
+                lexer: Token::lexer("function hello(world, boom) { }").spanned(),
+                peeked: None,
+                previous_was_newline: false
+            }),
             Ok(FunctionStatement {
                 identifier: "hello",
                 arguments: vec!["world", "boom"],
@@ -1015,7 +1061,11 @@ mod test {
     #[test]
     fn test_operators() {
         assert_eq!(
-            parse_expression(&mut Token::lexer("1.0 + Test").spanned().peekable()),
+            parse_expression(&mut WhitespaceTrackingLexer {
+                lexer: Token::lexer("1.0 + Test").spanned(),
+                peeked: None,
+                previous_was_newline: false
+            }),
             Ok(Expression::BinaryExpression {
                 left: Box::new(Expression::Float(1.0)),
                 right: Box::new(Expression::Reference(Reference::Id("Test"))),

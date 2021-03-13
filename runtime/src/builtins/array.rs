@@ -11,7 +11,11 @@ pub(crate) struct JsArray<'a, 'b> {
 impl<'a, 'b> JsArray<'a, 'b> {
     #[varargs]
     #[constructor]
-    fn constructor(&mut self, args: Vec<RuntimeValue<'a>>) {}
+    fn constructor(&mut self, args: Vec<RuntimeValue<'a>>) {
+        if args.len() > 1 {
+            self.object.set_indexed_properties(args)
+        }
+    }
 
     #[named("reduceRight")]
     fn reduce_right() -> JsResult<'a> {
