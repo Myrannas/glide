@@ -305,6 +305,14 @@ impl<'a> JsObject<'a> {
     pub fn get_indexed<'b>(&self, key: usize, frame: &'b mut JsThread<'a>) -> JsResult<'a> {
         let inner = self.inner.borrow();
 
+        if let Some(JsPrimitive::String(str)) = &inner.wrapped {
+            return if let Some(result) = str.inner.chars().nth(key) {
+                Ok(result.to_string().into())
+            } else {
+                Ok(RuntimeValue::Undefined)
+            };
+        }
+
         if let Some(indexed_properties) = &inner.indexed_properties {
             Ok(indexed_properties.get(key).cloned().unwrap_or_default())
         } else {

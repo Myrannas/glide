@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 #[derive(Clone, Eq)]
 pub struct JsPrimitiveString {
-    inner: Rc<String>,
+    pub(crate) inner: Rc<String>,
     hash: u64,
 }
 

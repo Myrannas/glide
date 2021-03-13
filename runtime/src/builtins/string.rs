@@ -23,7 +23,7 @@ impl<'a, 'b> JsString<'a, 'b> {
             }
         };
 
-        Ok(str.as_ref().len() as f64)
+        Ok(str.as_ref().chars().count() as f64)
     }
 
     #[named("charAt")]
