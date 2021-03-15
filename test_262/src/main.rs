@@ -118,9 +118,9 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     let module = AssertUnwindSafe(module);
 
     let time = match catch_unwind(|| {
-        let global = harness.realm.clone();
-
         let start = std::time::Instant::now();
+
+        let global = harness.realm.clone();
 
         let function = JsFunction::load(module.0?.init);
 
@@ -156,7 +156,7 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
                     }
                 }
                 Err(err) => {
-                    let err: anyhow::Error = err.into();
+                    let err = err.render(&mut thread);
                     Err(err).context(details)
                 }
             }
@@ -164,7 +164,7 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
             match result {
                 Ok(_) => Ok(std::time::Instant::now() - start),
                 Err(err) => {
-                    let err: anyhow::Error = err.into();
+                    let err = err.render(&mut thread);
                     Err(err).context(details)
                 }
             }

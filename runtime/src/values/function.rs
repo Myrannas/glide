@@ -171,15 +171,9 @@ impl JsClass {
                     parent_context: context.clone(),
                 }));
         } else if let Prototype::Custom(obj) = prototype {
-            let callable = obj.as_function(thread).and_then(|f| {
-                if let Some(construct) = f.construct() {
-                    Some(construct.clone())
-                } else if let Some(callable) = f.callable() {
-                    Some(callable.clone())
-                } else {
-                    None
-                }
-            });
+            let callable = obj
+                .get_construct(thread)
+                .or_else(|| obj.get_callable(thread));
 
             if let Some(function) = callable {
                 object_builder = object_builder.with_construct(function.clone());

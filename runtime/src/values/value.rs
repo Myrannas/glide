@@ -159,6 +159,19 @@ impl<'a> RuntimeValue<'a> {
             _ => InternalError::new_stackless("Unable to use as object").into(),
         }
     }
+
+    pub fn call(&self, thread: &mut JsThread<'a>, args: &[RuntimeValue<'a>]) -> JsResult<'a> {
+        match self {
+            RuntimeValue::Object(obj) => obj.call(thread, args),
+            other => Err(ExecutionError::Thrown(
+                thread.realm.errors.new_type_error(
+                    &mut thread.realm.objects,
+                    format!("{} is not a function", other),
+                ),
+                None,
+            )),
+        }
+    }
 }
 
 impl<'a> PartialEq for RuntimeValue<'a> {
@@ -222,25 +235,24 @@ impl<'a> RuntimeValue<'a> {
 
                 // println!("{:?}\n{:?}", obj, to_string);
 
-                match to_string {
-                    RuntimeValue::Object(function) if function.as_function(thread).is_some() => {
-                        let function = function.as_function(thread).unwrap();
-                        let callable = function.callable();
-                        let function_reference = callable.unwrap().clone();
-                        thread
-                            .call_from_native(obj.clone(), function_reference, 0, false)?
-                            .to_string(thread)?
-                    }
-                    RuntimeValue::Undefined => "[Object object]".to_owned().into(),
-                    _ => {
-                        let error = thread.realm.errors.new_type_error(
-                            &mut thread.realm.objects,
-                            "Cannot convert object to primitive value",
-                        );
+                if to_string == RuntimeValue::Undefined {
+                    return Ok("[Object object]".to_owned().into());
+                }
 
-                        return Err(error.into());
+                if let RuntimeValue::Object(function) = to_string {
+                    if let Some(callable) = function.get_callable(thread) {
+                        return thread
+                            .call_from_native(obj.clone(), callable.clone(), 0, false)?
+                            .to_string(thread);
                     }
                 }
+
+                let error = thread.realm.errors.new_type_error(
+                    &mut thread.realm.objects,
+                    "Cannot convert object to primitive value",
+                );
+
+                return Err(error.into());
             }
             value => todo!("Unsupported types {:?}", value),
         };

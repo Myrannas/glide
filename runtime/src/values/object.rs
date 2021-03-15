@@ -1,9 +1,8 @@
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Pointer, Write};
 use std::hash::{BuildHasher, Hasher};
-use std::rc::Rc;
 
 use colored::Colorize;
 
@@ -27,6 +26,20 @@ pub struct JsObject<'a> {
     pub(crate) callable: Option<FunctionReference<'a>>,
     pub(crate) construct: Option<FunctionReference<'a>>,
 }
+
+// enum Properties<'a> {
+//     Small([(JsPrimitiveString, Property<'a>); 5]),
+//     Large(HashMap<JsPrimitiveString, Property<'a>, PropertyHasher>),
+// }
+
+// impl Properties {
+//     fn iter(&self) -> impl Iterator {
+//         match self {
+//             Properties::Small(s) => s.iter(),
+//             Properties::Large(l) => l.iter(),
+//         }
+//     }
+// }
 
 impl<'a> Debug for JsObject<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -91,44 +104,6 @@ pub trait FunctionObject<'a> {
 
 struct ConstructorFunctionObject<'a> {
     object: JsObject<'a>,
-}
-
-impl<'a> FunctionObject<'a> for ConstructorFunctionObject<'a> {
-    fn name(&self) -> Option<&JsPrimitiveString> {
-        self.object.name.as_ref()
-    }
-
-    fn construct<'b>(&'b self) -> Option<&FunctionReference<'a>> {
-        self.object.construct.as_ref()
-    }
-
-    /*
-
-    https://262.ecma-international.org/11.0/#sec-ecmascript-function-objects-call-thisargument-argumentslist
-
-        Assert: F is an ECMAScript function object.
-        If F.[[IsClassConstructor]] is true, throw a TypeError exception.
-        Let callerContext be the running execution context.
-        Let calleeContext be PrepareForOrdinaryCall(F, undefined).
-        Assert: calleeContext is now the running execution context.
-        Perform OrdinaryCallBindThis(F, calleeContext, thisArgument).
-        Let result be OrdinaryCallEvaluateBody(F, argumentsList).
-        Remove calleeContext from the execution context stack and restore callerContext as the running execution context.
-        If result.[[Type]] is return, return NormalCompletion(result.[[Value]]).
-        ReturnIfAbrupt(result).
-        Return NormalCompletion(undefined).
-    */
-    fn callable<'b>(&'b self) -> Option<&FunctionReference<'a>> {
-        self.object.callable.as_ref()
-    }
-
-    fn prototype<'b>(&'b self) -> Option<ObjectPointer<'a>> {
-        self.object.prototype
-    }
-
-    fn is_class_constructor(&self) -> bool {
-        self.construct().is_some() && self.callable().is_none()
-    }
 }
 
 pub(crate) struct JsObjectBuilder<'a> {
@@ -217,20 +192,15 @@ impl<'a> JsObject<'a> {
         })
     }
 
-    pub fn new() -> Self {
-        Default::default()
+    pub(crate) fn get_indexed_property(&self, key: usize) -> RuntimeValue<'a> {
+        self.indexed_properties
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    pub fn function(&self) -> Option<impl FunctionObject<'a>> {
-        let is_callable = self.is_function();
-
-        if is_callable {
-            Some(ConstructorFunctionObject {
-                object: self.clone(),
-            })
-        } else {
-            None
-        }
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub(crate) fn is_function(&self) -> bool {

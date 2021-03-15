@@ -9,7 +9,7 @@ pub struct Renderer<'a, 'b, 'c, 'd> {
     current_depth: usize,
     pub(crate) representation: Representation,
     pub(crate) formatter: &'b mut Formatter<'a>,
-    thread: Option<&'d JsThread<'c>>,
+    pub(crate) thread: Option<&'d JsThread<'c>>,
 }
 
 impl<'a, 'b, 'c, 'd> Renderer<'a, 'b, 'c, 'd> {

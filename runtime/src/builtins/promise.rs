@@ -14,33 +14,12 @@ pub(crate) struct JsPromise<'a, 'b> {
 impl<'a, 'b> JsPromise<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, resolver: Option<RuntimeValue<'a>>) -> JsResult<'a, ()> {
-        let resolver_function = resolver.unwrap_or_default();
-
-        let resolver_function = match resolver_function {
-            RuntimeValue::Object(obj) if obj.as_function(self.thread).is_some() => {
-                obj.as_function(self.thread).unwrap()
-            }
-            other => {
-                return Err(self
-                    .thread
-                    .realm
-                    .errors
-                    .new_type_error(
-                        &mut self.thread.realm.objects,
-                        format!("Promise resolver {} is not a function", other),
-                    )
-                    .into())
-            }
-        };
-
         let resolve = JsObject::builder()
             .with_callable(BuiltIn {
                 context: None,
                 op: |_, _, _, _| Ok(None),
             })
             .build(self.thread);
-
-        self.thread.push_stack(resolve);
 
         let reject = JsObject::builder()
             .with_callable(BuiltIn {
@@ -49,14 +28,8 @@ impl<'a, 'b> JsPromise<'a, 'b> {
             })
             .build(self.thread);
 
-        self.thread.push_stack(reject);
-
-        self.thread.call_from_native(
-            self.thread.realm.global_this.clone(),
-            resolver_function.callable().clone().unwrap().clone(),
-            2,
-            false,
-        )?;
+        self.object
+            .call(self.thread, &[resolve.into(), reject.into()])?;
 
         Ok(())
     }

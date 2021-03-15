@@ -2,7 +2,7 @@ use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, string};
 use crate::object_pool::{JsObjectPool, ObjectPointer, ObjectPool};
 use crate::values::function::FunctionReference;
-use crate::values::object::JsObject;
+use crate::values::object::{JsObject, Property};
 use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
 use crate::BuiltIn;
@@ -113,7 +113,8 @@ impl<'a> Primitives<'a> {
         let object_prototype = objects::JsObjectBase::bind_thread(object_pool, None);
 
         let string_prototype = string::JsString::bind_thread(object_pool, Some(&object_prototype));
-        let number_prototype = number::JsNumber::bind_thread(object_pool, Some(&object_prototype));
+        let number_prototype: ObjectPointer<'a> =
+            number::JsNumber::bind_thread(object_pool, Some(&object_prototype));
         let array_prototype = array::JsArray::bind_thread(object_pool, Some(&object_prototype));
 
         let function_prototype =
@@ -130,17 +131,20 @@ impl<'a> Primitives<'a> {
             arguments: array_prototype.clone(),
         };
 
+        let parse_int = number_prototype
+            .get_property(object_pool, &"parseInt".into())
+            .and_then(|p| match p {
+                Property::DataDescriptor { value, .. } => Some(value),
+                _ => None,
+            });
+
         global_this.define_value("String", string_prototype);
         global_this.define_value("Array", array_prototype);
         global_this.define_value("Object", object_prototype);
         global_this.define_value("Function", function_prototype);
         global_this.define_value("Promise", promise_prototype);
-        global_this.define_value("Number", number_prototype.clone());
-        // todo: FIXME
-        // global_this.define_value(
-        //     "parseInt",
-        //     number_prototype.get_va(object_pool, &"parseInt".into()).unwrap(),
-        // );
+        global_this.define_value("Number", number_prototype);
+        global_this.define_value("parseInt", parse_int);
 
         primitives
     }

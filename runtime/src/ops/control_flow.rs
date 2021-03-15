@@ -1,4 +1,4 @@
-use crate::object_pool::ObjectPool;
+use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::object::FunctionObject;
@@ -9,23 +9,17 @@ use instruction_set::Constant;
 fn get_callable<'a>(
     thread: &mut JsThread<'a>,
     value: RuntimeValue<'a>,
-) -> JsResult<'a, impl FunctionObject<'a>> {
+) -> JsResult<'a, ObjectPointer<'a>> {
     // 1. Assert: F is an ECMAScript function object.
-    let fn_object = match &value {
-        RuntimeValue::Object(obj) => obj.as_function(thread),
-        _ => None,
-    };
-
-    if let Some(fn_object) = fn_object {
-        Ok(fn_object)
-    } else {
-        Err(ExecutionError::Thrown(
+    match &value {
+        RuntimeValue::Object(obj) if obj.is_callable(thread) => Ok(*obj),
+        _ => Err(ExecutionError::Thrown(
             thread.realm.errors.new_type_error(
                 &mut thread.realm.objects,
                 format!("{} is not a function", value),
             ),
             None,
-        ))
+        )),
     }
 }
 
@@ -49,8 +43,8 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
     let fn_object = catch!(thread, get_callable(thread, fn_object));
 
     // 2. If F.[[IsClassConstructor]] is true, throw a TypeError exception.
-    if fn_object.is_class_constructor() {
-        let message = if let Some(name) = fn_object.name().as_ref() {
+    if fn_object.is_class_constructor(thread) {
+        let message = if let Some(name) = fn_object.get_name(thread) {
             format!("Class constructor {} cannot be invoked without 'new'", name)
         } else {
             "Class constructors cannot be invoked without 'new'".to_owned()
@@ -63,8 +57,8 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
         return thread.throw(error);
     }
 
-    let callable = fn_object.callable();
-    match callable.as_ref().unwrap() {
+    let callable = fn_object.get_callable(thread).unwrap().clone();
+    match callable {
         FunctionReference::Custom(function) => {
             thread.call(target, function.clone(), args, false, false);
         }
@@ -88,21 +82,21 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let resolved_value = resolve!(fn_value.clone(), thread);
     let fn_object = catch!(thread, get_callable(thread, resolved_value.clone()));
 
-    let callable = if let Some(callable) = fn_object.construct().as_ref() {
+    let callable = if let Some(callable) = fn_object.get_construct(thread) {
         callable.clone()
     } else {
         // `object.is_callable()` asserts that there must be a callable
-        fn_object.callable().as_ref().unwrap().clone()
+        fn_object.get_callable(thread).unwrap().clone()
     };
 
     let mut target = JsObject::new();
 
-    if let Some(name) = fn_object.name() {
+    if let Some(name) = fn_object.get_name(thread) {
         target.set_name(name.clone());
     }
 
-    if let Some(prototype) = fn_object.prototype().as_ref() {
-        target.set_prototype(prototype.clone());
+    if let Some(prototype) = fn_object.get_prototype(thread) {
+        target.set_prototype(prototype);
     }
 
     target.set(&"constructor".into(), resolved_value);
@@ -111,12 +105,12 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
 
     match callable {
         FunctionReference::Custom(function) => {
-            thread.call(target_pointer, function.clone(), args, true, false);
+            thread.call(target_pointer, function, args, true, false);
         }
         FunctionReference::BuiltIn(function) => {
             catch!(
                 thread,
-                function.apply_return(args, thread, Some(target_pointer.clone()))
+                function.apply_return(args, thread, Some(target_pointer))
             );
 
             thread.push_stack(target_pointer);

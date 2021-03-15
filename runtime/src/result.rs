@@ -1,4 +1,6 @@
+use crate::object_pool::ObjectPool;
 use crate::values::value::RuntimeValue;
+use crate::JsThread;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -92,6 +94,33 @@ impl<'a> ExecutionError<'a> {
     pub(crate) fn throw(runtime_value: RuntimeValue<'a>) -> Self {
         ExecutionError::Thrown(runtime_value, None)
     }
+
+    pub fn render(self, thread: &mut JsThread<'a>) -> anyhow::Error {
+        match self {
+            ExecutionError::SyntaxError(err) => {
+                anyhow::Error::msg(format!("SyntaxError: {}", err.message))
+            }
+            ExecutionError::InternalError(err) => {
+                let rendered_error = anyhow::Error::msg(format!("InternalError: {}", err.message));
+
+                if let Some(stack) = err.stack {
+                    rendered_error.context(stack)
+                } else {
+                    rendered_error
+                }
+            }
+            ExecutionError::Thrown(err, stack) => {
+                let rendered_error =
+                    anyhow::Error::msg(format!("{:?}", err.to_string(thread).unwrap()));
+
+                if let Some(stack) = stack {
+                    rendered_error.context(stack)
+                } else {
+                    rendered_error
+                }
+            }
+        }
+    }
 }
 
 impl<T> From<SyntaxError> for StaticJsResult<T> {
@@ -141,34 +170,6 @@ impl From<StaticExecutionError> for anyhow::Error {
             }
             StaticExecutionError::InternalError(err) => {
                 anyhow::Error::msg(format!("InternalError: {}", err.message))
-            }
-        }
-    }
-}
-
-impl<'a> From<ExecutionError<'a>> for anyhow::Error {
-    fn from(err: ExecutionError) -> Self {
-        match err {
-            ExecutionError::SyntaxError(err) => {
-                anyhow::Error::msg(format!("SyntaxError: {}", err.message))
-            }
-            ExecutionError::InternalError(err) => {
-                let rendered_error = anyhow::Error::msg(format!("InternalError: {}", err.message));
-
-                if let Some(stack) = err.stack {
-                    rendered_error.context(stack)
-                } else {
-                    rendered_error
-                }
-            }
-            ExecutionError::Thrown(err, stack) => {
-                let rendered_error = anyhow::Error::msg(format!("{:?}", err));
-
-                if let Some(stack) = stack {
-                    rendered_error.context(stack)
-                } else {
-                    rendered_error
-                }
             }
         }
     }
