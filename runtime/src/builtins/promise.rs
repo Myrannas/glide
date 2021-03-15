@@ -1,12 +1,11 @@
-use crate::builtins::objects::JsObjectBase;
+use crate::object_pool::ObjectPointer;
 use crate::result::JsResult;
-use crate::values::function::CustomFunctionReference;
 use crate::values::object::FunctionObject;
 use crate::{BuiltIn, JsObject, JsThread, RuntimeValue};
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsPromise<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -18,38 +17,43 @@ impl<'a, 'b> JsPromise<'a, 'b> {
         let resolver_function = resolver.unwrap_or_default();
 
         let resolver_function = match resolver_function {
-            RuntimeValue::Object(obj) if obj.is_function() => obj.function().unwrap(),
+            RuntimeValue::Object(obj) if obj.as_function(self.thread).is_some() => {
+                obj.as_function(self.thread).unwrap()
+            }
             other => {
                 return Err(self
                     .thread
-                    .global_this
+                    .realm
                     .errors
-                    .new_type_error(format!("Promise resolver {} is not a function", other))
+                    .new_type_error(
+                        &mut self.thread.realm.objects,
+                        format!("Promise resolver {} is not a function", other),
+                    )
                     .into())
             }
         };
 
-        self.thread.push_stack(
-            JsObject::builder()
-                .with_callable(BuiltIn {
-                    context: None,
-                    op: |_, _, _, _| Ok(None),
-                })
-                .build(),
-        );
+        let resolve = JsObject::builder()
+            .with_callable(BuiltIn {
+                context: None,
+                op: |_, _, _, _| Ok(None),
+            })
+            .build(self.thread);
 
-        self.thread.push_stack(
-            JsObject::builder()
-                .with_callable(BuiltIn {
-                    context: None,
-                    op: |_, _, _, _| Ok(None),
-                })
-                .build(),
-        );
+        self.thread.push_stack(resolve);
+
+        let reject = JsObject::builder()
+            .with_callable(BuiltIn {
+                context: None,
+                op: |_, _, _, _| Ok(None),
+            })
+            .build(self.thread);
+
+        self.thread.push_stack(reject);
 
         self.thread.call_from_native(
-            self.thread.global_this.global_this.clone(),
-            resolver_function.callable().clone().unwrap(),
+            self.thread.realm.global_this.clone(),
+            resolver_function.callable().clone().unwrap().clone(),
             2,
             false,
         )?;

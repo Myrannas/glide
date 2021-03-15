@@ -1,5 +1,6 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, string};
+use crate::object_pool::{JsObjectPool, ObjectPointer, ObjectPool};
 use crate::values::function::FunctionReference;
 use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
@@ -7,11 +8,19 @@ use crate::values::value::RuntimeValue;
 use crate::BuiltIn;
 
 trait Helpers<'a> {
-    fn define_readonly_value<S: Into<String>, V: Into<RuntimeValue<'a>>>(&self, key: S, value: V);
+    fn define_readonly_value<S: Into<String>, V: Into<RuntimeValue<'a>>>(
+        &mut self,
+        key: S,
+        value: V,
+    );
 }
 
 impl<'a> Helpers<'a> for JsObject<'a> {
-    fn define_readonly_value<S: Into<String>, V: Into<RuntimeValue<'a>>>(&self, key: S, value: V) {
+    fn define_readonly_value<S: Into<String>, V: Into<RuntimeValue<'a>>>(
+        &mut self,
+        key: S,
+        value: V,
+    ) {
         self.define_property(
             key.into(),
             Some(FunctionReference::BuiltIn(BuiltIn {
@@ -27,27 +36,28 @@ impl<'a> Helpers<'a> for JsObject<'a> {
 
 #[derive(Clone)]
 pub(crate) struct Errors<'a> {
-    reference_error: JsObject<'a>,
-    syntax_error: JsObject<'a>,
-    type_error: JsObject<'a>,
-    error: JsObject<'a>,
+    reference_error: ObjectPointer<'a>,
+    syntax_error: ObjectPointer<'a>,
+    type_error: ObjectPointer<'a>,
+    error: ObjectPointer<'a>,
 }
 
 #[derive(Clone)]
 pub(crate) struct Primitives<'a> {
-    string: JsObject<'a>,
-    function: JsObject<'a>,
-    number: JsObject<'a>,
-    object: JsObject<'a>,
-    array: JsObject<'a>,
-    arguments: JsObject<'a>,
+    string: ObjectPointer<'a>,
+    function: ObjectPointer<'a>,
+    number: ObjectPointer<'a>,
+    object: ObjectPointer<'a>,
+    array: ObjectPointer<'a>,
+    arguments: ObjectPointer<'a>,
 }
 
 #[derive(Clone)]
 pub struct Realm<'a> {
-    pub(crate) global_this: JsObject<'a>,
+    pub(crate) global_this: ObjectPointer<'a>,
     pub(crate) errors: Errors<'a>,
     pub(crate) wrappers: Primitives<'a>,
+    pub(crate) objects: JsObjectPool<'a>,
 }
 
 impl<'a> Default for Realm<'a> {
@@ -58,18 +68,23 @@ impl<'a> Default for Realm<'a> {
 
 impl<'a> Realm<'a> {
     pub fn new() -> Realm<'a> {
-        let global_this = JsObject::new();
+        let mut global_this = JsObject::new();
+        let mut object_pool = JsObjectPool::new();
 
-        let primitives = Primitives::init(&global_this);
-        let errors = Errors::init(&global_this, &primitives.object);
+        let primitives = Primitives::init(&mut global_this, &mut object_pool);
+        let errors = Errors::init(&mut global_this, &primitives.object, &mut object_pool);
 
-        global_this.define_value("Math", super::builtins::math::JsMath::bind(None));
+        global_this.define_value(
+            "Math",
+            super::builtins::math::JsMath::bind_thread(&mut object_pool, None),
+        );
 
         #[cfg(feature = "eval")]
         {
             global_this.define_readonly_value(
                 "eval",
                 primitives.wrap_function(
+                    &mut object_pool,
                     "eval",
                     BuiltIn {
                         context: None,
@@ -82,23 +97,29 @@ impl<'a> Realm<'a> {
         global_this.define_readonly_value("NaN", f64::NAN);
 
         Realm {
-            global_this,
+            global_this: object_pool.allocate(global_this),
             wrappers: primitives,
             errors,
+            objects: object_pool,
         }
     }
 }
 
 impl<'a> Primitives<'a> {
-    fn init(global_this: &JsObject<'a>) -> Primitives<'a> {
-        let object_prototype: JsObject<'a> = objects::JsObjectBase::bind(None);
+    fn init(
+        global_this: &mut JsObject<'a>,
+        object_pool: &mut impl ObjectPool<'a>,
+    ) -> Primitives<'a> {
+        let object_prototype = objects::JsObjectBase::bind_thread(object_pool, None);
 
-        let string_prototype: JsObject<'a> = string::JsString::bind(Some(&object_prototype));
-        let number_prototype: JsObject<'a> = number::JsNumber::bind(Some(&object_prototype));
-        let array_prototype: JsObject<'a> = array::JsArray::bind(Some(&object_prototype));
+        let string_prototype = string::JsString::bind_thread(object_pool, Some(&object_prototype));
+        let number_prototype = number::JsNumber::bind_thread(object_pool, Some(&object_prototype));
+        let array_prototype = array::JsArray::bind_thread(object_pool, Some(&object_prototype));
 
-        let function_prototype = function::JsFunctionObject::bind(Some(&object_prototype));
-        let promise_prototype = promise::JsPromise::bind(Some(&object_prototype));
+        let function_prototype =
+            function::JsFunctionObject::bind_thread(object_pool, Some(&object_prototype));
+        let promise_prototype =
+            promise::JsPromise::bind_thread(object_pool, Some(&object_prototype));
 
         let primitives = Primitives {
             string: string_prototype.clone(),
@@ -115,100 +136,142 @@ impl<'a> Primitives<'a> {
         global_this.define_value("Function", function_prototype);
         global_this.define_value("Promise", promise_prototype);
         global_this.define_value("Number", number_prototype.clone());
-        global_this.define_value(
-            "parseInt",
-            number_prototype.read_simple_property("parseInt"),
-        );
+        // todo: FIXME
+        // global_this.define_value(
+        //     "parseInt",
+        //     number_prototype.get_va(object_pool, &"parseInt".into()).unwrap(),
+        // );
 
         primitives
     }
 
-    pub(crate) fn wrap_string(&self, string: JsPrimitiveString) -> JsObject<'a> {
+    pub(crate) fn wrap_string(
+        &self,
+        pool: &mut impl ObjectPool<'a>,
+        string: JsPrimitiveString,
+    ) -> ObjectPointer<'a> {
         JsObject::builder()
             .with_wrapped_value(RuntimeValue::String(string))
             .with_prototype(self.string.clone())
-            .build()
+            .build(pool)
     }
 
-    pub(crate) fn wrap_number(&self, number: f64) -> JsObject<'a> {
+    pub(crate) fn wrap_number(
+        &self,
+        pool: &mut impl ObjectPool<'a>,
+        number: f64,
+    ) -> ObjectPointer<'a> {
         JsObject::builder()
             .with_wrapped_value(RuntimeValue::Float(number))
             .with_prototype(self.number.clone())
-            .build()
+            .build(pool)
     }
 
-    pub(crate) fn wrap_boolean(&self, number: bool) -> JsObject<'a> {
+    pub(crate) fn wrap_boolean(
+        &self,
+        pool: &mut impl ObjectPool<'a>,
+        number: bool,
+    ) -> ObjectPointer<'a> {
         JsObject::builder()
             .with_wrapped_value(RuntimeValue::Boolean(number))
             .with_prototype(self.number.clone()) //todo: fixme
-            .build()
+            .build(pool)
     }
 
     pub(crate) fn wrap_function(
         &self,
+        thread: &mut impl ObjectPool<'a>,
         name: impl Into<String>,
         function: impl Into<FunctionReference<'a>>,
-    ) -> JsObject<'a> {
+    ) -> ObjectPointer<'a> {
         let function = function.into();
         JsObject::builder()
             .with_callable(function)
             .with_prototype(self.function.clone())
             .with_property("name", name.into())
-            .build()
+            .build(thread)
     }
 
-    pub(crate) fn wrap_arguments(&self, arguments: Vec<RuntimeValue<'a>>) -> JsObject<'a> {
+    pub(crate) fn wrap_arguments(
+        &self,
+        thread: &mut impl ObjectPool<'a>,
+        arguments: Vec<RuntimeValue<'a>>,
+    ) -> ObjectPointer<'a> {
         JsObject::builder()
             .with_indexed_properties(arguments)
             .with_prototype(self.arguments.clone())
-            .build()
+            .build(thread)
     }
 
-    pub fn new_object(&self) -> JsObject<'a> {
+    pub fn new_object(&self, thread: &mut impl ObjectPool<'a>) -> ObjectPointer<'a> {
         JsObject::builder()
             .with_prototype(self.object.clone())
-            .build()
+            .build(thread)
     }
 }
 
 impl<'a> Errors<'a> {
     #[allow(dead_code)]
-    pub(crate) fn new_reference_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
-        self.new_error(&self.reference_error, "ReferenceError", message.into())
-            .into()
+    pub(crate) fn new_reference_error(
+        &self,
+        pool: &mut impl ObjectPool<'a>,
+        message: impl Into<String>,
+    ) -> RuntimeValue<'a> {
+        self.new_error(
+            pool,
+            &self.reference_error,
+            "ReferenceError",
+            message.into(),
+        )
+        .into()
     }
 
     #[allow(dead_code)]
-    pub(crate) fn new_syntax_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
-        self.new_error(&self.syntax_error, "SyntaxError", message.into())
+    pub(crate) fn new_syntax_error(
+        &self,
+        pool: &mut impl ObjectPool<'a>,
+        message: impl Into<String>,
+    ) -> RuntimeValue<'a> {
+        self.new_error(pool, &self.syntax_error, "SyntaxError", message.into())
             .into()
     }
 
-    pub(crate) fn new_type_error(&self, message: impl Into<String>) -> RuntimeValue<'a> {
-        self.new_error(&self.type_error, "TypeError", message.into())
+    pub(crate) fn new_type_error(
+        &self,
+        pool: &mut impl ObjectPool<'a>,
+        message: impl Into<String>,
+    ) -> RuntimeValue<'a> {
+        self.new_error(pool, &self.type_error, "TypeError", message.into())
             .into()
     }
 
     fn new_error(
         &self,
-        prototype: &JsObject<'a>,
+        pool: &mut impl ObjectPool<'a>,
+        prototype: &ObjectPointer<'a>,
         name: &str,
         message: impl Into<String>,
-    ) -> JsObject<'a> {
+    ) -> ObjectPointer<'a> {
         JsObject::builder()
             .with_prototype(prototype.clone())
             .with_name(name)
             .with_property("message", message.into())
-            .build()
+            .build(pool)
     }
 
-    fn init(global_this: &JsObject<'a>, object_prototype: &JsObject<'a>) -> Errors<'a> {
-        let error = errors::JsError::bind(Some(object_prototype));
+    fn init(
+        global_this: &mut JsObject<'a>,
+        object_prototype: &ObjectPointer<'a>,
+        pool: &mut impl ObjectPool<'a>,
+    ) -> Errors<'a> {
+        let error = errors::JsError::bind_thread(pool, Some(object_prototype));
 
-        let syntax_error = JsObject::builder().with_prototype(error.clone()).build();
+        let syntax_error = JsObject::builder()
+            .with_prototype(error.clone())
+            .build(pool);
 
-        let type_error = errors::TypeError::bind(Some(&error));
-        let reference_error = errors::ReferenceError::bind(Some(&error));
+        let type_error = errors::TypeError::bind_thread(pool, Some(&error));
+        let reference_error = errors::ReferenceError::bind_thread(pool, Some(&error));
 
         global_this.define_readonly_value("ReferenceError", reference_error.clone());
         global_this.define_readonly_value("SyntaxError", syntax_error.clone());

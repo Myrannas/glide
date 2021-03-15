@@ -1,11 +1,12 @@
 use crate::result::JsResult;
 use crate::values::primitives::JsPrimitive;
 
+use crate::object_pool::ObjectPointer;
 use crate::{InternalError, JsObject, JsThread, RuntimeValue};
 use builtin::{callable, constructor, getter, named, prototype};
 
 pub(crate) struct JsString<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -13,7 +14,7 @@ pub(crate) struct JsString<'a, 'b> {
 impl<'a, 'b> JsString<'a, 'b> {
     #[getter]
     fn length(&mut self) -> JsResult<'a, f64> {
-        let str = match self.object.get_wrapped_value() {
+        let str = match self.object.unwrap(self.thread) {
             Some(RuntimeValue::String(str)) => str,
             _ => {
                 return InternalError::new_stackless(
@@ -42,7 +43,7 @@ impl<'a, 'b> JsString<'a, 'b> {
     ) -> JsResult<'a> {
         let string_value = self
             .object
-            .get_wrapped_value()
+            .unwrap(self.thread)
             .clone()
             .unwrap_or_default()
             .to_string(self.thread)?;
@@ -70,7 +71,7 @@ impl<'a, 'b> JsString<'a, 'b> {
             .unwrap_or_else(|| "".to_string().into())
             .to_string(self.thread)?;
 
-        self.object.wrap(JsPrimitive::String(str));
+        self.object.wrap(self.thread, JsPrimitive::String(str));
 
         Ok(())
     }

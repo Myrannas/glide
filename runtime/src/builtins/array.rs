@@ -1,9 +1,10 @@
+use crate::object_pool::ObjectPointer;
 use crate::result::JsResult;
 use crate::{JsObject, JsThread, RuntimeValue};
 use builtin::{constructor, getter, named, prototype, varargs};
 
 pub(crate) struct JsArray<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -13,7 +14,9 @@ impl<'a, 'b> JsArray<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, args: Vec<RuntimeValue<'a>>) {
         if args.len() > 1 {
-            self.object.set_indexed_properties(args)
+            self.object
+                .get_mut_object(self.thread)
+                .set_indexed_properties(args)
         }
     }
 
@@ -27,11 +30,11 @@ impl<'a, 'b> JsArray<'a, 'b> {
     }
 
     fn pop(&mut self) -> RuntimeValue<'a> {
-        if let Some(properties) = self.object.get_indexed_properties().as_mut() {
-            properties.pop().unwrap_or_default()
-        } else {
-            RuntimeValue::Undefined
-        }
+        self.object
+            .get_mut_object(self.thread)
+            .get_mut_indexed_properties()
+            .pop()
+            .unwrap_or_default()
     }
 
     #[named("isArray")]
@@ -42,20 +45,17 @@ impl<'a, 'b> JsArray<'a, 'b> {
     #[named("push")]
     #[varargs]
     fn push(&mut self, value: Vec<RuntimeValue<'a>>) {
-        let maybe_indexed_properties = &mut self.object.get_indexed_properties();
-
-        let indexed_properties =
-            maybe_indexed_properties.get_or_insert(Vec::with_capacity(value.len()));
-
-        indexed_properties.extend(value);
+        self.object
+            .get_mut_object(self.thread)
+            .get_mut_indexed_properties()
+            .extend(value);
     }
 
     #[getter]
     fn length(&mut self) -> f64 {
         self.object
+            .get_object(self.thread)
             .get_indexed_properties()
-            .as_ref()
-            .map(|i| i.len())
-            .unwrap_or(0) as f64
+            .len() as f64
     }
 }

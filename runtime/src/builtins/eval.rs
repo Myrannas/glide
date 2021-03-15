@@ -1,3 +1,4 @@
+use crate::object_pool::ObjectPointer;
 use crate::result::{JsResult, SyntaxError};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::{ExecutionError, InternalError, JsFunction, JsObject, JsThread, RuntimeValue};
@@ -22,7 +23,7 @@ impl<'a> From<CompilerError> for ExecutionError<'a> {
 pub(crate) fn eval<'a>(
     args: usize,
     frame: &mut JsThread<'a>,
-    _value: JsObject<'a>,
+    _value: ObjectPointer<'a>,
     _context: Option<&RuntimeValue<'a>>,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     let argument = frame.read_arg(args, 0);

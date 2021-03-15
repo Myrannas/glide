@@ -8,6 +8,7 @@ use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
 use crate::vm::JsThread;
 
+use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::Realm;
 use core::cmp::PartialEq;
 use core::convert::From;
@@ -55,14 +56,19 @@ impl<'a> From<BuiltIn<'a>> for FunctionReference<'a> {
 }
 
 impl<'a> BuiltIn<'a> {
-    pub fn apply(&self, arguments: usize, thread: &mut JsThread<'a>, target: Option<JsObject<'a>>) {
+    pub fn apply(
+        &self,
+        arguments: usize,
+        thread: &mut JsThread<'a>,
+        target: Option<ObjectPointer<'a>>,
+    ) {
         let context = match &self.context {
             Some(value) => Some(value.as_ref()),
             None => None,
         };
 
         let start_len = thread.stack.len() - arguments;
-        let target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
+        let target = target.unwrap_or_else(|| thread.realm.global_this.clone());
         let result = (self.op)(arguments, thread, target, context);
         thread.stack.truncate(start_len);
 
@@ -81,7 +87,7 @@ impl<'a> BuiltIn<'a> {
         &self,
         arguments: usize,
         thread: &mut JsThread<'a>,
-        target: Option<JsObject<'a>>,
+        target: Option<ObjectPointer<'a>>,
     ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
         let context = match &self.context {
             Some(value) => Some(value.as_ref()),
@@ -89,7 +95,7 @@ impl<'a> BuiltIn<'a> {
         };
 
         let start_len = thread.stack.len() - arguments;
-        let mut target = target.unwrap_or_else(|| thread.global_this.global_this.clone());
+        let mut target = target.unwrap_or_else(|| thread.realm.global_this.clone());
         let result = (self.op)(arguments, thread, target, context);
         thread.stack.truncate(start_len);
         result
@@ -99,7 +105,7 @@ impl<'a> BuiltIn<'a> {
 pub type BuiltinFn<'a> = fn(
     arguments: usize,
     frame: &mut JsThread<'a>,
-    target: JsObject<'a>,
+    target: ObjectPointer<'a>,
     context: Option<&RuntimeValue<'a>>,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>>;
 
@@ -133,22 +139,27 @@ pub struct JsClass {
 pub(crate) enum Prototype<'a> {
     Object,
     Null,
-    Custom(JsObject<'a>),
+    Custom(ObjectPointer<'a>),
 }
 
 impl JsClass {
     pub(crate) fn load<'a>(
         &self,
         context: &JsContext<'a>,
-        realm: &Realm<'a>,
+        thread: &mut JsThread<'a>,
         prototype: Prototype<'a>,
     ) -> JsResult<'a, RuntimeValue<'a>> {
         let mut object_builder = JsObject::builder();
 
         object_builder = match &prototype {
-            Prototype::Object => {
-                object_builder.with_prototype(realm.wrappers.new_object().prototype().unwrap())
-            }
+            Prototype::Object => object_builder.with_prototype(
+                thread
+                    .realm
+                    .wrappers
+                    .new_object(&mut thread.realm.objects)
+                    .get_prototype(thread)
+                    .unwrap(),
+            ),
             Prototype::Custom(obj) => object_builder.with_prototype(obj.clone()),
             Prototype::Null => object_builder,
         };
@@ -160,10 +171,10 @@ impl JsClass {
                     parent_context: context.clone(),
                 }));
         } else if let Prototype::Custom(obj) = prototype {
-            let callable = obj.function().and_then(|f| {
-                if let Some(construct) = f.construct().as_ref() {
+            let callable = obj.as_function(thread).and_then(|f| {
+                if let Some(construct) = f.construct() {
                     Some(construct.clone())
-                } else if let Some(callable) = f.callable().as_ref() {
+                } else if let Some(callable) = f.callable() {
                     Some(callable.clone())
                 } else {
                     None
@@ -171,14 +182,15 @@ impl JsClass {
             });
 
             if let Some(function) = callable {
-                object_builder = object_builder.with_construct(function);
+                object_builder = object_builder.with_construct(function.clone());
             } else {
-                return Err(realm
+                return Err(thread
+                    .realm
                     .errors
-                    .new_type_error(format!(
-                        "Class extends value {:?} is not a constructor or null",
-                        obj
-                    ))
+                    .new_type_error(
+                        &mut thread.realm.objects,
+                        format!("Class extends value {:?} is not a constructor or null", obj),
+                    )
                     .into());
             }
         }
@@ -188,7 +200,8 @@ impl JsClass {
         for method in self.methods.iter() {
             object_builder = object_builder.with_property(
                 method.name(),
-                realm.wrappers.wrap_function(
+                thread.realm.wrappers.wrap_function(
+                    &mut thread.realm.objects,
                     method.name(),
                     FunctionReference::Custom(CustomFunctionReference {
                         function: method.clone(),
@@ -198,7 +211,7 @@ impl JsClass {
             );
         }
 
-        Ok(object_builder.build().into())
+        Ok(object_builder.build(&mut thread.realm.objects).into())
     }
 }
 
@@ -327,6 +340,7 @@ impl<'a> JsFunction {
 
     pub(crate) fn init(
         &self,
+        pool: &mut impl ObjectPool<'a>,
         primitives: &Primitives<'a>,
         parent_context: &JsContext<'a>,
     ) -> Vec<RuntimeValue<'a>> {
@@ -344,6 +358,7 @@ impl<'a> JsFunction {
 
                     primitives
                         .wrap_function(
+                            pool,
                             function.name(),
                             FunctionReference::Custom(function_reference),
                         )

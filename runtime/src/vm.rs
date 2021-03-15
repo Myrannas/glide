@@ -1,4 +1,5 @@
 use crate::context::JsContext;
+use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::ops::Operand;
 use crate::primordials::Realm;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
@@ -79,10 +80,24 @@ pub struct JsThread<'a> {
     call_stack: Vec<StackFrame<'a>>,
     catch_stack: Vec<CatchFrame>,
     current_frame: StackFrame<'a>,
-    pub(crate) global_this: Realm<'a>,
+    pub(crate) realm: Realm<'a>,
     error: Option<ExecutionError<'a>>,
     cost_limit: Option<usize>,
     call_stack_limit: usize,
+}
+
+impl<'a> ObjectPool<'a> for JsThread<'a> {
+    fn get(&self, index: &ObjectPointer<'a>) -> &JsObject<'a> {
+        self.realm.objects.get(index)
+    }
+
+    fn get_mut(&mut self, index: &ObjectPointer<'a>) -> &mut JsObject<'a> {
+        self.realm.objects.get_mut(index)
+    }
+
+    fn allocate(&mut self, object: JsObject<'a>) -> ObjectPointer<'a> {
+        self.realm.objects.allocate(object)
+    }
 }
 
 impl<'a> JsThread<'a> {
@@ -102,10 +117,11 @@ impl<'a> JsThread<'a> {
         }
     }
 
-    pub fn new(function: JsFunction, global_this: Realm<'a>) -> JsThread<'a> {
+    pub fn new(function: JsFunction, mut global_this: Realm<'a>) -> JsThread<'a> {
         let root = JsContext::root(&global_this);
 
         let context = JsContext::with_parent(
+            &mut global_this.objects,
             root,
             global_this.global_this.clone(),
             &function,
@@ -123,7 +139,7 @@ impl<'a> JsThread<'a> {
                 context,
                 is_new: false,
             },
-            global_this,
+            realm: global_this,
             error: None,
             cost_limit: None,
             call_stack_limit: 1024,
@@ -315,7 +331,7 @@ impl<'a> JsThread<'a> {
 
     pub(crate) fn call(
         &mut self,
-        target: JsObject<'a>,
+        target: ObjectPointer<'a>,
         CustomFunctionReference {
             function,
             parent_context: context,
@@ -338,10 +354,11 @@ impl<'a> JsThread<'a> {
         }
 
         let new_context = JsContext::with_parent(
+            &mut self.realm.objects,
             context.clone(),
             target.clone(),
             &function,
-            &self.global_this.wrappers,
+            &self.realm.wrappers,
         );
 
         let stack_length = self.stack.len();
@@ -353,10 +370,7 @@ impl<'a> JsThread<'a> {
 
         new_context.write(
             0,
-            make_arguments(
-                arguments.map(|_| self.stack.pop().unwrap()).collect(),
-                &self.global_this,
-            ),
+            make_arguments(arguments.map(|_| self.stack.pop().unwrap()).collect(), self),
         );
 
         self.current_frame.stack_size = self.stack.len();
@@ -402,7 +416,7 @@ impl<'a> JsThread<'a> {
 
     pub fn call_from_native(
         &mut self,
-        target: JsObject<'a>,
+        target: ObjectPointer<'a>,
         function_reference: impl Into<FunctionReference<'a>>,
         args: usize,
         new: bool,
@@ -423,6 +437,10 @@ impl<'a> JsThread<'a> {
                 result
             }
         }
+    }
+
+    pub fn finalize(self) -> Realm<'a> {
+        self.realm
     }
 }
 

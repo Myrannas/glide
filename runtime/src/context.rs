@@ -1,4 +1,5 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
+use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::primordials::Primitives;
 use crate::{JsFunction, JsObject, Realm, RuntimeValue};
 use std::cell::{Ref, RefCell};
@@ -20,7 +21,7 @@ impl<'a, 'b> Debug for JsContext<'a> {
 struct JsContextInner<'a> {
     locals: Vec<RuntimeValue<'a>>,
     parent: Option<JsContext<'a>>,
-    this: JsObject<'a>,
+    this: ObjectPointer<'a>,
 }
 
 #[derive(Clone)]
@@ -70,7 +71,7 @@ struct ContextIter {
 }
 
 impl<'a, 'b> JsContext<'a> {
-    pub(crate) fn this(&self) -> Ref<JsObject<'a>> {
+    pub(crate) fn this(&self) -> Ref<ObjectPointer<'a>> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
@@ -85,14 +86,15 @@ impl<'a, 'b> JsContext<'a> {
     }
 
     pub(crate) fn with_parent<'c>(
+        pool: &mut impl ObjectPool<'a>,
         parent: JsContext<'a>,
-        this: JsObject<'a>,
+        this: ObjectPointer<'a>,
         function: &'c JsFunction,
         primitives: &Primitives<'a>,
     ) -> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
-                locals: function.init(primitives, &parent),
+                locals: function.init(pool, primitives, &parent),
                 parent: Some(parent),
                 this,
             })),

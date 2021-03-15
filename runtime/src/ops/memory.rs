@@ -10,21 +10,20 @@ pub(crate) fn set(thread: &mut JsThread) {
     let target: RuntimeValue = pop!(thread, "Need a target");
 
     if target == RuntimeValue::Undefined {
-        return thread.throw(
-            thread
-                .global_this
-                .errors
-                .new_type_error(format!("Cannot set property {} of undefined", attribute)),
+        let error = thread.realm.errors.new_type_error(
+            &mut thread.realm.objects,
+            format!("Cannot set property {} of undefined", attribute),
         );
+        return thread.throw(error);
     }
 
     let target = target.to_object(thread);
 
     if let RuntimeValue::String(str) = attribute {
-        target.set(str, value);
+        target.set(thread, &str, value);
         // println!("{:?} {:?}", target, obj);
     } else if let RuntimeValue::Float(number) = attribute {
-        target.set_indexed(number as usize, value);
+        target.set_indexed(thread, number as usize, value);
     } else {
         thread.throw(InternalError::new_stackless(format!(
             "Cannot set attribute: {:?}",
@@ -40,24 +39,23 @@ pub(crate) fn get(thread: &mut JsThread) {
     let target: RuntimeValue = pop!(thread);
 
     if target == RuntimeValue::Undefined {
-        return thread.throw(
-            thread
-                .global_this
-                .errors
-                .new_type_error(format!("Cannot get property {} of undefined", attribute)),
+        let error = thread.realm.errors.new_type_error(
+            &mut thread.realm.objects,
+            format!("Cannot get property {} of undefined", attribute),
         );
+        return thread.throw(error);
     }
 
     let target = target.to_object(thread);
 
     let reference = match attribute {
         RuntimeValue::Float(index) => RuntimeValue::Reference(Reference::Number {
-            base: Box::new(target),
+            base: target,
             name: index as usize,
             strict: true,
         }),
         value => RuntimeValue::Reference(Reference::String {
-            base: Box::new(target),
+            base: target,
             name: catch!(thread, value.to_string(thread)),
             strict: true,
         }),
@@ -70,13 +68,16 @@ pub(crate) fn get(thread: &mut JsThread) {
 pub(crate) fn set_named(thread: &mut JsThread, atom: usize) {
     let value: RuntimeValue = pop!(thread);
     let target: RuntimeValue = pop!(thread, "Need a target");
+
+    // println!("Get named, target {:?}.{}", target, atom);
+
     let target = target.to_object(thread);
 
     let atom = thread.current_function().get_atom(atom);
 
     // println!("Set named, target {:?}.{} = {:?}", target, atom, value);
 
-    target.set(atom, value);
+    target.set(thread, &atom, value);
 
     thread.step();
 }
@@ -108,15 +109,21 @@ pub(crate) fn set_capture(thread: &mut JsThread, offset: usize, local: usize) {
 
 pub(crate) fn get_function(thread: &mut JsThread, function_id: usize) {
     let function = thread.current_function();
+    let name = function.name().to_string();
     let child_function = function.child_function(function_id).clone();
 
-    let value = thread.global_this.wrappers.wrap_function(
-        function.name(),
-        FunctionReference::Custom(CustomFunctionReference {
-            function: child_function,
-            parent_context: thread.current_context().clone(),
-        }),
-    );
+    let function_reference = FunctionReference::Custom(CustomFunctionReference {
+        function: child_function,
+        parent_context: thread.current_context().clone(),
+    });
+
+    let value =
+        thread
+            .realm
+            .wrappers
+            .wrap_function(&mut thread.realm.objects, name, function_reference);
+
+    // println!("{:?}", value);
 
     thread.push_stack(value);
     thread.step();
@@ -134,10 +141,12 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
             RuntimeValue::Object(obj) => Prototype::Custom(obj),
             RuntimeValue::Null => Prototype::Null,
             value => {
-                return thread.throw(thread.global_this.errors.new_type_error(format!(
-                    "Class extends value {} is not a constructor or null",
-                    value,
-                )))
+                let error = thread.realm.errors.new_type_error(
+                    &mut thread.realm.objects,
+                    format!("Class extends value {} is not a constructor or null", value,),
+                );
+
+                return thread.throw(error);
             }
         }
     } else {
@@ -146,7 +155,7 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
 
     let class = catch!(
         thread,
-        child_class.load(thread.current_context(), &thread.global_this, prototype)
+        child_class.load(&thread.current_context().clone(), thread, prototype)
     );
 
     thread.push_stack(class);
@@ -158,20 +167,20 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
     let target: RuntimeValue = pop!(thread, "Need a target");
 
     if target == RuntimeValue::Undefined {
-        return thread.throw(
-            thread
-                .global_this
-                .errors
-                .new_type_error(format!("Cannot get property {} of undefined", atom)),
+        let error = thread.realm.errors.new_type_error(
+            &mut thread.realm.objects,
+            format!("Cannot get property {} of undefined", atom),
         );
-    }
 
-    let target = target.to_object(thread);
+        return thread.throw(error);
+    }
 
     // println!("Get named, target {:?}.{}", target, atom);
 
+    let target = target.to_object(thread);
+
     thread.push_stack(RuntimeValue::Reference(Reference::String {
-        base: Box::new(target),
+        base: target,
         name: atom,
         strict: true,
     }));
@@ -187,9 +196,9 @@ pub(crate) fn load_constant(thread: &mut JsThread, constant: &Constant) {
 
 pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environmental) {
     let value = match environmental {
-        Environmental::GlobalThis => thread.global_this.global_this.clone(),
+        Environmental::GlobalThis => thread.realm.global_this.clone(),
         Environmental::This => thread.current_context().this().clone(),
-        Environmental::NewObject => thread.global_this.wrappers.new_object(),
+        Environmental::NewObject => thread.realm.wrappers.new_object(&mut thread.realm.objects),
     };
 
     thread.push_stack(value);

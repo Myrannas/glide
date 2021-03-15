@@ -1,8 +1,7 @@
-#![forbid(unsafe_code)]
-
 mod builtins;
 mod context;
 mod debugging;
+mod object_pool;
 mod ops;
 mod primordials;
 mod result;

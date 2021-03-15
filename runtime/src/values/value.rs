@@ -3,22 +3,22 @@ use std::fmt::{Debug, Display, Formatter};
 use super::object::{FunctionObject, JsObject};
 use super::string::JsPrimitiveString;
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
+use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::result::ExecutionError;
 use crate::result::JsResult;
 use crate::vm::JsThread;
 use crate::{InternalError, Realm};
 use instruction_set::Constant;
-use std::ops::Index;
 
 #[derive(Clone, Debug)]
 pub enum Reference<'a> {
     String {
-        base: Box<JsObject<'a>>,
+        base: ObjectPointer<'a>,
         name: JsPrimitiveString,
         strict: bool,
     },
     Number {
-        base: Box<JsObject<'a>>,
+        base: ObjectPointer<'a>,
         name: usize,
         strict: bool,
     },
@@ -29,7 +29,7 @@ impl<'a> DebugRepresentation for Reference<'a> {
         match (&render.representation, self) {
             (Representation::Debug, Reference::String { base, name, strict }) => {
                 render.start_internal("REF")?;
-                JsObject::render(&base, render)?;
+                ObjectPointer::render(base, render)?;
 
                 render.formatter.write_fmt(format_args!(
                     "{}{}",
@@ -42,7 +42,7 @@ impl<'a> DebugRepresentation for Reference<'a> {
             }
             (Representation::Debug, Reference::Number { base, name, strict }) => {
                 render.start_internal("REF")?;
-                JsObject::render(&base, render)?;
+                ObjectPointer::render(base, render)?;
 
                 render.formatter.write_fmt(format_args!(
                     "{}{}",
@@ -99,7 +99,7 @@ pub enum RuntimeValue<'a> {
     Boolean(bool),
     Float(f64),
     String(JsPrimitiveString),
-    Object(JsObject<'a>),
+    Object(ObjectPointer<'a>),
     Reference(Reference<'a>),
     Internal(InternalValue),
 }
@@ -144,7 +144,7 @@ impl<'a> RuntimeValue<'a> {
             (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => b1 == b2,
             (RuntimeValue::String(s1), RuntimeValue::Object(b1)) => {
                 let string_value1: JsPrimitiveString =
-                    b1.get_wrapped_value().unwrap().to_string(frame).unwrap();
+                    b1.unwrap(frame).unwrap().to_string(frame).unwrap();
 
                 s1.eq(&string_value1)
             }
@@ -153,7 +153,7 @@ impl<'a> RuntimeValue<'a> {
         }
     }
 
-    pub(crate) fn as_object(&self) -> JsResult<'a, &JsObject<'a>> {
+    pub(crate) fn as_object(&self) -> JsResult<'a, &ObjectPointer<'a>> {
         match self {
             RuntimeValue::Object(obj) => Ok(obj),
             _ => InternalError::new_stackless("Unable to use as object").into(),
@@ -176,9 +176,11 @@ impl<'a> RuntimeValue<'a> {
             RuntimeValue::Internal(InternalValue::Local(index)) => {
                 Ok(thread.current_context().read(index))
             }
-            RuntimeValue::Reference(Reference::String { base, name, .. }) => base.get(name, thread),
+            RuntimeValue::Reference(Reference::String { base, name, .. }) => {
+                base.get_value(thread, &name)
+            }
             RuntimeValue::Reference(Reference::Number { base, name, .. }) => {
-                base.get_indexed(name, thread)
+                base.get_indexed(thread, name)
             }
             other => Ok(other),
         }?;
@@ -197,11 +199,11 @@ impl<'a> RuntimeValue<'a> {
                 Ok(())
             }
             RuntimeValue::Reference(Reference::String { base, name, .. }) => {
-                base.set(name, value);
+                base.set(frame, &name, value.into());
                 Ok(())
             }
             RuntimeValue::Reference(Reference::Number { base, name, .. }) => {
-                base.set_indexed(name, value);
+                base.set_indexed(frame, name, value.into());
                 Ok(())
             }
             value => InternalError::new_stackless(format!("Unable to update - {:?}", value)).into(),
@@ -216,29 +218,25 @@ impl<'a> RuntimeValue<'a> {
             RuntimeValue::Undefined => "undefined".into(),
             RuntimeValue::Null => "null".into(),
             RuntimeValue::Object(obj) => {
-                let to_string = obj.get("toString".into(), thread)?;
+                let to_string = obj.get_value(thread, &"toString".into())?;
 
                 // println!("{:?}\n{:?}", obj, to_string);
 
                 match to_string {
-                    RuntimeValue::Object(function) if function.function().is_some() => {
-                        let function = function.function().unwrap();
+                    RuntimeValue::Object(function) if function.as_function(thread).is_some() => {
+                        let function = function.as_function(thread).unwrap();
                         let callable = function.callable();
+                        let function_reference = callable.unwrap().clone();
                         thread
-                            .call_from_native(
-                                obj.clone(),
-                                callable.as_ref().unwrap().clone(),
-                                0,
-                                false,
-                            )?
+                            .call_from_native(obj.clone(), function_reference, 0, false)?
                             .to_string(thread)?
                     }
                     RuntimeValue::Undefined => "[Object object]".to_owned().into(),
                     _ => {
-                        let error = thread
-                            .global_this
-                            .errors
-                            .new_type_error("Cannot convert object to primitive value");
+                        let error = thread.realm.errors.new_type_error(
+                            &mut thread.realm.objects,
+                            "Cannot convert object to primitive value",
+                        );
 
                         return Err(error.into());
                     }
@@ -250,12 +248,21 @@ impl<'a> RuntimeValue<'a> {
         Ok(result)
     }
 
-    pub(crate) fn to_object(&self, thread: &mut JsThread<'a>) -> JsObject<'a> {
+    pub(crate) fn to_object(&self, thread: &mut JsThread<'a>) -> ObjectPointer<'a> {
         match self {
-            RuntimeValue::String(str) => thread.global_this.wrappers.wrap_string(str.clone()),
-            RuntimeValue::Object(obj) => obj.clone(),
-            RuntimeValue::Float(f) => thread.global_this.wrappers.wrap_number(*f),
-            RuntimeValue::Boolean(f) => thread.global_this.wrappers.wrap_boolean(*f),
+            RuntimeValue::String(str) => thread
+                .realm
+                .wrappers
+                .wrap_string(&mut thread.realm.objects, str.clone()),
+            RuntimeValue::Object(obj) => *obj,
+            RuntimeValue::Float(f) => thread
+                .realm
+                .wrappers
+                .wrap_number(&mut thread.realm.objects, *f),
+            RuntimeValue::Boolean(f) => thread
+                .realm
+                .wrappers
+                .wrap_boolean(&mut thread.realm.objects, *f),
             // RuntimeValue::Und(_, obj) => obj.clone(),
             _ => panic!(":( {:?}", self),
         }
@@ -276,9 +283,13 @@ impl<'a> Display for RuntimeValue<'a> {
 
 pub(crate) fn make_arguments<'a>(
     arguments: Vec<RuntimeValue<'a>>,
-    global_this: &Realm<'a>,
+    thread: &mut JsThread<'a>,
 ) -> RuntimeValue<'a> {
-    global_this.wrappers.wrap_arguments(arguments).into()
+    thread
+        .realm
+        .wrappers
+        .wrap_arguments(&mut thread.realm.objects, arguments)
+        .into()
 }
 
 #[derive(Clone, Debug)]

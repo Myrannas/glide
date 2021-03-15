@@ -1,9 +1,10 @@
+use crate::object_pool::ObjectPointer;
 use crate::{JsObject, JsThread, RuntimeValue};
 use builtin::prototype;
 use rand::prelude::*;
 
 pub(crate) struct JsMath<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 

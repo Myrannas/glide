@@ -1,10 +1,11 @@
+use crate::object_pool::ObjectPointer;
 use crate::result::JsResult;
 use crate::values::value::RuntimeValue;
 use crate::{JsObject, JsThread};
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsError<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -13,19 +14,20 @@ pub(crate) struct JsError<'a, 'b> {
 impl<'a, 'b> JsError<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, message: RuntimeValue<'a>) {
-        self.object.define_value("message", message.clone());
+        self.object
+            .set(self.thread, &"message".into(), message.clone());
     }
 
     #[named("toString")]
     fn as_string(&mut self) -> JsResult<'a> {
-        let message = self.object.get("message".into(), self.thread)?;
+        let message = self.object.get_value(self.thread, &"message".into())?;
 
         Ok(message.to_string(self.thread)?.into())
     }
 }
 
 pub(crate) struct TypeError<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -33,12 +35,13 @@ pub(crate) struct TypeError<'a, 'b> {
 impl<'a, 'b> TypeError<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, message: RuntimeValue<'a>) {
-        self.object.define_value("message", message.clone());
+        self.object
+            .set(self.thread, &"message".into(), message.clone());
     }
 }
 
 pub(crate) struct ReferenceError<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -46,6 +49,7 @@ pub(crate) struct ReferenceError<'a, 'b> {
 impl<'a, 'b> ReferenceError<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, message: RuntimeValue<'a>) {
-        self.object.define_value("message", message.clone());
+        self.object
+            .set(self.thread, &"message".into(), message.clone());
     }
 }

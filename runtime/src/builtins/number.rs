@@ -1,9 +1,10 @@
+use crate::object_pool::ObjectPointer;
 use crate::result::JsResult;
 use crate::{JsObject, JsThread, RuntimeValue};
 use builtin::{named, prototype};
 
 pub(crate) struct JsNumber<'a, 'b> {
-    object: JsObject<'a>,
+    object: ObjectPointer<'a>,
     thread: &'b mut JsThread<'a>,
 }
 

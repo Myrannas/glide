@@ -1,3 +1,4 @@
+use crate::object_pool::ObjectPool;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::object::FunctionObject;
@@ -11,7 +12,7 @@ fn get_callable<'a>(
 ) -> JsResult<'a, impl FunctionObject<'a>> {
     // 1. Assert: F is an ECMAScript function object.
     let fn_object = match &value {
-        RuntimeValue::Object(obj) => obj.function(),
+        RuntimeValue::Object(obj) => obj.as_function(thread),
         _ => None,
     };
 
@@ -19,10 +20,10 @@ fn get_callable<'a>(
         Ok(fn_object)
     } else {
         Err(ExecutionError::Thrown(
-            thread
-                .global_this
-                .errors
-                .new_type_error(format!("{} is not a function", value)),
+            thread.realm.errors.new_type_error(
+                &mut thread.realm.objects,
+                format!("{} is not a function", value),
+            ),
             None,
         ))
     }
@@ -39,8 +40,8 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
     let target = match fn_value.clone() {
-        RuntimeValue::Reference(Reference::String { base, .. }) => *base,
-        RuntimeValue::Reference(Reference::Number { base, .. }) => *base,
+        RuntimeValue::Reference(Reference::String { base, .. }) => base,
+        RuntimeValue::Reference(Reference::Number { base, .. }) => base,
         other => resolve!(other, thread).to_object(thread),
     };
 
@@ -55,7 +56,11 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
             "Class constructors cannot be invoked without 'new'".to_owned()
         };
 
-        return thread.throw(thread.global_this.errors.new_type_error(message));
+        let error = thread
+            .realm
+            .errors
+            .new_type_error(&mut thread.realm.objects, message);
+        return thread.throw(error);
     }
 
     let callable = fn_object.callable();
@@ -90,9 +95,9 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
         fn_object.callable().as_ref().unwrap().clone()
     };
 
-    let target = JsObject::new();
+    let mut target = JsObject::new();
 
-    if let Some(name) = fn_object.name().as_ref() {
+    if let Some(name) = fn_object.name() {
         target.set_name(name.clone());
     }
 
@@ -100,19 +105,21 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
         target.set_prototype(prototype.clone());
     }
 
-    target.set("constructor".into(), resolved_value);
+    target.set(&"constructor".into(), resolved_value);
+
+    let target_pointer = thread.allocate(target);
 
     match callable {
         FunctionReference::Custom(function) => {
-            thread.call(target, function.clone(), args, true, false);
+            thread.call(target_pointer, function.clone(), args, true, false);
         }
         FunctionReference::BuiltIn(function) => {
             catch!(
                 thread,
-                function.apply_return(args, thread, Some(target.clone()))
+                function.apply_return(args, thread, Some(target_pointer.clone()))
             );
 
-            thread.push_stack(target);
+            thread.push_stack(target_pointer);
             thread.step();
         }
     };

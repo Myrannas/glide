@@ -21,8 +21,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Duration;
 
-fn bootstrap_harness() -> ModuleSet {
-    let mut modules = Vec::new();
+fn bootstrap_harness<'a>() -> ModuleSet<'a> {
+    let mut realm = Realm::new();
+
     for file in vec![
         "./test262/harness/sta.js",
         "./test262/harness/assert.js",
@@ -35,24 +36,20 @@ fn bootstrap_harness() -> ModuleSet {
 
         let compiled = compile("assert.js", sta_module, CompilerOptions::new()).unwrap();
 
-        modules.push(JsFunction::load(compiled.init));
+        let module = JsFunction::load(compiled.init);
+
+        let mut thread = JsThread::new(module.clone(), realm.clone());
+
+        thread.run().unwrap();
+
+        realm = thread.finalize();
     }
 
-    ModuleSet { modules }
+    ModuleSet { realm }
 }
 
-struct ModuleSet {
-    modules: Vec<JsFunction>,
-}
-
-impl ModuleSet {
-    fn load<'a>(&'a self, global_this: Realm<'a>) {
-        for module in self.modules.iter() {
-            JsThread::new(module.clone(), global_this.clone())
-                .run()
-                .unwrap();
-        }
-    }
+struct ModuleSet<'a> {
+    realm: Realm<'a>,
 }
 
 fn all_suites(path: PathBuf) -> std::io::Result<Vec<PathBuf>> {
@@ -121,11 +118,9 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     let module = AssertUnwindSafe(module);
 
     let time = match catch_unwind(|| {
-        let global = Realm::new();
+        let global = harness.realm.clone();
 
         let start = std::time::Instant::now();
-
-        harness.load(global.clone());
 
         let function = JsFunction::load(module.0?.init);
 
@@ -142,16 +137,11 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
             match result {
                 Ok(_) => Err(Error::msg("Expected a Test262Error error")),
                 Err(ExecutionError::Thrown(RuntimeValue::Object(obj), ..)) => {
-                    let to_string = obj.get("toString".into(), &mut thread).unwrap();
+                    let to_string = obj.get_value(&mut thread, &"toString".into()).unwrap();
 
                     if let RuntimeValue::Object(fn_object) = to_string {
-                        let result = thread
-                            .call_from_native(
-                                obj.clone(),
-                                fn_object.function().unwrap().callable().clone().unwrap(),
-                                0,
-                                false,
-                            )
+                        let result = fn_object
+                            .call(&mut thread, &[])
                             .unwrap()
                             .to_string(&mut thread)
                             .unwrap();

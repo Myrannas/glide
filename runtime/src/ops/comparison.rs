@@ -38,8 +38,8 @@ pub(crate) fn instance_of(thread: &mut JsThread) {
     let right: RuntimeValue = pop!(thread);
 
     let result = if let (RuntimeValue::Object(left), RuntimeValue::Object(right)) = (left, right) {
-        if let Some(right_proto) = right.prototype() {
-            let mut left_proto = left.prototype();
+        if let Some(right_proto) = right.get_prototype(thread) {
+            let mut left_proto = left.get_prototype(thread);
             let mut result = false;
             while let Some(proto) = left_proto {
                 if proto == right_proto {
@@ -47,7 +47,7 @@ pub(crate) fn instance_of(thread: &mut JsThread) {
                     break;
                 }
 
-                left_proto = proto.prototype();
+                left_proto = proto.get_prototype(thread);
             }
 
             result
@@ -106,7 +106,7 @@ pub(crate) fn type_of(thread: &mut JsThread) {
     let str = match left {
         RuntimeValue::Boolean(_) => "boolean".to_owned(),
         RuntimeValue::Null => "null".to_owned(),
-        RuntimeValue::Object(obj) if obj.is_function() => "function".to_owned(),
+        RuntimeValue::Object(obj) if obj.as_function(thread).is_some() => "function".to_owned(),
         RuntimeValue::Object(_) => "object".to_owned(),
         RuntimeValue::String(..) => "string".to_owned(),
         RuntimeValue::Float(_) => "number".to_owned(),
@@ -145,15 +145,19 @@ pub(crate) fn in_operator(thread: &mut JsThread) {
     let obj = if let RuntimeValue::Object(obj) = right {
         obj
     } else {
-        return thread.throw(thread.global_this.errors.new_type_error(format!(
-            "Cannot use 'in' operator to search for '{}' in {}",
-            left, right
-        )));
+        let error = thread.realm.errors.new_type_error(
+            &mut thread.realm.objects,
+            format!(
+                "Cannot use 'in' operator to search for '{}' in {}",
+                left, right
+            ),
+        );
+        return thread.throw(error);
     };
 
     let name = catch!(thread, left.to_string(thread));
 
-    thread.push_stack(obj.has(name));
+    thread.push_stack(obj.has(thread, &name));
     thread.step();
 }
 
