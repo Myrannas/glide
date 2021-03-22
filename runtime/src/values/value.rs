@@ -79,7 +79,7 @@ impl<'a> From<Option<RuntimeValue<'a>>> for RuntimeValue<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum RuntimeValue<'a> {
     Undefined,
     Null,
@@ -87,8 +87,9 @@ pub enum RuntimeValue<'a> {
     Float(f64),
     String(JsPrimitiveString),
     Object(ObjectPointer<'a>),
-    Reference(Reference<'a>),
-    Internal(InternalValue),
+    StringReference(JsPrimitiveString),
+    NumberReference(u32),
+    Local(usize),
 }
 
 impl<'a> Default for RuntimeValue<'a> {
@@ -181,14 +182,20 @@ impl<'a> RuntimeValue<'a> {
         thread: &'c mut JsThread<'a>,
     ) -> Result<Self, ExecutionError<'a>> {
         let result = match self.clone() {
-            RuntimeValue::Internal(InternalValue::Local(index)) => {
-                Ok(thread.current_context().read(index))
+            RuntimeValue::Local(index) => Ok(thread.current_context().read(index)),
+            RuntimeValue::StringReference(name) => {
+                let base: RuntimeValue = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(thread)?;
+
+                base_object.get_value(thread, name)
             }
-            RuntimeValue::Reference(Reference::String { base, name, .. }) => {
-                base.get_value(thread, name)
-            }
-            RuntimeValue::Reference(Reference::Number { base, name, .. }) => {
-                base.get_indexed(thread, name)
+            RuntimeValue::NumberReference(index) => {
+                let base: RuntimeValue = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(thread)?;
+
+                base_object.get_indexed(thread, index as usize)
             }
             other => Ok(other),
         }?;
@@ -199,19 +206,39 @@ impl<'a> RuntimeValue<'a> {
     pub(crate) fn update_reference(
         self,
         thread: &mut JsThread<'a>,
-        value: impl Into<RuntimeValue<'a>>,
+        with_value: impl FnOnce(RuntimeValue<'a>, &mut JsThread<'a>) -> JsResult<'a>,
     ) -> JsResult<'a, ()> {
         match self {
-            RuntimeValue::Internal(InternalValue::Local(index)) => {
-                thread.current_context().write(index, value.into());
+            RuntimeValue::Local(index) => {
+                let value = thread.current_context().read(index);
+
+                let updated_value = with_value(value, thread)?;
+
+                thread.current_context().write(index, updated_value);
                 Ok(())
             }
-            RuntimeValue::Reference(Reference::String { base, name, .. }) => {
-                base.set(&mut thread.realm.objects, name, value.into());
+            RuntimeValue::StringReference(name) => {
+                let base: RuntimeValue = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(thread)?;
+
+                let original = base_object.get_value(thread, name)?;
+
+                let updated_value = with_value(original, thread)?;
+
+                base_object.set(&mut thread.realm.objects, name, updated_value);
                 Ok(())
             }
-            RuntimeValue::Reference(Reference::Number { base, name, .. }) => {
-                base.set_indexed(thread, name, value.into());
+            RuntimeValue::NumberReference(index) => {
+                let base: RuntimeValue = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(thread)?;
+
+                let original = base_object.get_indexed(thread, index as usize)?;
+
+                let updated_value = with_value(original, thread)?;
+
+                base_object.set_indexed(thread, index as usize, updated_value);
                 Ok(())
             }
             value => InternalError::new_stackless(format!("Unable to update - {:?}", value)).into(),
@@ -272,11 +299,11 @@ impl<'a> RuntimeValue<'a> {
                 .realm
                 .wrappers
                 .wrap_boolean(&mut thread.realm.objects, *f),
-            // RuntimeValue::Und(_, obj) => obj.clone(),
             value => {
-                return Err(thread
-                    .new_type_error(format!("Can't wrap {} with object", value))
-                    .into())
+                panic!("Ohnoes {}", value)
+                // return Err(thread
+                //     .new_type_error(format!("Can't wrap {} with object", value))
+                //     .into())
             }
         };
 
@@ -301,14 +328,16 @@ impl<'a> RuntimeValue<'a> {
             RuntimeValue::Null | RuntimeValue::Boolean(false) => 0.0,
             RuntimeValue::Boolean(true) => 1.0,
             RuntimeValue::Float(v) => *v,
-            RuntimeValue::Reference(..) => todo!("References are not supported"),
+            RuntimeValue::StringReference(..) | RuntimeValue::NumberReference(..) => {
+                todo!("References are not supported")
+            }
             RuntimeValue::String(value) => realm
                 .strings
                 .get(*value)
                 .as_ref()
                 .parse()
                 .unwrap_or(f64::NAN),
-            RuntimeValue::Internal(..) => panic!("Can't convert a local runtime value to a number"),
+            RuntimeValue::Local(..) => panic!("Can't convert a local runtime value to a number"),
         }
     }
 
@@ -415,8 +444,21 @@ impl<'a, 'b> DebugRepresentation<'a> for RuntimeValue<'a> {
             (.., RuntimeValue::String(str)) => {
                 render.string_literal(render.thread.realm.strings.get(*str).as_ref())
             }
-            (.., RuntimeValue::Reference(reference)) => reference.render(render),
-            (Representation::Debug, RuntimeValue::Internal(InternalValue::Local(local))) => {
+            (.., RuntimeValue::NumberReference(reference)) => {
+                render.start_internal("REFERENCE")?;
+                render.internal_key("index")?;
+                render.literal(&reference.to_string())?;
+                render.end_internal()?;
+                Ok(())
+            }
+            (.., RuntimeValue::StringReference(reference)) => {
+                render.start_internal("REFERENCE")?;
+                render.internal_key("key")?;
+                render.string_literal(render.thread.realm.strings.get(*reference).as_ref())?;
+                render.end_internal()?;
+                Ok(())
+            }
+            (Representation::Debug, RuntimeValue::Local(local)) => {
                 render.start_internal("INTERNAL")?;
                 render.internal_key("index")?;
                 render.literal(&local.to_string())?;
@@ -426,5 +468,15 @@ impl<'a, 'b> DebugRepresentation<'a> for RuntimeValue<'a> {
             (.., RuntimeValue::Float(value)) => render.literal(&format!("{}", value)),
             _ => panic!("Unsupported debug view"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::RuntimeValue;
+
+    #[test]
+    fn check_runtime_value_size() {
+        assert_eq!(std::mem::size_of::<RuntimeValue>(), 8);
     }
 }

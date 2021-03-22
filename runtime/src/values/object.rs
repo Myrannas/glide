@@ -62,8 +62,9 @@ impl<'a> From<RuntimeValue<'a>> for ObjectValue<'a> {
             RuntimeValue::Float(f) => ObjectValue::Float(f),
             RuntimeValue::String(str) => ObjectValue::String(str),
             RuntimeValue::Object(obj) => ObjectValue::Object(obj),
-            RuntimeValue::Reference(_) => panic!("References cannot be stored in an object"),
-            RuntimeValue::Internal(_) => panic!("Internal values cannot be stored in an object"),
+            RuntimeValue::StringReference(_) => panic!("References cannot be stored in an object"),
+            RuntimeValue::NumberReference(_) => panic!("References cannot be stored in an object"),
+            RuntimeValue::Local(_) => panic!("Internal values cannot be stored in an object"),
         }
     }
 }
@@ -290,7 +291,7 @@ impl<'a> JsObject<'a> {
     pub fn set(&mut self, key: JsPrimitiveString, value: impl Into<RuntimeValue<'a>>) {
         let value = value.into();
 
-        if matches!(value, RuntimeValue::Internal(_)) {
+        if matches!(value, RuntimeValue::Local(_)) {
             panic!("Can't write internal values to an object")
         }
 
@@ -401,6 +402,16 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
             renderer.formatter.write_fmt(format_args!("{} ", name))?;
         }
 
+        if self.callable.is_some() || self.construct.is_some() {
+            let name = self
+                .name
+                .map_or("", |s| renderer.thread.realm.strings.get(s).as_ref());
+            renderer.formatter.write_str("[Function: ")?;
+            renderer.formatter.write_str(name)?;
+
+            renderer.formatter.write_char(']')?;
+        }
+
         if renderer.representation != Representation::Compact {
             renderer.formatter.write_char('{')?;
             for (k, v) in self.indexed_properties.iter().enumerate() {
@@ -410,8 +421,9 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
                 renderer.formatter.write_str(", ")?;
             }
 
-            for (k, v) in self.properties.iter() {
-                renderer.formatter.write_str(&format!("{}", k))?;
+            for (k, v) in &self.properties {
+                let key = renderer.thread.realm.strings.get(*k);
+                renderer.formatter.write_str(key.as_ref())?;
                 renderer.formatter.write_str(": ")?;
                 match v {
                     Property::DataDescriptor { value, .. } => {

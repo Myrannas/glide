@@ -82,15 +82,15 @@ pub(crate) fn negate(thread: &mut JsThread) {
 }
 
 pub(crate) fn increment(thread: &mut JsThread, by: f64) {
+    // Reference ->
     let target: RuntimeValue = thread.pop_stack();
 
-    let value = resolve!(target.clone(), thread);
-
-    thread.stack.push(value.clone());
-
-    let value: f64 = value.to_number(&thread.realm);
-
-    catch!(thread, target.update_reference(thread, value + by));
+    catch!(
+        thread,
+        target.update_reference(thread, |value, thread| {
+            Ok(RuntimeValue::Float(value.to_number(&thread.realm) + by))
+        })
+    );
 
     thread.step();
 }

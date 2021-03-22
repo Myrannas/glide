@@ -105,7 +105,7 @@ impl<'a, 'b> JsContext<'a> {
     }
 
     pub(crate) fn write(&self, index: usize, value: RuntimeValue<'a>) {
-        if matches!(value, RuntimeValue::Internal(_)) {
+        if matches!(value, RuntimeValue::Local(_)) {
             panic!("Can't assign an internal to the context");
         }
 

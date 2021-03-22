@@ -1,3 +1,4 @@
+use crate::debugging::DebuggableWithThread;
 use crate::primordials::RuntimeHelpers;
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::value::{InternalValue, Reference};
@@ -52,16 +53,11 @@ pub(crate) fn get(thread: &mut JsThread) {
     let target = catch!(thread, target.to_object(thread));
 
     let reference = match attribute {
-        RuntimeValue::Float(index) => RuntimeValue::Reference(Reference::Number {
-            base: target,
-            name: index as usize,
-        }),
-        value => RuntimeValue::Reference(Reference::String {
-            base: target,
-            name: catch!(thread, value.to_string(thread)),
-        }),
+        RuntimeValue::Float(index) => RuntimeValue::NumberReference(index as u32),
+        value => RuntimeValue::StringReference(catch!(thread, value.to_string(thread))),
     };
 
+    thread.push_stack(target);
     thread.push_stack(reference);
     thread.step();
 }
@@ -90,7 +86,7 @@ pub(crate) fn set_local(thread: &mut JsThread, local: usize) {
 }
 
 pub(crate) fn get_local(thread: &mut JsThread, local: usize) {
-    thread.push_stack(RuntimeValue::Internal(InternalValue::Local(local)));
+    thread.push_stack(RuntimeValue::Local(local));
     thread.step();
 }
 
@@ -165,21 +161,17 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
 
     if target == RuntimeValue::Undefined {
         let attribute = thread.realm.strings.get(atom);
+        let message = format!("Cannot get property {} of undefined", attribute);
 
-        let type_error =
-            thread.new_type_error(format!("Cannot get property {} of undefined", attribute));
+        let type_error = thread.new_type_error(message);
 
         return thread.throw(type_error);
     }
 
-    // println!("Get named, target {:?}.{}", target, atom);
-
     let target = catch!(thread, target.to_object(thread));
 
-    thread.push_stack(RuntimeValue::Reference(Reference::String {
-        base: target,
-        name: atom,
-    }));
+    thread.push_stack(target);
+    thread.push_stack(RuntimeValue::StringReference(atom));
 
     thread.step();
 }
@@ -203,6 +195,11 @@ pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environm
             .new_object(&mut thread.realm.objects)
             .into(),
     };
+    //
+    // println!(
+    //     "Load environment: {:?}",
+    //     DebuggableWithThread::from(&value, thread)
+    // );
 
     thread.push_stack(value);
     thread.step();

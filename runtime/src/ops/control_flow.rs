@@ -1,3 +1,4 @@
+use crate::debugging::DebuggableWithThread;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
@@ -14,7 +15,10 @@ fn get_callable<'a>(
     match &value {
         RuntimeValue::Object(obj) if obj.is_callable(&thread.realm.objects) => Ok(*obj),
         _ => Err(ExecutionError::Thrown(
-            thread.new_type_error(format!("{} is not a function", value)),
+            thread.new_type_error(format!(
+                "{:?} is not a function",
+                DebuggableWithThread::from(value, thread)
+            )),
             None,
         )),
     }
@@ -30,9 +34,14 @@ fn get_callable<'a>(
 pub(crate) fn call(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
+    // ??? -> This is a bit tricky to evaluate.
     let target = match fn_value.clone() {
-        RuntimeValue::Reference(Reference::String { base, .. })
-        | RuntimeValue::Reference(Reference::Number { base, .. }) => base,
+        RuntimeValue::StringReference(_) | RuntimeValue::NumberReference(_) => {
+            catch!(
+                thread,
+                thread.stack.last().unwrap().clone().to_object(thread)
+            )
+        }
         other => catch!(thread, resolve!(other, thread).to_object(thread)),
     };
 

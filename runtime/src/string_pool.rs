@@ -34,6 +34,14 @@ pub struct StringPointer {
     inner: PoolPointer<StringValue>,
 }
 
+impl StringPointer {
+    pub(crate) fn new(index: u32) -> StringPointer {
+        StringPointer {
+            inner: PoolPointer::new(index),
+        }
+    }
+}
+
 impl Display for StringPointer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("String@{}", self.inner))

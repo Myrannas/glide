@@ -7,7 +7,7 @@ use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::value::{make_arguments, RuntimeValue};
 use crate::{ExecutionError, JsFunction, JsObject};
-use instruction_set::Instruction;
+use instruction_set::{Constant, Instruction};
 use log::trace;
 use std::fmt::{Debug, Formatter};
 
@@ -461,8 +461,9 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
         match self.instruction {
             Instruction::GetNamed { name } => {
                 let atom = self.thread.current_frame.current_function.get_atom(*name);
+                let str = self.thread.realm.strings.get(atom).as_ref();
 
-                f.debug_struct("GetNamed").field("name", &atom).finish()
+                f.debug_struct("GetNamed").field("name", &str).finish()
             }
             Instruction::GetLocal { local } => {
                 let locals = &self.thread.current_frame.current_function.locals()[*local];
@@ -470,19 +471,46 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
                 f.debug_struct("GetLocal")
                     .field("local", &locals.name)
                     .field("local_id", local)
-                    .field("value", &self.thread.current_context().read(*local))
                     .finish()
             }
 
             Instruction::SetLocal { local } => {
                 let locals = &self.thread.current_frame.current_function.locals()[*local];
+                let last = DebuggableWithThread::from(
+                    self.thread.stack.last().unwrap_or_default(),
+                    self.thread,
+                );
 
                 f.debug_struct("SetLocal")
                     .field("local", &locals.name)
                     .field("local_id", local)
-                    .field("value", &self.thread.stack.last().unwrap_or_default())
+                    .field("value", &last)
                     .finish()
             }
+
+            Instruction::SetNamed { name } => {
+                let atom = self.thread.current_frame.current_function.get_atom(*name);
+                let str = self.thread.realm.strings.get(atom).as_ref();
+
+                let last = DebuggableWithThread::from(
+                    self.thread.stack.last().unwrap_or_default(),
+                    self.thread,
+                );
+                f.debug_struct("SetLocal")
+                    .field("field", &str)
+                    .field("value", &last)
+                    .finish()
+            }
+
+            Instruction::LoadConstant {
+                constant: Constant::Atom(atom),
+            } => {
+                let atom = self.thread.current_frame.current_function.get_atom(*atom);
+                let str = self.thread.realm.strings.get(atom).as_ref();
+
+                f.debug_struct("LoadConstant").field("value", &str).finish()
+            }
+
             Instruction::SetNamed { name } => {
                 let atom = self.thread.current_frame.current_function.get_atom(*name);
 
