@@ -1,7 +1,7 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::object_pool::{ObjectPointer, ObjectPool};
+use crate::object_pool::ObjectPool;
 use crate::primordials::Primitives;
-use crate::{JsFunction, JsObject, Realm, RuntimeValue};
+use crate::{JsFunction, JsThread, Realm, RuntimeValue};
 use std::cell::{Ref, RefCell};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -13,15 +13,15 @@ pub(crate) struct CallStack {
 }
 
 impl<'a, 'b> Debug for JsContext<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Renderer::debug(f, 3).render(self)
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        f.debug_struct("JsContext").finish()
     }
 }
 
 struct JsContextInner<'a> {
     locals: Vec<RuntimeValue<'a>>,
     parent: Option<JsContext<'a>>,
-    this: ObjectPointer<'a>,
+    this: RuntimeValue<'a>,
 }
 
 #[derive(Clone)]
@@ -35,8 +35,8 @@ impl PartialEq for JsContext<'_> {
     }
 }
 
-impl<'a, 'b> DebugRepresentation for JsContext<'a> {
-    fn render(&self, render: &mut Renderer) -> std::fmt::Result {
+impl<'a, 'b> DebugRepresentation<'a> for JsContext<'a> {
+    fn render(&self, render: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
         match render.representation {
             Representation::Compact => Ok(()),
             Representation::Debug => {
@@ -47,7 +47,7 @@ impl<'a, 'b> DebugRepresentation for JsContext<'a> {
                     render.internal_key(" locals: ")?;
                 }
 
-                for value in inner.locals.iter() {
+                for value in &inner.locals {
                     value.render(render)?;
 
                     render.formatter.write_str(", ")?;
@@ -71,7 +71,7 @@ struct ContextIter {
 }
 
 impl<'a, 'b> JsContext<'a> {
-    pub(crate) fn this(&self) -> Ref<ObjectPointer<'a>> {
+    pub(crate) fn this(&self) -> Ref<RuntimeValue<'a>> {
         Ref::map(self.inner.borrow(), |value| &value.this)
     }
 
@@ -80,21 +80,20 @@ impl<'a, 'b> JsContext<'a> {
             inner: Rc::new(RefCell::new(JsContextInner {
                 locals: vec![],
                 parent: None,
-                this: global_this.global_this.clone(),
+                this: global_this.global_this.clone().into(),
             })),
         }
     }
 
     pub(crate) fn with_parent<'c>(
-        pool: &mut impl ObjectPool<'a>,
+        realm: &mut Realm<'a>,
         parent: JsContext<'a>,
-        this: ObjectPointer<'a>,
+        this: RuntimeValue<'a>,
         function: &'c JsFunction,
-        primitives: &Primitives<'a>,
     ) -> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
-                locals: function.init(pool, primitives, &parent),
+                locals: function.init(realm, &parent),
                 parent: Some(parent),
                 this,
             })),
@@ -121,9 +120,9 @@ impl<'a, 'b> JsContext<'a> {
                 .parent
                 .as_ref()
                 .and_then(|parent| parent.capture(offset - 1, index));
-        } else {
-            ctx.locals.get(index).cloned()
         }
+
+        ctx.locals.get(index).cloned()
     }
 
     pub(crate) fn write_capture(&self, offset: usize, index: usize, value: RuntimeValue<'a>) {
@@ -145,11 +144,9 @@ impl Iterator for ContextIter {
     fn next(&mut self) -> Option<Self::Item> {
         let next = std::mem::replace(&mut self.next, None);
 
-        if let Some(current) = next {
+        next.map(|current| {
             self.next = (&current.parent).clone();
-            Some(current)
-        } else {
-            None
-        }
+            current
+        })
     }
 }

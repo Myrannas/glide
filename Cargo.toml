@@ -5,9 +5,10 @@ members = [
     "test_262",
     "builtin",
     "instruction_set",
-    "runtime"
+    "runtime",
+    "compiler_binary"
 ]
 
 [profile.release]
 #opt-level = 3
-#debug = true
+debug = true

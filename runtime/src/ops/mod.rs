@@ -6,11 +6,21 @@ mod control_flow;
 mod math;
 mod memory;
 
-use crate::ops::bitwise::*;
-use crate::ops::comparison::*;
-use crate::ops::control_flow::*;
-use crate::ops::math::*;
-use crate::ops::memory::*;
+use crate::ops::bitwise::{left_shift, right_shift, right_shift_unsigned};
+use crate::ops::comparison::{
+    equal_to, greater_than, greater_than_equal, in_operator, instance_of, less_than,
+    less_than_equal, logical_and, logical_not, logical_or, not_equal_to, not_strict_equal_to,
+    strict_equal_to, type_of,
+};
+use crate::ops::control_flow::{
+    call, call_new, catch, compare_jump, drop_catch, jump, return_constant, return_value,
+    throw_value,
+};
+use crate::ops::math::{add, divide, exponential, increment, modulus, multiply, negate, subtract};
+use crate::ops::memory::{
+    delete, duplicate, get, get_capture, get_class, get_function, get_local, get_named,
+    load_constant, load_environmental, resolve, set, set_capture, set_local, set_named,
+};
 use crate::vm::JsThread;
 use instruction_set::Instruction;
 
@@ -24,10 +34,11 @@ impl Operand for Instruction {
             Instruction::Truncate => {
                 thread.step();
             }
-            Instruction::Add => add(thread),
+            Instruction::Add { times } => add(thread, *times),
             Instruction::Subtract => subtract(thread),
             Instruction::Divide => divide(thread),
             Instruction::Modulo => modulus(thread),
+            Instruction::Exponential => exponential(thread),
             Instruction::Multiply => multiply(thread),
             Instruction::LoadConstant { constant } => load_constant(thread, constant),
             Instruction::LoadEnvironmental { environmental } => {
@@ -54,9 +65,10 @@ impl Operand for Instruction {
             Instruction::GetClass { class, extends } => get_class(thread, *class, *extends),
             Instruction::Get => get(thread),
 
-            Instruction::Delete => todo!("Not yet implemented"),
-            Instruction::DeleteNamed { .. } => todo!("Not yet implemented"),
-            Instruction::DeleteLocal { .. } => todo!("Not yet implemented"),
+            Instruction::Delete => delete(thread),
+            Instruction::DeleteNamed { .. } | Instruction::DeleteLocal { .. } => {
+                todo!("Not yet implemented")
+            }
 
             Instruction::StrictEqualTo => strict_equal_to(thread),
             Instruction::NotStrictEqualTo => not_strict_equal_to(thread),

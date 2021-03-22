@@ -1,50 +1,60 @@
-use super::values::value::{InternalValue, RuntimeValue};
-use crate::{JsObject, JsThread};
+use crate::JsThread;
 use colored::Colorize;
 use std::cmp::Ordering;
-use std::fmt::{Formatter, Result, Write};
+use std::fmt::{Debug, Formatter, Result, Write};
 
 pub struct Renderer<'a, 'b, 'c, 'd> {
     max_depth: usize,
     current_depth: usize,
     pub(crate) representation: Representation,
-    pub(crate) formatter: &'b mut Formatter<'a>,
-    pub(crate) thread: Option<&'d JsThread<'c>>,
+    pub(crate) formatter: &'b mut Formatter<'c>,
+    pub(crate) thread: &'d JsThread<'a>,
 }
 
 impl<'a, 'b, 'c, 'd> Renderer<'a, 'b, 'c, 'd> {
-    pub fn render(&mut self, object: &dyn DebugRepresentation) -> Result {
+    pub fn render(&mut self, object: &dyn DebugRepresentation<'a>) -> Result {
         match self.current_depth.cmp(&self.max_depth) {
             Ordering::Equal | Ordering::Greater => {
-                object.render(&mut Renderer::compact(self.formatter))
+                let representation = self.representation;
+                self.representation = Representation::Compact;
+                let result = object.render(self);
+                self.representation = representation;
+
+                result
             }
-            Ordering::Less => object.render(&mut Renderer {
-                max_depth: self.max_depth,
-                current_depth: self.current_depth + 1,
-                formatter: self.formatter,
-                representation: self.representation,
-                thread: self.thread,
-            }),
+            Ordering::Less => {
+                self.current_depth += 1;
+
+                let result = object.render(self);
+
+                self.current_depth -= 1;
+
+                result
+            }
         }
     }
 
-    pub(crate) fn compact(formatter: &'b mut Formatter<'a>) -> Self {
+    pub(crate) fn compact(formatter: &'b mut Formatter<'c>, thread: &'d JsThread<'a>) -> Self {
         Renderer {
             max_depth: 0,
             current_depth: 1,
             formatter,
             representation: Representation::Compact,
-            thread: None,
+            thread,
         }
     }
 
-    pub(crate) fn debug(formatter: &'b mut Formatter<'a>, depth: usize) -> Self {
+    pub(crate) fn debug(
+        formatter: &'b mut Formatter<'c>,
+        thread: &'d JsThread<'a>,
+        depth: usize,
+    ) -> Self {
         Renderer {
             max_depth: depth,
             current_depth: 0,
             formatter,
             representation: Representation::Debug,
-            thread: None,
+            thread,
         }
     }
 
@@ -56,11 +66,6 @@ impl<'a, 'b, 'c, 'd> Renderer<'a, 'b, 'c, 'd> {
             internal_type.blue(),
             "| ".blue()
         ))
-    }
-
-    pub(crate) fn with_thread(mut self, thread: &'d JsThread<'c>) -> Self {
-        self.thread = Some(thread);
-        self
     }
 
     #[inline]
@@ -130,8 +135,8 @@ pub enum Representation {
 //     }
 // }
 
-pub trait DebugRepresentation {
-    fn render(&self, renderer: &mut Renderer) -> Result;
+pub trait DebugRepresentation<'a> {
+    fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> Result;
 
     // fn debuggable<'a, 'b>(&'a self, thread: &'a JsThread<'b>) -> Debuggable<'a, 'b, &'a Self> {
     //     Debuggable {
@@ -139,4 +144,23 @@ pub trait DebugRepresentation {
     //         thread,
     //     }
     // }
+}
+
+pub(crate) struct DebuggableWithThread<'a, 'b, 'c> {
+    value: &'c dyn DebugRepresentation<'a>,
+    thread: &'b JsThread<'a>,
+}
+
+impl<'a, 'b, 'c> DebuggableWithThread<'a, 'b, 'c> {
+    pub(crate) fn from(value: &'c dyn DebugRepresentation<'a>, thread: &'b JsThread<'a>) -> Self {
+        DebuggableWithThread { value, thread }
+    }
+}
+
+impl<'a, 'b, 'c> Debug for DebuggableWithThread<'a, 'b, 'c> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let mut renderer = Renderer::debug(f, self.thread, 3);
+
+        renderer.render(self.value)
+    }
 }

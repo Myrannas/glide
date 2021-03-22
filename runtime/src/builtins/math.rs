@@ -1,34 +1,34 @@
-use crate::object_pool::ObjectPointer;
-use crate::{JsObject, JsThread, RuntimeValue};
-use builtin::prototype;
+use crate::{JsThread, RuntimeValue};
+use builtin::{named, prototype};
 use rand::prelude::*;
 
 pub(crate) struct JsMath<'a, 'b> {
-    object: ObjectPointer<'a>,
+    target: RuntimeValue<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
 #[prototype]
+#[named("Math")]
 impl<'a, 'b> JsMath<'a, 'b> {
-    fn floor(value1: RuntimeValue<'a>) -> f64 {
-        let number: f64 = value1.into();
+    fn floor(thread: &mut JsThread<'a>, value1: RuntimeValue<'a>) -> RuntimeValue<'a> {
+        let number: f64 = value1.to_number(&thread.realm);
 
-        number.floor()
+        RuntimeValue::Float(number.floor())
     }
 
-    fn ceil(value1: RuntimeValue<'a>) -> f64 {
-        let number: f64 = value1.into();
+    fn ceil(thread: &mut JsThread<'a>, value1: RuntimeValue<'a>) -> RuntimeValue<'a> {
+        let number: f64 = value1.to_number(&thread.realm);
 
-        number.ceil()
+        RuntimeValue::Float(number.ceil())
     }
 
-    fn round(value1: RuntimeValue<'a>) -> f64 {
-        let number: f64 = value1.into();
+    fn round(thread: &mut JsThread<'a>, value1: RuntimeValue<'a>) -> RuntimeValue<'a> {
+        let number: f64 = value1.to_number(&thread.realm);
 
-        number.round()
+        RuntimeValue::Float(number.round())
     }
 
-    fn random() -> f64 {
+    fn random(_: &mut JsThread<'a>) -> f64 {
         random()
     }
 }

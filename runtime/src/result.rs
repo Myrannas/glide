@@ -1,4 +1,3 @@
-use crate::object_pool::ObjectPool;
 use crate::values::value::RuntimeValue;
 use crate::JsThread;
 use std::fmt::{Display, Formatter};
@@ -91,10 +90,7 @@ impl<'a> ExecutionError<'a> {
         }
     }
 
-    pub(crate) fn throw(runtime_value: RuntimeValue<'a>) -> Self {
-        ExecutionError::Thrown(runtime_value, None)
-    }
-
+    // #[allow(clippy::if)]
     pub fn render(self, thread: &mut JsThread<'a>) -> anyhow::Error {
         match self {
             ExecutionError::SyntaxError(err) => {
@@ -104,20 +100,21 @@ impl<'a> ExecutionError<'a> {
                 let rendered_error = anyhow::Error::msg(format!("InternalError: {}", err.message));
 
                 if let Some(stack) = err.stack {
-                    rendered_error.context(stack)
-                } else {
-                    rendered_error
+                    return rendered_error.context(stack);
                 }
+
+                rendered_error
             }
             ExecutionError::Thrown(err, stack) => {
-                let rendered_error =
-                    anyhow::Error::msg(format!("{:?}", err.to_string(thread).unwrap()));
+                let string_value = err.to_string(thread).unwrap();
+                let str = thread.get_realm().get_string(string_value);
+                let rendered_error = anyhow::Error::msg(str.to_string());
 
                 if let Some(stack) = stack {
-                    rendered_error.context(stack)
-                } else {
-                    rendered_error
+                    return rendered_error.context(stack);
                 }
+
+                rendered_error
             }
         }
     }

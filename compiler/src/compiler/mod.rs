@@ -41,8 +41,15 @@ struct Frame {
     locals: LocalAllocator,
 }
 
-trait Bucket<T> {
+pub trait Bucket<T> {
     fn allocate(&mut self, value: T) -> usize;
+}
+
+pub trait BucketEq<T>: Bucket<T>
+where
+    T: PartialEq,
+{
+    fn get_or_allocate(&mut self, value: T) -> usize;
 }
 
 impl<T> Bucket<T> for Vec<T> {
@@ -50,6 +57,21 @@ impl<T> Bucket<T> for Vec<T> {
         let len = self.len();
         self.push(value);
         len
+    }
+}
+
+impl<T> BucketEq<T> for Vec<T>
+where
+    T: PartialEq,
+{
+    fn get_or_allocate(&mut self, value: T) -> usize {
+        if let Some(existing) = self.iter().position(|v| v == &value) {
+            existing
+        } else {
+            let position = self.len();
+            self.push(value);
+            position
+        }
     }
 }
 
@@ -81,16 +103,14 @@ impl<'b> ChunkBuilder {
     }
 
     fn allocate_local(&mut self, id: &str, argument: bool) -> usize {
-        let existing_position = self
-            .frame
-            .locals
-            .locals
-            .iter()
-            .rev()
-            .position(|Local { name, frame, .. }| name == id && *frame == 0);
+        let locals = &self.frame.locals.locals;
 
-        if let Some(existing) = existing_position {
-            existing
+        let existing = locals
+            .iter()
+            .find(|Local { name, frame, .. }| name == id && *frame == 0);
+
+        if let Some(existing) = existing {
+            existing.local
         } else {
             self.frame
                 .locals
@@ -208,8 +228,13 @@ impl LocalAllocator {
             .count()
     }
 
-    fn set_init_value(&mut self, local: usize, expression: &Expression) -> bool {
-        let constant = if let Some(constant) = expression.constant() {
+    fn set_init_value(
+        &mut self,
+        local: usize,
+        expression: &Expression,
+        atoms: &mut Vec<String>,
+    ) -> bool {
+        let constant = if let Some(constant) = expression.to_constant(atoms) {
             constant
         } else {
             return false;
@@ -282,7 +307,7 @@ impl LocalAllocator {
 impl BinaryOperator {
     fn to_op(&self) -> Instruction {
         match self {
-            BinaryOperator::Add => Add,
+            BinaryOperator::Add => Add { times: 1 },
             BinaryOperator::Sub => Subtract,
             BinaryOperator::Mul => Multiply,
             BinaryOperator::Div => Divide,
@@ -300,6 +325,7 @@ impl BinaryOperator {
             BinaryOperator::RightShiftUnsigned => RightShiftUnsigned,
             BinaryOperator::InstanceOf => InstanceOf,
             BinaryOperator::In => In,
+            BinaryOperator::Exponential => Exponential,
             BinaryOperator::LogicalOr => panic!("Lor is handled separately"),
             BinaryOperator::LogicalAnd => panic!("Land is handled separately"),
         }
@@ -423,9 +449,7 @@ impl<'a, 'c> ChunkBuilder {
 
     #[inline]
     fn allocate_atom(&mut self, atom: impl Into<String>) -> usize {
-        let atom = atom.into();
-
-        self.frame.atoms.allocate(atom)
+        self.frame.atoms.get_or_allocate(atom.into())
     }
 
     fn compile_expression(mut self, input: Expression<'a>) -> Result<Self> {
@@ -487,9 +511,12 @@ impl<'a, 'c> ChunkBuilder {
             Expression::Boolean(value) => self.append(LoadConstant {
                 constant: Constant::Boolean(value),
             }),
-            Expression::String(value) => self.append(LoadConstant {
-                constant: Constant::String(value),
-            }),
+            Expression::String(value) => {
+                let constant = self.frame.atoms.allocate(value);
+                self.append(LoadConstant {
+                    constant: Constant::Atom(constant),
+                })
+            }
             Expression::Inc { reference, .. } => self
                 .compile_expression(Expression::Reference(reference))?
                 .append(Increment { by: 1.0 }),
@@ -707,6 +734,17 @@ impl<'a, 'c> ChunkBuilder {
             Expression::Undefined => self.append(LoadConstant {
                 constant: Constant::Undefined,
             }),
+            Expression::Add { expressions } => {
+                let mut next = self;
+
+                let times = expressions.len() as u8 - 1;
+
+                for expression in expressions.into_iter().rev() {
+                    next = next.compile_expression(expression)?;
+                }
+
+                next.append(Instruction::Add { times })
+            }
             node => {
                 internal_error!("Unexpected expression {:?}", node);
             }
@@ -742,7 +780,11 @@ impl<'a, 'c> ChunkBuilder {
                     let local = next.allocate_local(identifier, false);
 
                     if let Some(expression) = expression {
-                        if !next.frame.locals.set_init_value(local, &expression) {
+                        if !next.frame.locals.set_init_value(
+                            local,
+                            &expression,
+                            &mut next.frame.atoms,
+                        ) {
                             next = next
                                 .compile_expression(expression)?
                                 .append(SetLocal { local });
@@ -1042,7 +1084,11 @@ impl<'a, 'c> ChunkBuilder {
                     let local = next.allocate_local(identifier, false);
 
                     if let Some(expression) = expression {
-                        if !next.frame.locals.set_init_value(local, &expression) {
+                        if !next.frame.locals.set_init_value(
+                            local,
+                            &expression,
+                            &mut next.frame.atoms,
+                        ) {
                             next = next
                                 .compile_expression(expression)?
                                 .append(SetLocal { local });

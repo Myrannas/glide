@@ -1,3 +1,4 @@
+use crate::primordials::RuntimeHelpers;
 use crate::{JsThread, RuntimeValue};
 
 pub(crate) fn equality<'a>(
@@ -68,9 +69,7 @@ pub(crate) fn logical_or(thread: &mut JsThread, left: usize, right: usize) {
     let l_prim = l_ref.clone();
     let l_prim = resolve!(l_prim, thread);
 
-    let r: bool = l_prim.into();
-
-    if r {
+    if l_prim.to_bool(&thread.realm) {
         thread.push_stack(l_ref);
 
         thread.jump(left);
@@ -82,36 +81,35 @@ pub(crate) fn logical_or(thread: &mut JsThread, left: usize, right: usize) {
 pub(crate) fn logical_and(thread: &mut JsThread, left: usize, right: usize) {
     let l_ref: RuntimeValue = pop!(thread);
 
-    let r: bool = l_ref.clone().into();
-
-    if !r {
+    if l_ref.to_bool(&thread.realm) {
+        thread.jump(right);
+    } else {
         thread.push_stack(l_ref);
 
         thread.jump(left);
-    } else {
-        thread.jump(right);
     }
 }
 
 pub(crate) fn logical_not(thread: &mut JsThread) {
-    let left: bool = pop!(thread);
+    let left = pop!(thread);
 
-    thread.push_stack(!left);
+    thread.push_stack(!left.to_bool(&thread.realm));
     thread.step();
 }
 
 pub(crate) fn type_of(thread: &mut JsThread) {
     let left = pop!(thread);
 
+    let constants = thread.realm.constants;
     let str = match left {
-        RuntimeValue::Boolean(_) => "boolean".to_owned(),
-        RuntimeValue::Null => "null".to_owned(),
-        RuntimeValue::Object(obj) if obj.is_callable(thread) => "function".to_owned(),
-        RuntimeValue::Object(_) => "object".to_owned(),
-        RuntimeValue::String(..) => "string".to_owned(),
-        RuntimeValue::Float(_) => "number".to_owned(),
-        RuntimeValue::Undefined => "undefined".to_owned(),
-        _ => "???".to_owned(),
+        RuntimeValue::Boolean(_) => constants.boolean,
+        RuntimeValue::Null => constants.null,
+        RuntimeValue::Object(obj) if obj.is_callable(&thread.realm.objects) => constants.function,
+        RuntimeValue::Object(_) => constants.object,
+        RuntimeValue::String(..) => constants.string,
+        RuntimeValue::Float(_) => constants.number,
+        RuntimeValue::Undefined => constants.undefined,
+        _ => unreachable!("Unexpected runtime value for typeof"),
     };
 
     thread.push_stack(str);
@@ -128,11 +126,14 @@ fn numeric_comparison_op(
 
     match (left, right) {
         (RuntimeValue::String(s1), RuntimeValue::String(s2)) => {
-            let left = s1.as_ref();
-            let right = s2.as_ref();
+            let left = thread.realm.strings.get(s1).as_ref();
+            let right = thread.realm.strings.get(s2).as_ref();
             thread.push_stack(str_op(left, right))
         }
-        (left, right) => thread.push_stack(num_op(left.into(), right.into())),
+        (left, right) => thread.push_stack(num_op(
+            left.to_number(&thread.realm),
+            right.to_number(&thread.realm),
+        )),
     }
 
     thread.step();
@@ -145,19 +146,16 @@ pub(crate) fn in_operator(thread: &mut JsThread) {
     let obj = if let RuntimeValue::Object(obj) = right {
         obj
     } else {
-        let error = thread.realm.errors.new_type_error(
-            &mut thread.realm.objects,
-            format!(
-                "Cannot use 'in' operator to search for '{}' in {}",
-                left, right
-            ),
-        );
-        return thread.throw(error);
+        let type_error = thread.new_type_error(format!(
+            "Cannot use 'in' operator to search for '{}' in {}",
+            left, right
+        ));
+        return thread.throw(type_error);
     };
 
     let name = catch!(thread, left.to_string(thread));
 
-    thread.push_stack(obj.has(thread, &name));
+    thread.push_stack(obj.has(&thread.realm.objects, name));
     thread.step();
 }
 

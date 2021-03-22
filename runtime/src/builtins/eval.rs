@@ -23,14 +23,14 @@ impl<'a> From<CompilerError> for ExecutionError<'a> {
 pub(crate) fn eval<'a>(
     args: usize,
     frame: &mut JsThread<'a>,
-    _value: ObjectPointer<'a>,
+    _value: RuntimeValue<'a>,
     _context: Option<&RuntimeValue<'a>>,
 ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
     let argument = frame.read_arg(args, 0);
 
     match argument {
         Some(RuntimeValue::String(str)) => {
-            let input = str.as_ref().to_owned();
+            let input = frame.realm.strings.get(str).as_ref().to_owned();
 
             let code = match parse_input(&input) {
                 Ok(code) => code,
@@ -50,10 +50,11 @@ pub(crate) fn eval<'a>(
             let this = frame.current_context().this().clone();
             let context = frame.current_context().clone();
 
+            let loaded_function = JsFunction::load(function, &mut frame.realm);
             let result = frame.call_from_native(
                 this,
                 FunctionReference::Custom(CustomFunctionReference {
-                    function: JsFunction::load(function),
+                    function: loaded_function,
                     parent_context: context,
                 }),
                 0,

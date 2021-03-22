@@ -1,23 +1,20 @@
 use crate::object_pool::{ObjectPointer, ObjectPool};
+use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
-use crate::values::object::FunctionObject;
 use crate::values::value::Reference;
-use crate::{ExecutionError, InternalError, JsObject, JsThread, RuntimeValue};
+use crate::{ExecutionError, JsObject, JsThread, RuntimeValue};
 use instruction_set::Constant;
 
 fn get_callable<'a>(
     thread: &mut JsThread<'a>,
-    value: RuntimeValue<'a>,
+    value: &RuntimeValue<'a>,
 ) -> JsResult<'a, ObjectPointer<'a>> {
     // 1. Assert: F is an ECMAScript function object.
     match &value {
-        RuntimeValue::Object(obj) if obj.is_callable(thread) => Ok(*obj),
+        RuntimeValue::Object(obj) if obj.is_callable(&thread.realm.objects) => Ok(*obj),
         _ => Err(ExecutionError::Thrown(
-            thread.realm.errors.new_type_error(
-                &mut thread.realm.objects,
-                format!("{} is not a function", value),
-            ),
+            thread.new_type_error(format!("{} is not a function", value)),
             None,
         )),
     }
@@ -34,36 +31,39 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
     let target = match fn_value.clone() {
-        RuntimeValue::Reference(Reference::String { base, .. }) => base,
-        RuntimeValue::Reference(Reference::Number { base, .. }) => base,
-        other => resolve!(other, thread).to_object(thread),
+        RuntimeValue::Reference(Reference::String { base, .. })
+        | RuntimeValue::Reference(Reference::Number { base, .. }) => base,
+        other => catch!(thread, resolve!(other, thread).to_object(thread)),
     };
 
     let fn_object = resolve!(fn_value.clone(), thread);
-    let fn_object = catch!(thread, get_callable(thread, fn_object));
+    let fn_object = catch!(thread, get_callable(thread, &fn_object));
 
     // 2. If F.[[IsClassConstructor]] is true, throw a TypeError exception.
-    if fn_object.is_class_constructor(thread) {
-        let message = if let Some(name) = fn_object.get_name(thread) {
+    if fn_object.is_class_constructor(&thread.realm.objects) {
+        let message = if let Some(name) = fn_object.get_name(&thread.realm.objects) {
             format!("Class constructor {} cannot be invoked without 'new'", name)
         } else {
             "Class constructors cannot be invoked without 'new'".to_owned()
         };
 
-        let error = thread
-            .realm
-            .errors
-            .new_type_error(&mut thread.realm.objects, message);
+        let error = thread.new_type_error(message);
         return thread.throw(error);
     }
 
-    let callable = fn_object.get_callable(thread).unwrap().clone();
+    let callable = fn_object
+        .get_callable(&thread.realm.objects)
+        .unwrap()
+        .clone();
     match callable {
         FunctionReference::Custom(function) => {
-            thread.call(target, function.clone(), args, false, false);
+            thread.call(target.into(), function.clone(), args, false, false);
         }
         FunctionReference::BuiltIn(function) => {
-            function.apply(args, thread, Some(target));
+            let result = catch!(thread, function.apply_return(args, thread, target.into()));
+
+            thread.push_stack(result.unwrap_or_default());
+
             thread.step();
         }
     }
@@ -80,37 +80,37 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let fn_value: RuntimeValue = thread.pop_stack();
 
     let resolved_value = resolve!(fn_value.clone(), thread);
-    let fn_object = catch!(thread, get_callable(thread, resolved_value.clone()));
+    let fn_object = catch!(thread, get_callable(thread, &resolved_value));
 
-    let callable = if let Some(callable) = fn_object.get_construct(thread) {
-        callable.clone()
+    let callable = if let Some(constructor) = fn_object.get_construct(&thread.realm.objects) {
+        constructor.clone()
     } else {
-        // `object.is_callable()` asserts that there must be a callable
-        fn_object.get_callable(thread).unwrap().clone()
+        let error = thread.new_type_error("is not a constructor");
+        return thread.throw(ExecutionError::Thrown(error, None));
     };
 
     let mut target = JsObject::new();
 
-    if let Some(name) = fn_object.get_name(thread) {
-        target.set_name(name.clone());
+    if let Some(name) = fn_object.get_name(&thread.realm.objects) {
+        target.set_name(name);
     }
 
     if let Some(prototype) = fn_object.get_prototype(thread) {
         target.set_prototype(prototype);
     }
 
-    target.set(&"constructor".into(), resolved_value);
+    target.set(thread.realm.constants.constructor, resolved_value);
 
-    let target_pointer = thread.allocate(target);
+    let target_pointer = thread.realm.objects.allocate(target);
 
     match callable {
         FunctionReference::Custom(function) => {
-            thread.call(target_pointer, function, args, true, false);
+            thread.call(target_pointer.into(), function, args, true, false);
         }
         FunctionReference::BuiltIn(function) => {
             catch!(
                 thread,
-                function.apply_return(args, thread, Some(target_pointer))
+                function.apply_return(args, thread, target_pointer.into())
             );
 
             thread.push_stack(target_pointer);
@@ -124,7 +124,7 @@ pub(crate) fn jump(thread: &mut JsThread, to: usize) {
 }
 
 pub(crate) fn compare_jump(thread: &mut JsThread, if_true: usize, if_false: usize) {
-    if pop!(thread) {
+    if pop!(thread).to_bool(&thread.realm) {
         thread.jump(if_true);
     } else {
         thread.jump(if_false);
@@ -159,7 +159,17 @@ pub(crate) fn return_constant(thread: &mut JsThread, constant: &Constant) {
 
         thread.return_value(this);
     } else {
-        thread.return_value(constant)
+        let c = match constant {
+            Constant::Null => RuntimeValue::Null,
+            Constant::Undefined => RuntimeValue::Undefined,
+            Constant::Float(value) => RuntimeValue::Float(*value),
+            Constant::Boolean(value) => RuntimeValue::Boolean(*value),
+            Constant::Atom(value) => {
+                RuntimeValue::String(thread.current_function().get_atom(*value))
+            }
+        };
+
+        thread.return_value(c);
     };
 }
 

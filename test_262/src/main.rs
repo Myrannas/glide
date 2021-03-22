@@ -13,9 +13,9 @@ use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
 use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
-use glide_runtime::{ExecutionError, FunctionObject, JsFunction, JsThread, Realm, RuntimeValue};
+use glide_runtime::{ExecutionError, JsFunction, JsThread, Realm, RuntimeValue};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ fn bootstrap_harness<'a>() -> ModuleSet<'a> {
     for file in vec![
         "./test262/harness/sta.js",
         "./test262/harness/assert.js",
-        // "./test262/harness/propertyHelper.js",
+        "./test262/harness/propertyHelper.js",
     ] {
         let sta = read_to_string(file).unwrap();
         let sta_module = parse_input(&sta).unwrap();
@@ -36,13 +36,28 @@ fn bootstrap_harness<'a>() -> ModuleSet<'a> {
 
         let compiled = compile("assert.js", sta_module, CompilerOptions::new()).unwrap();
 
-        let module = JsFunction::load(compiled.init);
+        let module = JsFunction::load(compiled.init, &mut realm);
 
         let mut thread = JsThread::new(module.clone(), realm.clone());
 
-        thread.run().unwrap();
+        let result = thread.run();
 
-        realm = thread.finalize();
+        match result {
+            Err(ExecutionError::Thrown(RuntimeValue::Object(obj), _)) => {
+                let obj = thread.debug(&obj);
+
+                // let to_string = realm.intern_string("message");
+                // let to_string = obj.get_value(&mut thread, to_string).unwrap();
+
+                panic!("{:?}", obj);
+            }
+            Err(other) => {
+                panic!("{:?}", other)
+            }
+            Ok(_) => {
+                realm = thread.finalize();
+            }
+        }
     }
 
     ModuleSet { realm }
@@ -118,13 +133,13 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     let module = AssertUnwindSafe(module);
 
     let time = match catch_unwind(|| {
+        let mut global = harness.realm.clone();
+
         let start = std::time::Instant::now();
 
-        let global = harness.realm.clone();
+        let function = JsFunction::load(module.0?.init, &mut global);
 
-        let function = JsFunction::load(module.0?.init);
-
-        let mut thread = JsThread::new(function, global.clone());
+        let mut thread = JsThread::new(function, global);
         thread.set_cost_limit(cost_limit);
 
         let result = thread.run();
@@ -137,7 +152,8 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
             match result {
                 Ok(_) => Err(Error::msg("Expected a Test262Error error")),
                 Err(ExecutionError::Thrown(RuntimeValue::Object(obj), ..)) => {
-                    let to_string = obj.get_value(&mut thread, &"toString".into()).unwrap();
+                    let to_string = thread.get_realm_mut().intern_string("toString");
+                    let to_string = obj.get_value(&mut thread, to_string).unwrap();
 
                     if let RuntimeValue::Object(fn_object) = to_string {
                         let result = fn_object
@@ -146,7 +162,11 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
                             .to_string(&mut thread)
                             .unwrap();
 
-                        if result.as_ref().starts_with("Test262Error:") {
+                        if thread
+                            .get_realm()
+                            .get_string(result)
+                            .starts_with("Test262Error:")
+                        {
                             Ok(std::time::Instant::now() - start)
                         } else {
                             Err(Error::msg("Expected a Test262Error error"))
@@ -190,6 +210,9 @@ struct TestResult {
     result: SuiteResult,
     name: String,
 
+    #[serde(default)]
+    runtime: f64,
+
     #[serde(skip_serializing)]
     error: Option<String>,
 }
@@ -214,6 +237,12 @@ fn main() {
                 .help("Write the test results")
                 .short("x")
                 .long("commit"),
+        )
+        .arg(
+            Arg::with_name("profile")
+                .help("Profile")
+                .short("p")
+                .long("profile"),
         )
         .arg(
             Arg::with_name("limit")
@@ -251,49 +280,72 @@ fn main() {
 
     let mut success_time = Duration::from_micros(0);
     let mut results: Vec<TestResult> = Vec::new();
+    let is_profiling = matches.is_present("profile");
+    let runs = if is_profiling { 500 } else { 1 };
     for suite in suites {
         let suite_name = suite.to_str().unwrap().to_owned();
 
-        print!("Running suite {:80.80}", suite_name);
+        println!("Running suite {:80.80}\n", suite_name);
 
-        match run_suite(
-            suite.clone(),
-            &harness,
-            matches.value_of("limit").unwrap().parse().unwrap(),
-        ) {
-            Ok(Outcome::Pass(time)) => {
-                if time != Duration::from_micros(0) {
-                    println!(
-                        "{} in {:.1}us",
-                        "pass".green(),
-                        time.as_secs_f64() * 1_000_000.0
-                    );
-                } else {
-                    println!("{} (expected Syntax Error)", "pass".green());
+        let mut runtime = Duration::from_micros(0);
+        let mut passed = true;
+        for run in 0..runs {
+            match run_suite(
+                suite.clone(),
+                &harness,
+                matches.value_of("limit").unwrap().parse().unwrap(),
+            ) {
+                Ok(Outcome::Pass(time)) => {
+                    if time != Duration::from_micros(0) {
+                        runtime += time;
+
+                        if run % 100 == 99 {
+                            println!(
+                                "{}: {} in {:.1}us",
+                                run,
+                                "pass".green(),
+                                (runtime.as_secs_f64() * 1_000_000.0) / (run as f64)
+                            );
+                        }
+                    } else {
+                        println!("{} (expected Syntax Error)", "pass".green());
+                        break;
+                    }
                 }
-                success_time += time;
-                results.push(TestResult {
-                    result: SuiteResult::Success,
-                    name: suite_name,
-                    error: None,
-                })
+                Ok(Outcome::Skip) => {
+                    println!("{}", "skip".yellow());
+                    results.push(TestResult {
+                        result: SuiteResult::Skip,
+                        name: suite_name.clone(),
+                        error: None,
+                        runtime: 0.0,
+                    });
+                    passed = false;
+                    break;
+                }
+                Err(err) => {
+                    println!("{}", "fail".red());
+                    results.push(TestResult {
+                        result: SuiteResult::Failure,
+                        name: suite_name.clone(),
+                        error: Some(err.to_string()),
+                        runtime: 0.0,
+                    });
+                    passed = false;
+                    break;
+                }
             }
-            Ok(Outcome::Skip) => {
-                println!("{}", "skip".yellow());
-                results.push(TestResult {
-                    result: SuiteResult::Skip,
-                    name: suite_name,
-                    error: None,
-                })
-            }
-            Err(err) => {
-                println!("{}", "fail".red());
-                results.push(TestResult {
-                    result: SuiteResult::Failure,
-                    name: suite_name,
-                    error: Some(err.to_string()),
-                })
-            }
+        }
+
+        if passed {
+            results.push(TestResult {
+                result: SuiteResult::Success,
+                name: suite_name.clone(),
+                error: None,
+                runtime: runtime.as_secs_f64() / (runs as f64),
+            });
+
+            success_time += runtime / (runs as u32);
         }
     }
 
@@ -303,14 +355,37 @@ fn main() {
 
     let mut previous: BTreeMap<_, _> = serde_json::from_str(&input).unwrap_or_default();
 
-    let differences: Vec<TestResult> = results
+    let differences: Vec<(TestResult, TestResult)> = results
         .into_iter()
-        .filter(
-            |result| match previous.insert(result.name.clone(), result.clone()) {
-                None => false,
-                Some(previous) => !compare || previous.result != result.result,
-            },
-        )
+        .filter_map(|result| {
+            let result_to_store = TestResult {
+                name: result.name.clone(),
+                runtime: if is_profiling {
+                    result.runtime
+                } else {
+                    previous
+                        .get(&result.name)
+                        .map(|t: &TestResult| t.runtime)
+                        .unwrap_or_default()
+                },
+                error: None,
+                result: result.result.clone(),
+            };
+
+            match previous.insert(result.name.clone(), result_to_store) {
+                None => None,
+                Some(previous) => {
+                    let difference = (previous.runtime - result.runtime).abs();
+                    let difference_percent = (difference / previous.runtime) * 100.0;
+
+                    if !compare || previous.result != result.result || difference_percent > 10.0 {
+                        Some((result, previous))
+                    } else {
+                        None
+                    }
+                }
+            }
+        })
         .collect();
 
     if commit {
@@ -321,10 +396,32 @@ fn main() {
         .unwrap();
     }
 
-    for difference in differences.iter() {
+    for (difference, previous) in differences.iter() {
         match difference.result {
             SuiteResult::Success => {
-                println!("{}", difference.name.green())
+                let time_difference = if previous.runtime != 0.0 {
+                    let time_difference = difference.runtime - previous.runtime;
+
+                    if time_difference > 0.0 {
+                        format!(
+                            "{:.3}+{:.3}us",
+                            previous.runtime * 1_000_000.0,
+                            time_difference * 1_000_000.0
+                        )
+                        .red()
+                    } else {
+                        format!(
+                            "{:.3}{:.3}us",
+                            previous.runtime * 1_000_000.0,
+                            time_difference * 1_000_000.0
+                        )
+                        .green()
+                    }
+                } else {
+                    "".to_owned().green()
+                };
+
+                println!("{} {}", difference.name.green(), time_difference)
             }
             SuiteResult::Failure => {
                 println!("{}", difference.name.red());
@@ -339,17 +436,18 @@ fn main() {
 
     let success_count = differences
         .iter()
-        .filter(|f| f.result == SuiteResult::Success)
+        .filter(|(current, previous)| current.result != previous.result)
+        .filter(|f| f.0.result == SuiteResult::Success)
         .count();
 
     let skip_count = differences
         .iter()
-        .filter(|f| f.result == SuiteResult::Skip)
+        .filter(|f| f.0.result == SuiteResult::Skip)
         .count();
 
     let failure_count = differences
         .iter()
-        .filter(|f| f.result == SuiteResult::Failure)
+        .filter(|f| f.0.result == SuiteResult::Failure)
         .count();
 
     let total_success_count = previous

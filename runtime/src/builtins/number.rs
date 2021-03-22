@@ -1,22 +1,22 @@
-use crate::object_pool::ObjectPointer;
-use crate::result::JsResult;
-use crate::{JsObject, JsThread, RuntimeValue};
+use crate::{JsThread, RuntimeValue};
 use builtin::{named, prototype};
 
+#[allow(dead_code)]
 pub(crate) struct JsNumber<'a, 'b> {
-    object: ObjectPointer<'a>,
+    target: RuntimeValue<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
 #[prototype]
+#[named("Number")]
 impl<'a, 'b> JsNumber<'a, 'b> {
     #[named("parseInt")]
-    fn parse_int(value: RuntimeValue<'a>, radix: RuntimeValue<'a>) -> JsResult<'a, f64> {
-        Ok(value.into())
+    fn parse_int(thread: &mut JsThread<'a>, value: &RuntimeValue<'a>) -> f64 {
+        value.to_number(&thread.realm)
     }
 
     #[named("isFinite")]
-    fn is_finite(value: RuntimeValue<'a>) -> bool {
+    fn is_finite(_: &mut JsThread<'a>, value: &RuntimeValue<'a>) -> bool {
         match value {
             RuntimeValue::Float(value) => value.is_finite(),
             _ => false,
@@ -24,7 +24,7 @@ impl<'a, 'b> JsNumber<'a, 'b> {
     }
 
     #[named("isNaN")]
-    fn is_nan(value: RuntimeValue<'a>) -> bool {
+    fn is_nan(_: &mut JsThread<'a>, value: &RuntimeValue<'a>) -> bool {
         match value {
             RuntimeValue::Float(value) => {
                 if value.is_infinite() {
@@ -38,12 +38,13 @@ impl<'a, 'b> JsNumber<'a, 'b> {
     }
 
     #[named("isSafeInteger")]
-    fn is_safe_integer(value: RuntimeValue<'a>) -> bool {
+    fn is_safe_integer(_: &mut JsThread<'a>, value: &RuntimeValue<'a>) -> bool {
         match value {
             RuntimeValue::Float(value) => {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let absolute_value = value.abs() as u64;
 
-                absolute_value < (((2 as u64) << 53) - 1)
+                absolute_value < ((2_u64 << 53) - 1)
             }
             _ => false,
         }

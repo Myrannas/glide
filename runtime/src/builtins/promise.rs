@@ -1,11 +1,9 @@
-use crate::object_pool::ObjectPointer;
 use crate::result::JsResult;
-use crate::values::object::FunctionObject;
 use crate::{BuiltIn, JsObject, JsThread, RuntimeValue};
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsPromise<'a, 'b> {
-    object: ObjectPointer<'a>,
+    target: RuntimeValue<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -13,26 +11,46 @@ pub(crate) struct JsPromise<'a, 'b> {
 #[named("Promise")]
 impl<'a, 'b> JsPromise<'a, 'b> {
     #[constructor]
-    fn constructor(&mut self, resolver: Option<RuntimeValue<'a>>) -> JsResult<'a, ()> {
-        let resolve = JsObject::builder()
+    fn constructor(&mut self, _resolver: &Option<RuntimeValue<'a>>) -> JsResult<'a, ()> {
+        let resolve = JsObject::builder(&mut self.thread.realm.objects)
             .with_callable(BuiltIn {
                 context: None,
                 op: |_, _, _, _| Ok(None),
             })
-            .build(self.thread);
+            .build();
 
-        let reject = JsObject::builder()
+        let reject = JsObject::builder(&mut self.thread.realm.objects)
             .with_callable(BuiltIn {
                 context: None,
                 op: |_, _, _, _| Ok(None),
             })
-            .build(self.thread);
+            .build();
 
-        self.object
+        self.target
+            .to_object(self.thread)?
             .call(self.thread, &[resolve.into(), reject.into()])?;
 
         Ok(())
     }
+
+    fn then(&mut self) {}
+
+    fn catch(&mut self) {}
+
+    fn finally(&mut self) {}
+
+    fn all(_: &mut JsThread<'a>) {}
+
+    #[named("allSettled")]
+    fn all_settled(_: &mut JsThread<'a>) {}
+
+    fn any(_: &mut JsThread<'a>) {}
+
+    fn race(_: &mut JsThread<'a>) {}
+
+    fn resolve(_: &mut JsThread<'a>) {}
+
+    fn reject(_: &mut JsThread<'a>) {}
     // #[named("getOwnPropertyDescriptor")]
     // fn get_property_descriptor(&mut self) -> JsResult<'a> {
     //     let object = JsObject::new();

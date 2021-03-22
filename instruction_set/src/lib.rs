@@ -12,7 +12,7 @@ type Atom = usize;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Instruction {
     Truncate,
-    Add,
+    Add { times: u8 },
     Subtract,
     Divide,
     Modulo,
@@ -62,6 +62,7 @@ pub enum Instruction {
     RightShift,
     LeftShift,
     InstanceOf,
+    Exponential,
     Increment { by: f64 },
     Catch { chunk: ChunkId },
     DropCatch { chunk: ChunkId },
@@ -76,7 +77,7 @@ pub enum Constant {
     Undefined,
     Float(f64),
     Boolean(bool),
-    String(String),
+    Atom(Atom),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -150,6 +151,7 @@ impl Default for Function {
     }
 }
 
+#[derive(Debug)]
 pub struct Module {
     pub init: Function,
 }

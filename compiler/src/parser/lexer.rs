@@ -23,6 +23,9 @@ pub enum Token<'a> {
     #[token("*")]
     Multiply,
 
+    #[token("**")]
+    Exponential,
+
     #[token("/")]
     Divide,
 

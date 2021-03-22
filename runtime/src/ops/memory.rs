@@ -1,3 +1,4 @@
+use crate::primordials::RuntimeHelpers;
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::value::{InternalValue, Reference};
 use crate::{InternalError, JsThread, RuntimeValue};
@@ -10,17 +11,16 @@ pub(crate) fn set(thread: &mut JsThread) {
     let target: RuntimeValue = pop!(thread, "Need a target");
 
     if target == RuntimeValue::Undefined {
-        let error = thread.realm.errors.new_type_error(
-            &mut thread.realm.objects,
-            format!("Cannot set property {} of undefined", attribute),
-        );
-        return thread.throw(error);
+        let type_error =
+            thread.new_type_error(format!("Cannot set property {} of undefined", attribute));
+
+        return thread.throw(type_error);
     }
 
-    let target = target.to_object(thread);
+    let target = catch!(thread, target.to_object(thread));
 
     if let RuntimeValue::String(str) = attribute {
-        target.set(thread, &str, value);
+        target.set(&mut thread.realm.objects, str, value);
         // println!("{:?} {:?}", target, obj);
     } else if let RuntimeValue::Float(number) = attribute {
         target.set_indexed(thread, number as usize, value);
@@ -39,25 +39,26 @@ pub(crate) fn get(thread: &mut JsThread) {
     let target: RuntimeValue = pop!(thread);
 
     if target == RuntimeValue::Undefined {
-        let error = thread.realm.errors.new_type_error(
-            &mut thread.realm.objects,
-            format!("Cannot get property {} of undefined", attribute),
-        );
-        return thread.throw(error);
+        let attribute = catch!(thread, attribute.to_string(thread));
+        let attribute = thread.realm.strings.get(attribute);
+
+        let error_message = format!("Cannot get property {} of undefined", attribute);
+
+        let type_error = thread.new_type_error(error_message);
+
+        return thread.throw(type_error);
     }
 
-    let target = target.to_object(thread);
+    let target = catch!(thread, target.to_object(thread));
 
     let reference = match attribute {
         RuntimeValue::Float(index) => RuntimeValue::Reference(Reference::Number {
             base: target,
             name: index as usize,
-            strict: true,
         }),
         value => RuntimeValue::Reference(Reference::String {
             base: target,
             name: catch!(thread, value.to_string(thread)),
-            strict: true,
         }),
     };
 
@@ -71,13 +72,13 @@ pub(crate) fn set_named(thread: &mut JsThread, atom: usize) {
 
     // println!("Get named, target {:?}.{}", target, atom);
 
-    let target = target.to_object(thread);
+    let target = catch!(thread, target.to_object(thread));
 
     let atom = thread.current_function().get_atom(atom);
 
     // println!("Set named, target {:?}.{} = {:?}", target, atom, value);
 
-    target.set(thread, &atom, value);
+    target.set(&mut thread.realm.objects, atom, value);
 
     thread.step();
 }
@@ -109,7 +110,7 @@ pub(crate) fn set_capture(thread: &mut JsThread, offset: usize, local: usize) {
 
 pub(crate) fn get_function(thread: &mut JsThread, function_id: usize) {
     let function = thread.current_function();
-    let name = function.name().to_string();
+    let name = function.name();
     let child_function = function.child_function(function_id).clone();
 
     let function_reference = FunctionReference::Custom(CustomFunctionReference {
@@ -117,11 +118,7 @@ pub(crate) fn get_function(thread: &mut JsThread, function_id: usize) {
         parent_context: thread.current_context().clone(),
     });
 
-    let value =
-        thread
-            .realm
-            .wrappers
-            .wrap_function(&mut thread.realm.objects, name, function_reference);
+    let value = thread.new_function(name, function_reference);
 
     // println!("{:?}", value);
 
@@ -141,12 +138,12 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
             RuntimeValue::Object(obj) => Prototype::Custom(obj),
             RuntimeValue::Null => Prototype::Null,
             value => {
-                let error = thread.realm.errors.new_type_error(
-                    &mut thread.realm.objects,
-                    format!("Class extends value {} is not a constructor or null", value,),
-                );
+                let type_error = thread.new_type_error(format!(
+                    "Class extends value {} is not a constructor or null",
+                    value,
+                ));
 
-                return thread.throw(error);
+                return thread.throw(type_error);
             }
         }
     } else {
@@ -167,45 +164,51 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
     let target: RuntimeValue = pop!(thread, "Need a target");
 
     if target == RuntimeValue::Undefined {
-        let error = thread.realm.errors.new_type_error(
-            &mut thread.realm.objects,
-            format!("Cannot get property {} of undefined", atom),
-        );
+        let attribute = thread.realm.strings.get(atom);
 
-        return thread.throw(error);
+        let type_error =
+            thread.new_type_error(format!("Cannot get property {} of undefined", attribute));
+
+        return thread.throw(type_error);
     }
 
     // println!("Get named, target {:?}.{}", target, atom);
 
-    let target = target.to_object(thread);
+    let target = catch!(thread, target.to_object(thread));
 
     thread.push_stack(RuntimeValue::Reference(Reference::String {
         base: target,
         name: atom,
-        strict: true,
     }));
 
     thread.step();
 }
 
 pub(crate) fn load_constant(thread: &mut JsThread, constant: &Constant) {
-    thread.stack.push(constant.into());
+    thread.stack.push(RuntimeValue::from_constant(
+        thread.current_function().atoms(),
+        constant,
+    ));
 
     thread.step();
 }
 
 pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environmental) {
-    let value = match environmental {
-        Environmental::GlobalThis => thread.realm.global_this.clone(),
+    let value: RuntimeValue = match environmental {
+        Environmental::GlobalThis => thread.realm.global_this.clone().into(),
         Environmental::This => thread.current_context().this().clone(),
-        Environmental::NewObject => thread.realm.wrappers.new_object(&mut thread.realm.objects),
+        Environmental::NewObject => thread
+            .realm
+            .wrappers
+            .new_object(&mut thread.realm.objects)
+            .into(),
     };
 
     thread.push_stack(value);
     thread.step();
 }
 
-pub(crate) fn delete(thread: &mut JsThread) {
+pub(crate) fn delete(_thread: &mut JsThread) {
     todo!("Not yet working");
 }
 

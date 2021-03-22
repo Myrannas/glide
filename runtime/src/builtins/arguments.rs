@@ -1,19 +1,24 @@
-use crate::object_pool::ObjectPointer;
-use crate::{JsObject, JsThread};
-use builtin::{callable, getter, named, prototype, varargs};
+use crate::result::JsResult;
+use crate::{JsThread, RuntimeValue};
+use builtin::{getter, prototype};
 
 pub(crate) struct JsArguments<'a, 'b> {
-    object: ObjectPointer<'a>,
+    target: RuntimeValue<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
 #[prototype]
 impl<'a, 'b> JsArguments<'a, 'b> {
     #[getter]
-    fn length(&self) -> f64 {
-        self.object
-            .get_object(self.thread)
+    fn length(&mut self) -> JsResult<'a, f64> {
+        let pointer = self.target.to_object(self.thread)?;
+
+        #[allow(clippy::cast_precision_loss)]
+        let length = pointer
+            .get_object(&self.thread.realm.objects)
             .get_indexed_properties()
-            .len() as f64
+            .len() as f64;
+
+        Ok(length)
     }
 }

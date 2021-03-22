@@ -29,9 +29,9 @@ impl<'a> From<RuntimeValue<'a>> for JsPrimitive {
             RuntimeValue::Boolean(b) => JsPrimitive::Boolean(b),
             RuntimeValue::Float(f) => JsPrimitive::Float(f),
             RuntimeValue::String(str) => JsPrimitive::String(str),
-            RuntimeValue::Object(_) => panic!("Cannot be wrapped"),
-            RuntimeValue::Reference(_) => panic!("Cannot be wrapped"),
-            RuntimeValue::Internal(_) => panic!("Cannot be wrapped"),
+            RuntimeValue::Object(_) | RuntimeValue::Reference(_) | RuntimeValue::Internal(_) => {
+                panic!("Cannot be wrapped")
+            }
         }
     }
 }

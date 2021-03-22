@@ -15,7 +15,7 @@ macro_rules! resolve {
 macro_rules! pop {
     ($thread:ident) => {
         match crate::RuntimeValue::resolve($thread.pop_stack(), $thread) {
-            Ok(value) => value.into(),
+            Ok(value) => value,
             Err(err) => {
                 $thread.throw(err);
                 return;

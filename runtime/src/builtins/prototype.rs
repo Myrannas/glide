@@ -1,22 +1,36 @@
 use crate::object_pool::{ObjectPointer, ObjectPool};
-use crate::JsObject;
+use crate::string_pool::StringPool;
+use crate::{JsObject, JsPrimitiveString};
 
 pub(crate) trait Prototype<'a> {
     fn bind<'b>(
-        pool: &mut impl ObjectPool<'a>,
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
         prototype: Option<&'b ObjectPointer<'a>>,
         object: ObjectPointer<'a>,
-    );
+        function_prototype: ObjectPointer<'a>,
+    ) -> JsPrimitiveString;
 
     fn bind_thread<'b>(
-        pool: &mut impl ObjectPool<'a>,
+        global_this: ObjectPointer<'a>,
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
         prototype: Option<&'b ObjectPointer<'a>>,
+        function_prototype: ObjectPointer<'a>,
     ) -> ObjectPointer<'a> {
-        let mut object = JsObject::new();
+        let object = JsObject::new();
 
         let allocated_object = pool.allocate(object);
 
-        Self::bind(pool, prototype, allocated_object.clone());
+        let name = Self::bind(
+            pool,
+            strings,
+            prototype,
+            allocated_object,
+            function_prototype,
+        );
+
+        global_this.define_value_property(pool, name, allocated_object, true, true, false);
 
         allocated_object
     }

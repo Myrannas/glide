@@ -6,11 +6,11 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::__private::TokenStream2;
 use syn::parse::{ParseBuffer, ParseStream};
-use syn::Lit;
 use syn::{
     parse_macro_input, FnArg, ImplItem, ImplItemMethod, ItemImpl, Meta, NestedMeta, ReturnType,
     Signature, Type,
 };
+use syn::{Lit, PatType};
 
 fn is_result_type(output_type: &Type) -> bool {
     if let Type::Path(type_path) = output_type {
@@ -88,7 +88,7 @@ impl ToTokens for Constructor {
             }.into();
 
             object.set_construct(pool, constructor.clone());
-            prototype.define_value_property("constructor", object.clone(), false, false, true);
+            prototype.define_value_property(strings.intern_native("constructor"), object.clone(), false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -112,21 +112,21 @@ impl ToTokens for StaticMethod {
         let arguments = &self.arguments.call();
 
         let call = self.return_type.as_tokens(quote! {
-            <#type_name>::#method_name(#arguments)
+            <#type_name>::#method_name(thread, #arguments)
         });
 
         let output = quote! {
-            let method = crate::JsObject::builder().with_callable(crate::BuiltIn {
+            let method = crate::JsObject::builder(pool).with_callable(crate::BuiltIn {
                 context: None,
                 op: |args, thread, receiver, context| {
                     #setup
                     #call
                 }
-            }).build(pool);
+            }).with_prototype(function_prototype).build();
 
-            let name: crate::JsPrimitiveString = #method_name_string.into();
-            method.define_value_property(pool, "name", name.clone(), false, false, true);
-            method.define_value_property(pool, "length", 1.0, false, false, true);
+            let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
+            method.define_value_property(pool, strings.intern_native("name"), name.clone(), false, false, true);
+            method.define_value_property(pool, strings.intern_native("length"), 1.0, false, false, true);
             object.define_value_property(pool, name, method, false, false, true);
         };
 
@@ -155,17 +155,17 @@ impl ToTokens for Method {
         });
 
         let output = quote! {
-            let method = crate::JsObject::builder().with_callable(crate::BuiltIn {
+            let method = crate::JsObject::builder(pool).with_callable(crate::BuiltIn {
                 context: None,
                 op: |args, thread, receiver, context| {
                     #setup
                     #call
                 }
-            }).build(pool);
+            }).with_prototype(function_prototype).build();
 
-            let name: crate::JsPrimitiveString = #method_name_string.into();
-            method.define_value_property(pool, "length", 1.0, false, false, true);
-            method.define_value_property(pool, "name", name.clone(), false, false, true);
+            let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
+            method.define_value_property(pool, strings.intern_native("length"), 1.0, false, false, true);
+            method.define_value_property(pool, strings.intern_native("name"), name.clone(), false, false, true);
             prototype.define_value_property(name, method, false, false, true);
         };
 
@@ -192,7 +192,7 @@ impl ToTokens for Getter {
 
         let output = quote! {
             prototype.define_property(
-                #method_name_string,
+                strings.intern_native(#method_name_string),
                 Some(crate::BuiltIn {
                     context: None,
                     op: |args, thread, receiver, context| {
@@ -216,17 +216,25 @@ struct Callable {
     arguments: Arguments,
 }
 
+#[derive(Clone, Copy)]
+enum ArgumentType {
+    ByVal,
+    ByRef,
+}
+
 enum Arguments {
-    List(usize),
+    List(Vec<ArgumentType>),
     Varargs,
 }
 
 impl Arguments {
     fn setup(&self) -> TokenStream2 {
         match self {
-            Arguments::List(size) => {
-                let args: Vec<TokenStream2> = (0..*size)
-                    .map(|i| {
+            Arguments::List(args) => {
+                let args: Vec<TokenStream2> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
                         let arg_id = format_ident!("arg_{}", i);
                         quote! { let #arg_id = thread.read_arg(args, #i); }
                     })
@@ -236,7 +244,7 @@ impl Arguments {
                     #(#args)*
                 }
             }
-            Varargs => {
+            Arguments::Varargs => {
                 quote! {
                     let stack_len = thread.stack.len();
                     let args = thread.stack[(stack_len - args)..stack_len].to_vec();
@@ -247,12 +255,21 @@ impl Arguments {
 
     fn call(&self) -> TokenStream2 {
         match self {
-            Arguments::List(size) => {
-                let args: Vec<TokenStream2> = (0..*size)
-                    .map(|i| {
+            Arguments::List(args) => {
+                let args: Vec<TokenStream2> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, argument)| {
                         let arg_id = format_ident!("arg_{}", i);
 
-                        quote! { #arg_id.into() }
+                        match argument {
+                            ArgumentType::ByRef => {
+                                quote! { &#arg_id.into() }
+                            }
+                            ArgumentType::ByVal => {
+                                quote! { #arg_id.into() }
+                            }
+                        }
                     })
                     .collect();
 
@@ -260,7 +277,7 @@ impl Arguments {
                     #(#args),*
                 }
             }
-            Varargs => {
+            Arguments::Varargs => {
                 quote! {
                     args
                 }
@@ -398,15 +415,16 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             let mut is_callable = false;
             let mut is_varargs = false;
             let mut is_constructor = false;
-            let mut remaining_args = 0;
+            let mut args = Vec::new();
             for input in inputs.iter() {
                 match input {
                     FnArg::Receiver(_) => {
                         uses_self = true;
                     }
-                    FnArg::Typed(_) => {
-                        remaining_args += 1;
-                    }
+                    FnArg::Typed(tpe) => match *tpe.ty {
+                        Type::Reference(..) => args.push(ArgumentType::ByRef),
+                        _ => args.push(ArgumentType::ByVal),
+                    },
                     _ => {}
                 }
             }
@@ -414,9 +432,8 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             for attribute in attrs.iter() {
                 if let Meta::List(meta) = attribute.parse_meta().unwrap() {
                     if meta.path.get_ident().unwrap() == "named" {
-                        match meta.nested.first().unwrap() {
-                            NestedMeta::Lit(Lit::Str(value)) => identifier = value.value(),
-                            _ => {}
+                        if let Some(NestedMeta::Lit(Lit::Str(value))) = meta.nested.first() {
+                            identifier = value.value()
                         }
                     }
                 }
@@ -441,7 +458,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 });
             }
 
-            if is_getter && (is_varargs || remaining_args > 0) {
+            if is_getter && (is_varargs || args.len() > 0) {
                 return TokenStream::from(quote! {
                     compile_error!("Cannot use args for getters");
                 });
@@ -450,7 +467,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             let arguments = if is_varargs {
                 Arguments::Varargs
             } else {
-                Arguments::List(remaining_args)
+                Arguments::List(args)
             };
 
             let return_type = if let ReturnType::Type(.., tpe) = output {
@@ -480,7 +497,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             } else if is_callable {
                 let arguments = match arguments {
                     Arguments::Varargs => Arguments::Varargs,
-                    Arguments::List(size) => Arguments::List(size - 1),
+                    Arguments::List(size) => Arguments::List(size[1..].to_vec()),
                 };
 
                 methods.push(Item::Callable(Callable {
@@ -505,6 +522,11 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                     js_name: identifier,
                 }))
             } else {
+                let arguments = match arguments {
+                    Arguments::Varargs => Arguments::Varargs,
+                    Arguments::List(size) => Arguments::List(size[1..].to_vec()),
+                };
+
                 methods.push(Item::StaticMethod(StaticMethod {
                     type_name: type_name.clone(),
                     arguments,
@@ -519,9 +541,9 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
     let constructor = if !has_new {
         quote! {
             impl<'a, 'b> #self_type {
-                fn new(object: crate::object_pool::ObjectPointer<'a>, thread: &'b mut JsThread<'a>) -> Self {
+                fn new(target: crate::RuntimeValue<'a>, thread: &'b mut JsThread<'a>) -> Self {
                     Self {
-                        object,
+                        target,
                         thread
                     }
                 }
@@ -538,7 +560,13 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
         #constructor
 
         impl <'a, 'b> crate::builtins::prototype::Prototype<'a> for #self_type {
-            fn bind<'c>(pool: &mut impl crate::object_pool::ObjectPool<'a>, parent_prototype: Option<&crate::object_pool::ObjectPointer<'a>>, object: crate::object_pool::ObjectPointer<'a>) {
+            fn bind<'c>(
+                pool: &mut crate::object_pool::ObjectPool<'a>,
+                strings: &mut crate::string_pool::StringPool,
+                parent_prototype: Option<&crate::object_pool::ObjectPointer<'a>>,
+                object: crate::object_pool::ObjectPointer<'a>,
+                function_prototype: crate::object_pool::ObjectPointer<'a>
+            ) -> crate::JsPrimitiveString {
                 let mut prototype = crate::JsObject::new();
 
                 if let Some(parent_prototype) = parent_prototype {
@@ -547,11 +575,13 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
 
                 #(#methods)*
 
-                let type_name: crate::JsPrimitiveString = #name.into();
-                object.define_value_property(pool, "name", #type_identifier.to_string(), false, false, true);
+                let type_name: crate::JsPrimitiveString = strings.intern_native(#name);
+                object.define_value_property(pool, strings.intern_native("name"), strings.intern_native(#type_identifier), false, false, true);
 
                 let allocated_object = pool.allocate(prototype);
                 object.set_prototype(pool, allocated_object);
+
+                strings.intern_native(#type_identifier)
             }
         }
     })

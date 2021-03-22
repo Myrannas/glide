@@ -489,8 +489,15 @@ fn parse_unary<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     Ok(result)
 }
 
-fn parse_commutative<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
+fn parse_exponential<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     parse_binary_expression(input, parse_unary, |token| match token {
+        Token::Exponential => Some(BinaryOperator::Exponential),
+        _ => None,
+    })
+}
+
+fn parse_commutative<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
+    parse_binary_expression(input, parse_exponential, |token| match token {
         Token::Multiply => Some(BinaryOperator::Mul),
         Token::Divide => Some(BinaryOperator::Div),
         Token::Modulus => Some(BinaryOperator::Mod),
@@ -498,12 +505,41 @@ fn parse_commutative<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>
     })
 }
 
+fn flatten_adds<'a>(expression: Expression<'a>, expressions: &mut Vec<Expression<'a>>) {
+    if let Expression::BinaryExpression {
+        operator: BinaryOperator::Add,
+        left,
+        right,
+    } = expression
+    {
+        flatten_adds(*left, expressions);
+        flatten_adds(*right, expressions);
+    } else {
+        expressions.push(expression)
+    };
+}
+
 fn parse_associative<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
-    parse_binary_expression(input, parse_commutative, |token| match token {
+    let result = parse_binary_expression(input, parse_commutative, |token| match token {
         Token::Add => Some(BinaryOperator::Add),
         Token::Sub => Some(BinaryOperator::Sub),
         _ => None,
-    })
+    })?;
+
+    if let Expression::BinaryExpression {
+        operator: BinaryOperator::Add,
+        left,
+        right,
+    } = result
+    {
+        let mut expressions = Vec::new();
+        flatten_adds(*left, &mut expressions);
+        flatten_adds(*right, &mut expressions);
+
+        Ok(Expression::Add { expressions })
+    } else {
+        Ok(result)
+    }
 }
 
 fn parse_shifts<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {

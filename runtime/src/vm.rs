@@ -1,4 +1,5 @@
 use crate::context::JsContext;
+use crate::debugging::{DebugRepresentation, DebuggableWithThread};
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::ops::Operand;
 use crate::primordials::Realm;
@@ -53,17 +54,25 @@ struct CatchFrame {
 
 impl<'a> From<&mut JsThread<'a>> for Stack {
     fn from(thread: &mut JsThread<'a>) -> Self {
+        let mut strings = &mut thread.realm.strings;
+
         let mut call_stack: Vec<StackTraceFrame> = thread
             .call_stack
             .iter()
             .map(|frame| StackTraceFrame {
-                function: frame.current_function.name().to_owned(),
+                function: strings
+                    .get(frame.current_function.name())
+                    .as_ref()
+                    .to_owned(),
                 offset: frame.index,
             })
             .collect();
 
         call_stack.push(StackTraceFrame {
-            function: thread.current_frame.current_function.name().to_owned(),
+            function: strings
+                .get(thread.current_frame.current_function.name())
+                .as_ref()
+                .to_owned(),
             offset: thread.current_frame.index,
         });
 
@@ -86,20 +95,6 @@ pub struct JsThread<'a> {
     call_stack_limit: usize,
 }
 
-impl<'a> ObjectPool<'a> for JsThread<'a> {
-    fn get(&self, index: &ObjectPointer<'a>) -> &JsObject<'a> {
-        self.realm.objects.get(index)
-    }
-
-    fn get_mut(&mut self, index: &ObjectPointer<'a>) -> &mut JsObject<'a> {
-        self.realm.objects.get_mut(index)
-    }
-
-    fn allocate(&mut self, object: JsObject<'a>) -> ObjectPointer<'a> {
-        self.realm.objects.allocate(object)
-    }
-}
-
 impl<'a> JsThread<'a> {
     pub(crate) fn current_context(&self) -> &JsContext<'a> {
         &self.current_frame.context
@@ -109,6 +104,7 @@ impl<'a> JsThread<'a> {
         &self.current_frame.current_function
     }
 
+    #[must_use]
     pub fn read_arg(&self, count: usize, index: usize) -> Option<RuntimeValue<'a>> {
         if index > count {
             None
@@ -117,16 +113,12 @@ impl<'a> JsThread<'a> {
         }
     }
 
+    #[must_use]
     pub fn new(function: JsFunction, mut global_this: Realm<'a>) -> JsThread<'a> {
         let root = JsContext::root(&global_this);
 
-        let context = JsContext::with_parent(
-            &mut global_this.objects,
-            root,
-            global_this.global_this.clone(),
-            &function,
-            &global_this.wrappers,
-        );
+        let this = global_this.global_this.clone().into();
+        let context = JsContext::with_parent(&mut global_this, root, this, &function);
 
         JsThread {
             stack: Vec::with_capacity(1024),
@@ -331,7 +323,7 @@ impl<'a> JsThread<'a> {
 
     pub(crate) fn call(
         &mut self,
-        target: ObjectPointer<'a>,
+        target: RuntimeValue<'a>,
         CustomFunctionReference {
             function,
             parent_context: context,
@@ -353,13 +345,8 @@ impl<'a> JsThread<'a> {
             }
         }
 
-        let new_context = JsContext::with_parent(
-            &mut self.realm.objects,
-            context.clone(),
-            target.clone(),
-            &function,
-            &self.realm.wrappers,
-        );
+        let new_context =
+            JsContext::with_parent(&mut self.realm, context.clone(), target, &function);
 
         let stack_length = self.stack.len();
         let arguments = (stack_length - args)..stack_length;
@@ -407,23 +394,20 @@ impl<'a> JsThread<'a> {
             self.next_instruction().execute(self);
         }
 
-        if let Some(err) = std::mem::replace(&mut self.error, None) {
-            Err(err)
-        } else {
-            Ok(self.stack.pop().unwrap_or_default())
-        }
+        std::mem::replace(&mut self.error, None)
+            .map_or_else(|| Ok(self.stack.pop().unwrap_or_default()), Err)
     }
 
     pub fn call_from_native(
         &mut self,
-        target: ObjectPointer<'a>,
+        target: RuntimeValue<'a>,
         function_reference: impl Into<FunctionReference<'a>>,
         args: usize,
         new: bool,
     ) -> JsResult<'a, RuntimeValue<'a>> {
         match function_reference.into() {
             FunctionReference::BuiltIn(builtin) => {
-                let result = builtin.apply_return(args, self, Some(target))?;
+                let result = builtin.apply_return(args, self, target)?;
 
                 Ok(result.unwrap_or_default())
             }
@@ -439,6 +423,20 @@ impl<'a> JsThread<'a> {
         }
     }
 
+    #[must_use]
+    pub fn debug<'b, 'c>(&self, value: &impl DebugRepresentation<'a>) -> String {
+        format!("{:?}", DebuggableWithThread::from(value, &self))
+    }
+
+    pub fn get_realm_mut(&mut self) -> &mut Realm<'a> {
+        &mut self.realm
+    }
+
+    pub fn get_realm(&self) -> &Realm<'a> {
+        &self.realm
+    }
+
+    #[must_use]
     pub fn finalize(self) -> Realm<'a> {
         self.realm
     }
@@ -464,21 +462,31 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
             Instruction::GetNamed { name } => {
                 let atom = self.thread.current_frame.current_function.get_atom(*name);
 
-                f.debug_struct("GetNamed")
-                    .field("name", &atom.to_string())
+                f.debug_struct("GetNamed").field("name", &atom).finish()
+            }
+            Instruction::GetLocal { local } => {
+                let locals = &self.thread.current_frame.current_function.locals()[*local];
+
+                f.debug_struct("GetLocal")
+                    .field("local", &locals.name)
+                    .field("local_id", local)
+                    .field("value", &self.thread.current_context().read(*local))
                     .finish()
             }
-            Instruction::GetLocal { local } => f
-                .debug_struct("GetLocal")
-                .field("local", local)
-                .field("value", &self.thread.current_context().read(*local))
-                .finish(),
+
+            Instruction::SetLocal { local } => {
+                let locals = &self.thread.current_frame.current_function.locals()[*local];
+
+                f.debug_struct("SetLocal")
+                    .field("local", &locals.name)
+                    .field("local_id", local)
+                    .field("value", &self.thread.stack.last().unwrap_or_default())
+                    .finish()
+            }
             Instruction::SetNamed { name } => {
                 let atom = self.thread.current_frame.current_function.get_atom(*name);
 
-                f.debug_struct("GetNamed")
-                    .field("name", &atom.to_string())
-                    .finish()
+                f.debug_struct("SetNamed").field("name", &atom).finish()
             }
             instr => Instruction::fmt(instr, f),
         }

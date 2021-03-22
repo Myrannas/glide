@@ -62,6 +62,9 @@ impl Suite {
         let module = parse_input(&test)
             .and_then(|module| compile("S8.3_A1_T1.js", module, CompilerOptions::new()));
 
-        Ok(Suite { module, details })
+        Ok(Suite {
+            module: module,
+            details,
+        })
     }
 }
