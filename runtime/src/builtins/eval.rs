@@ -1,7 +1,7 @@
-use crate::object_pool::ObjectPointer;
 use crate::result::{JsResult, SyntaxError};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
-use crate::{ExecutionError, InternalError, JsFunction, JsObject, JsThread, RuntimeValue};
+use crate::values::nan::{Value, ValueType};
+use crate::{ExecutionError, InternalError, JsFunction, JsThread};
 use glide_compiler::{
     compile_eval, parse_input, CompilerError, InternalError as CompilationInternalError,
     SyntaxError as CompilationSyntaxError,
@@ -23,13 +23,13 @@ impl<'a> From<CompilerError> for ExecutionError<'a> {
 pub(crate) fn eval<'a>(
     args: usize,
     frame: &mut JsThread<'a>,
-    _value: RuntimeValue<'a>,
-    _context: Option<&RuntimeValue<'a>>,
-) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-    let argument = frame.read_arg(args, 0);
+    _value: Value<'a>,
+    _context: Option<Value<'a>>,
+) -> JsResult<'a, Option<Value<'a>>> {
+    let argument = frame.read_arg(args, 0).unwrap_or_default();
 
-    match argument {
-        Some(RuntimeValue::String(str)) => {
+    match argument.get_type() {
+        ValueType::String(str) => {
             let input = frame.realm.strings.get(str).as_ref().to_owned();
 
             let code = match parse_input(&input) {
@@ -47,12 +47,12 @@ pub(crate) fn eval<'a>(
                 }
             };
 
-            let this = frame.current_context().this().clone();
+            let this = frame.current_context().this();
             let context = frame.current_context().clone();
 
             let loaded_function = JsFunction::load(function, &mut frame.realm);
             let result = frame.call_from_native(
-                this,
+                this.into(),
                 FunctionReference::Custom(CustomFunctionReference {
                     function: loaded_function,
                     parent_context: context,
@@ -63,6 +63,6 @@ pub(crate) fn eval<'a>(
 
             Ok(Some(result))
         }
-        _ => Ok(Some(RuntimeValue::Undefined)),
+        _ => Ok(Some(Value::UNDEFINED)),
     }
 }

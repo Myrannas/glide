@@ -1,24 +1,26 @@
 use crate::debugging::DebuggableWithThread;
-use crate::object_pool::{ObjectPointer, ObjectPool};
+use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
-use crate::values::value::Reference;
-use crate::{ExecutionError, JsObject, JsThread, RuntimeValue};
+use crate::{ExecutionError, JsObject, JsThread, Value, ValueType};
 use instruction_set::Constant;
 
 fn get_callable<'a>(
     thread: &mut JsThread<'a>,
-    value: &RuntimeValue<'a>,
+    value: Value<'a>,
 ) -> JsResult<'a, ObjectPointer<'a>> {
     // 1. Assert: F is an ECMAScript function object.
-    match &value {
-        RuntimeValue::Object(obj) if obj.is_callable(&thread.realm.objects) => Ok(*obj),
+
+    match value.get_type() {
+        ValueType::Object(obj) if obj.is_callable(&thread.realm.objects) => Ok(obj),
         _ => Err(ExecutionError::Thrown(
-            thread.new_type_error(format!(
-                "{:?} is not a function",
-                DebuggableWithThread::from(value, thread)
-            )),
+            thread
+                .new_type_error(format!(
+                    "{:?} is not a function",
+                    DebuggableWithThread::from(&value, thread)
+                ))
+                .into(),
             None,
         )),
     }
@@ -32,21 +34,20 @@ fn get_callable<'a>(
     The [[Call]] internal method for an ECMAScript function object F is called with parameters thisArgument and argumentsList, a List of ECMAScript language values.
 */
 pub(crate) fn call(thread: &mut JsThread, args: usize) {
-    let fn_value: RuntimeValue = thread.pop_stack();
+    let fn_value: Value = thread.pop_stack();
 
     // ??? -> This is a bit tricky to evaluate.
-    let target = match fn_value.clone() {
-        RuntimeValue::StringReference(_) | RuntimeValue::NumberReference(_) => {
-            catch!(
-                thread,
-                thread.stack.last().unwrap().clone().to_object(thread)
-            )
+    let target = match fn_value.get_type() {
+        ValueType::StringReference(_) | ValueType::NumberReference(_) => {
+            let last = *(thread.stack.last().unwrap());
+
+            catch!(thread, last.to_object(thread))
         }
-        other => catch!(thread, resolve!(other, thread).to_object(thread)),
+        _ => catch!(thread, resolve!(fn_value, thread).to_object(thread)),
     };
 
-    let fn_object = resolve!(fn_value.clone(), thread);
-    let fn_object = catch!(thread, get_callable(thread, &fn_object));
+    let fn_object = resolve!(fn_value, thread);
+    let fn_object = catch!(thread, get_callable(thread, fn_object));
 
     // 2. If F.[[IsClassConstructor]] is true, throw a TypeError exception.
     if fn_object.is_class_constructor(&thread.realm.objects) {
@@ -86,16 +87,16 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
     The [[Construct]] internal method for an ECMAScript function object F is called with parameters argumentsList and newTarget. argumentsList is a possibly empty List of ECMAScript language values.
 */
 pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
-    let fn_value: RuntimeValue = thread.pop_stack();
+    let fn_value: Value = thread.pop_stack();
 
-    let resolved_value = resolve!(fn_value.clone(), thread);
-    let fn_object = catch!(thread, get_callable(thread, &resolved_value));
+    let resolved_value = resolve!(fn_value, thread);
+    let fn_object = catch!(thread, get_callable(thread, resolved_value));
 
     let callable = if let Some(constructor) = fn_object.get_construct(&thread.realm.objects) {
         constructor.clone()
     } else {
         let error = thread.new_type_error("is not a constructor");
-        return thread.throw(ExecutionError::Thrown(error, None));
+        return thread.throw(ExecutionError::Thrown(error.into(), None));
     };
 
     let mut target = JsObject::new();
@@ -152,11 +153,11 @@ pub(crate) fn drop_catch(thread: &mut JsThread, chunk: usize) {
 
 pub(crate) fn return_value(thread: &mut JsThread) {
     if thread.is_new() {
-        let this = thread.current_context().this().clone();
+        let this = thread.current_context().this();
 
         thread.return_value(this);
     } else {
-        let return_value: RuntimeValue = thread.pop_stack();
+        let return_value = pop!(thread);
 
         thread.return_value(return_value)
     };
@@ -164,26 +165,18 @@ pub(crate) fn return_value(thread: &mut JsThread) {
 
 pub(crate) fn return_constant(thread: &mut JsThread, constant: &Constant) {
     if thread.is_new() {
-        let this = thread.current_context().this().clone();
+        let this = thread.current_context().this();
 
         thread.return_value(this);
     } else {
-        let c = match constant {
-            Constant::Null => RuntimeValue::Null,
-            Constant::Undefined => RuntimeValue::Undefined,
-            Constant::Float(value) => RuntimeValue::Float(*value),
-            Constant::Boolean(value) => RuntimeValue::Boolean(*value),
-            Constant::Atom(value) => {
-                RuntimeValue::String(thread.current_function().get_atom(*value))
-            }
-        };
+        let c = Value::from_constant(thread.current_function().atoms(), *constant);
 
         thread.return_value(c);
     };
 }
 
 pub(crate) fn throw_value(thread: &mut JsThread) {
-    let value: RuntimeValue = pop!(thread);
+    let value = pop!(thread);
 
     thread.throw(value)
 }

@@ -1,9 +1,10 @@
 use crate::result::JsResult;
-use crate::{JsThread, RuntimeValue};
+use crate::values::nan::Value;
+use crate::JsThread;
 use builtin::{getter, prototype};
 
 pub(crate) struct JsArguments<'a, 'b> {
-    target: RuntimeValue<'a>,
+    target: Value<'a>,
     thread: &'b mut JsThread<'a>,
 }
 

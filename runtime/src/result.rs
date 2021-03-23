@@ -1,3 +1,4 @@
+use crate::values::nan::Value;
 use crate::values::value::RuntimeValue;
 use crate::JsThread;
 use std::fmt::{Display, Formatter};
@@ -147,6 +148,12 @@ impl<'a> From<InternalError> for ExecutionError<'a> {
 impl<'a> From<RuntimeValue<'a>> for ExecutionError<'a> {
     fn from(err: RuntimeValue<'a>) -> Self {
         ExecutionError::Thrown(err, None)
+    }
+}
+
+impl<'a> From<Value<'a>> for ExecutionError<'a> {
+    fn from(err: Value<'a>) -> Self {
+        ExecutionError::Thrown(err.into(), None)
     }
 }
 

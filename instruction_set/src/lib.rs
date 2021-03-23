@@ -71,7 +71,7 @@ pub enum Instruction {
     In,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum Constant {
     Null,
     Undefined,

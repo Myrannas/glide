@@ -1,7 +1,7 @@
 #[macro_use]
 macro_rules! resolve {
     ($value:expr, $frame:ident) => {
-        match RuntimeValue::resolve($value, $frame) {
+        match Value::resolve($value, $frame) {
             Ok(value) => value,
             Err(err) => {
                 $frame.throw(err);
@@ -14,7 +14,7 @@ macro_rules! resolve {
 #[macro_use]
 macro_rules! pop {
     ($thread:ident) => {
-        match crate::RuntimeValue::resolve($thread.pop_stack(), $thread) {
+        match crate::Value::resolve($thread.pop_stack(), $thread) {
             Ok(value) => value,
             Err(err) => {
                 $thread.throw(err);
@@ -24,8 +24,8 @@ macro_rules! pop {
     };
 
     ($thread:ident, $reason: literal) => {
-        match crate::RuntimeValue::resolve($thread.stack.pop().expect($reason), $thread) {
-            Ok(value) => value.into(),
+        match crate::Value::resolve($thread.stack.pop().expect($reason).into(), $thread) {
+            Ok(value) => value,
             Err(err) => {
                 $thread.throw(err);
                 return;

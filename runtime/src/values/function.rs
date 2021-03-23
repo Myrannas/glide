@@ -9,6 +9,7 @@ use crate::vm::JsThread;
 
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::StringPool;
+use crate::values::nan::Value;
 use crate::Realm;
 use core::cmp::PartialEq;
 use core::convert::From;
@@ -40,7 +41,7 @@ impl<'a> PartialEq for CustomFunctionReference<'a> {
 #[derive(Clone)]
 pub struct BuiltIn<'a> {
     pub op: BuiltinFn<'a>,
-    pub context: Option<Box<RuntimeValue<'a>>>,
+    pub context: Option<Value<'a>>,
 }
 
 impl<'a> PartialEq for BuiltIn<'a> {
@@ -60,12 +61,10 @@ impl<'a> BuiltIn<'a> {
         &self,
         arguments: usize,
         thread: &mut JsThread<'a>,
-        target: RuntimeValue<'a>,
-    ) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-        let context = self.context.as_deref();
-
+        target: Value<'a>,
+    ) -> JsResult<'a, Option<Value<'a>>> {
         let start_len = thread.stack.len() - arguments;
-        let result = (self.op)(arguments, thread, target, context);
+        let result = (self.op)(arguments, thread, target, self.context);
         thread.stack.truncate(start_len);
 
         result
@@ -75,9 +74,9 @@ impl<'a> BuiltIn<'a> {
 pub type BuiltinFn<'a> = fn(
     arguments: usize,
     frame: &mut JsThread<'a>,
-    target: RuntimeValue<'a>,
-    context: Option<&RuntimeValue<'a>>,
-) -> JsResult<'a, Option<RuntimeValue<'a>>>;
+    target: Value<'a>,
+    context: Option<Value<'a>>,
+) -> JsResult<'a, Option<Value<'a>>>;
 
 impl<'a> Debug for BuiltIn<'a> {
     fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
@@ -332,14 +331,12 @@ impl<'a> JsFunction {
         &self,
         realm: &mut Realm<'a>,
         parent_context: &JsContext<'a>,
-    ) -> Vec<RuntimeValue<'a>> {
+    ) -> Vec<Value<'a>> {
         self.inner
             .locals_init
             .iter()
             .map(|local_init| match local_init {
-                LocalInit::Constant(constant) => {
-                    RuntimeValue::from_constant(&self.inner.atoms, constant)
-                }
+                LocalInit::Constant(constant) => Value::from_constant(&self.inner.atoms, *constant),
                 LocalInit::Function(function_id) => {
                     let function = self.inner.functions[*function_id].clone();
                     let function_reference = CustomFunctionReference {

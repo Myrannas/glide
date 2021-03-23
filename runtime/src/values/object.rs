@@ -9,16 +9,16 @@ use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::values::primitives::JsPrimitive;
 
 use super::string::JsPrimitiveString;
-use super::value::RuntimeValue;
 use crate::object_pool::{ObjectPointer, ObjectPool};
-use crate::string_pool::StringPointer;
+
 use crate::values::function::FunctionReference;
+use crate::values::nan::Value;
 use ahash::AHashMap;
 
 #[derive(Clone)]
 pub struct JsObject<'a> {
     pub(crate) properties: HashMap<JsPrimitiveString, Property<'a>, PropertyHasher>,
-    pub(crate) indexed_properties: Vec<RuntimeValue<'a>>,
+    pub(crate) indexed_properties: Vec<Value<'a>>,
     pub(crate) name: Option<JsPrimitiveString>,
     pub(crate) prototype: Option<ObjectPointer<'a>>,
     pub(crate) wrapped: Option<JsPrimitive>,
@@ -29,7 +29,7 @@ pub struct JsObject<'a> {
 impl<'a> Default for Property<'a> {
     fn default() -> Self {
         Property::DataDescriptor {
-            value: ObjectValue::Undefined,
+            value: Value::UNDEFINED,
             writable: true,
             configurable: true,
             enumerable: false,
@@ -40,45 +40,6 @@ impl<'a> Default for Property<'a> {
 impl Default for PropertyHasher {
     fn default() -> Self {
         PropertyHasher { i: 0 }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ObjectValue<'a> {
-    Undefined,
-    Null,
-    Boolean(bool),
-    Float(f64),
-    String(StringPointer),
-    Object(ObjectPointer<'a>),
-}
-
-impl<'a> From<RuntimeValue<'a>> for ObjectValue<'a> {
-    fn from(value: RuntimeValue<'a>) -> Self {
-        match value {
-            RuntimeValue::Undefined => ObjectValue::Undefined,
-            RuntimeValue::Null => ObjectValue::Null,
-            RuntimeValue::Boolean(v) => ObjectValue::Boolean(v),
-            RuntimeValue::Float(f) => ObjectValue::Float(f),
-            RuntimeValue::String(str) => ObjectValue::String(str),
-            RuntimeValue::Object(obj) => ObjectValue::Object(obj),
-            RuntimeValue::StringReference(_) => panic!("References cannot be stored in an object"),
-            RuntimeValue::NumberReference(_) => panic!("References cannot be stored in an object"),
-            RuntimeValue::Local(_) => panic!("Internal values cannot be stored in an object"),
-        }
-    }
-}
-
-impl<'a> From<ObjectValue<'a>> for RuntimeValue<'a> {
-    fn from(value: ObjectValue<'a>) -> Self {
-        match value {
-            ObjectValue::Undefined => RuntimeValue::Undefined,
-            ObjectValue::Null => RuntimeValue::Null,
-            ObjectValue::Boolean(v) => RuntimeValue::Boolean(v),
-            ObjectValue::Float(f) => RuntimeValue::Float(f),
-            ObjectValue::String(str) => RuntimeValue::String(str),
-            ObjectValue::Object(obj) => RuntimeValue::Object(obj),
-        }
     }
 }
 
@@ -179,7 +140,7 @@ impl<'a, 'b> JsObjectBuilder<'a, 'b> {
         self
     }
 
-    pub fn with_indexed_properties(&mut self, properties: Vec<RuntimeValue<'a>>) -> &mut Self {
+    pub fn with_indexed_properties(&mut self, properties: Vec<Value<'a>>) -> &mut Self {
         self.inner.indexed_properties = properties;
         self
     }
@@ -187,7 +148,7 @@ impl<'a, 'b> JsObjectBuilder<'a, 'b> {
     pub fn with_property(
         &mut self,
         key: JsPrimitiveString,
-        value: impl Into<RuntimeValue<'a>>,
+        value: impl Into<Value<'a>>,
     ) -> &mut Self {
         self.inner.set(key, value.into());
         self
@@ -223,7 +184,7 @@ impl<'a> JsObject<'a> {
         }
     }
 
-    pub(crate) fn get_indexed_property(&self, key: usize) -> RuntimeValue<'a> {
+    pub(crate) fn get_indexed_property(&self, key: usize) -> Value<'a> {
         self.indexed_properties
             .get(key)
             .cloned()
@@ -245,7 +206,7 @@ impl<'a> JsObject<'a> {
     }
 
     #[must_use]
-    pub fn get_wrapped_value(&self) -> Option<RuntimeValue<'a>> {
+    pub fn get_wrapped_value(&self) -> Option<Value<'a>> {
         let value = self;
         value.wrapped.as_ref().cloned().map(|v| v.into())
     }
@@ -258,8 +219,8 @@ impl<'a> JsObject<'a> {
         self.construct = Some(value.into());
     }
 
-    pub fn set_wrapped_value(&mut self, value: impl Into<JsPrimitive>) {
-        self.wrapped = Some(value.into());
+    pub fn set_wrapped_value(&mut self, value: impl Into<Value<'a>>) {
+        self.wrapped = Some(value.into().into());
     }
 
     pub fn set_prototype(&mut self, prototype: ObjectPointer<'a>) {
@@ -270,16 +231,16 @@ impl<'a> JsObject<'a> {
         self.name = Some(name.into());
     }
 
-    pub fn set_indexed_properties(&mut self, properties: Vec<RuntimeValue<'a>>) {
+    pub fn set_indexed_properties(&mut self, properties: Vec<Value<'a>>) {
         self.indexed_properties = properties;
     }
 
     #[must_use]
-    pub fn get_indexed_properties(&self) -> &Vec<RuntimeValue<'a>> {
+    pub fn get_indexed_properties(&self) -> &Vec<Value<'a>> {
         &self.indexed_properties
     }
 
-    pub fn get_mut_indexed_properties(&mut self) -> &mut Vec<RuntimeValue<'a>> {
+    pub fn get_mut_indexed_properties(&mut self) -> &mut Vec<Value<'a>> {
         &mut self.indexed_properties
     }
 
@@ -288,10 +249,10 @@ impl<'a> JsObject<'a> {
         self.prototype
     }
 
-    pub fn set(&mut self, key: JsPrimitiveString, value: impl Into<RuntimeValue<'a>>) {
+    pub fn set(&mut self, key: JsPrimitiveString, value: impl Into<Value<'a>>) {
         let value = value.into();
 
-        if matches!(value, RuntimeValue::Local(_)) {
+        if value.is_local() {
             panic!("Can't write internal values to an object")
         }
 
@@ -320,7 +281,7 @@ impl<'a> JsObject<'a> {
     pub(crate) fn define_value(
         &mut self,
         key: impl Into<JsPrimitiveString>,
-        value: impl Into<RuntimeValue<'a>>,
+        value: impl Into<Value<'a>>,
     ) {
         self.properties
             .insert(key.into(), Property::value(value.into()));
@@ -329,7 +290,7 @@ impl<'a> JsObject<'a> {
     pub(crate) fn define_value_property(
         &mut self,
         key: JsPrimitiveString,
-        value: impl Into<RuntimeValue<'a>>,
+        value: impl Into<Value<'a>>,
         writable: bool,
         enumerable: bool,
         configurable: bool,
@@ -346,12 +307,6 @@ impl<'a> JsObject<'a> {
     }
 }
 
-impl<'a> From<ObjectPointer<'a>> for RuntimeValue<'a> {
-    fn from(obj: ObjectPointer<'a>) -> Self {
-        RuntimeValue::Object(obj)
-    }
-}
-
 impl<'a> PartialEq for JsObject<'a> {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
@@ -361,7 +316,7 @@ impl<'a> PartialEq for JsObject<'a> {
 #[derive(Clone)]
 pub(crate) enum Property<'a> {
     DataDescriptor {
-        value: ObjectValue<'a>,
+        value: Value<'a>,
         configurable: bool,
         enumerable: bool,
         writable: bool,
@@ -375,9 +330,9 @@ pub(crate) enum Property<'a> {
 }
 
 impl<'a> Property<'a> {
-    pub fn value(value: RuntimeValue<'a>) -> Property<'a> {
+    pub fn value(value: Value<'a>) -> Property<'a> {
         Property::DataDescriptor {
-            value: value.into(),
+            value,
             configurable: true,
             enumerable: true,
             writable: true,
@@ -427,7 +382,7 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
                 renderer.formatter.write_str(": ")?;
                 match v {
                     Property::DataDescriptor { value, .. } => {
-                        RuntimeValue::render(&value.clone().into(), renderer)?
+                        Value::render(&value.clone().into(), renderer)?
                     }
                     Property::AccessorDescriptor { .. } => renderer.literal("complex")?,
                 };

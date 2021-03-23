@@ -1,9 +1,10 @@
 use crate::result::JsResult;
+use crate::values::nan::Value;
 use crate::{BuiltIn, JsObject, JsThread, RuntimeValue};
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsPromise<'a, 'b> {
-    target: RuntimeValue<'a>,
+    target: Value<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -11,7 +12,7 @@ pub(crate) struct JsPromise<'a, 'b> {
 #[named("Promise")]
 impl<'a, 'b> JsPromise<'a, 'b> {
     #[constructor]
-    fn constructor(&mut self, _resolver: &Option<RuntimeValue<'a>>) -> JsResult<'a, ()> {
+    fn constructor(&mut self, _resolver: Option<Value<'a>>) -> JsResult<'a, ()> {
         let resolve = JsObject::builder(&mut self.thread.realm.objects)
             .with_callable(BuiltIn {
                 context: None,

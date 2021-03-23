@@ -1,15 +1,15 @@
-use crate::{JsThread, RuntimeValue};
+use crate::{JsThread, Value, ValueType};
 
 pub(crate) fn add(thread: &mut JsThread, times: u8) {
-    let left: RuntimeValue = pop!(thread);
+    let left: Value = pop!(thread);
 
-    match left {
-        RuntimeValue::String(l_str) => {
+    match left.get_type() {
+        ValueType::String(l_str) => {
             let l_str = thread.realm.strings.get(l_str).as_ref().to_owned();
 
             let mut string = l_str;
             for _ in 0..times {
-                let right: RuntimeValue = pop!(thread);
+                let right: Value = pop!(thread);
 
                 let r_str = catch!(thread, right.to_string(thread));
                 let r_str = thread.realm.strings.get(r_str).as_ref();
@@ -20,12 +20,12 @@ pub(crate) fn add(thread: &mut JsThread, times: u8) {
             let pointer = thread.realm.strings.intern(string);
             thread.push_stack(pointer);
         }
-        other => {
-            let l_val: f64 = other.to_number(&thread.realm);
+        _ => {
+            let l_val: f64 = left.to_number(&thread.realm);
 
             let mut value = l_val;
             for _ in 0..times {
-                let right: RuntimeValue = pop!(thread);
+                let right: Value = pop!(thread);
 
                 let r_val = right.to_number(&thread.realm);
 
@@ -40,10 +40,10 @@ pub(crate) fn add(thread: &mut JsThread, times: u8) {
 }
 
 pub(crate) fn numeric_op(thread: &mut JsThread, function: impl FnOnce(f64, f64) -> f64) {
-    let l_prim: RuntimeValue = pop!(thread);
+    let l_prim: Value = pop!(thread);
     let l_prim = l_prim.to_number(&thread.realm);
 
-    let r_prim: RuntimeValue = pop!(thread);
+    let r_prim: Value = pop!(thread);
     let r_prim = r_prim.to_number(&thread.realm);
 
     let result = function(l_prim, r_prim);
@@ -74,7 +74,7 @@ pub(crate) fn exponential(thread: &mut JsThread) {
 }
 
 pub(crate) fn negate(thread: &mut JsThread) {
-    let l_prim: RuntimeValue = pop!(thread);
+    let l_prim: Value = pop!(thread);
     let l_prim = l_prim.to_number(&thread.realm);
 
     thread.push_stack(-l_prim);
@@ -83,12 +83,12 @@ pub(crate) fn negate(thread: &mut JsThread) {
 
 pub(crate) fn increment(thread: &mut JsThread, by: f64) {
     // Reference ->
-    let target: RuntimeValue = thread.pop_stack();
+    let target: Value = thread.pop_stack();
 
     catch!(
         thread,
         target.update_reference(thread, |value, thread| {
-            Ok(RuntimeValue::Float(value.to_number(&thread.realm) + by))
+            Ok(Value::from(value.to_number(&thread.realm) + by))
         })
     );
 

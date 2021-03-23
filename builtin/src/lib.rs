@@ -541,7 +541,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
     let constructor = if !has_new {
         quote! {
             impl<'a, 'b> #self_type {
-                fn new(target: crate::RuntimeValue<'a>, thread: &'b mut JsThread<'a>) -> Self {
+                fn new(target: crate::values::nan::Value<'a>, thread: &'b mut JsThread<'a>) -> Self {
                     Self {
                         target,
                         thread

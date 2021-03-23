@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 
+use super::nan::Value;
 use super::string::JsPrimitiveString;
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::object_pool::ObjectPointer;
@@ -79,6 +80,7 @@ impl<'a> From<Option<RuntimeValue<'a>>> for RuntimeValue<'a> {
     }
 }
 
+#[deprecated]
 #[derive(Clone, Debug, Copy)]
 pub enum RuntimeValue<'a> {
     Undefined,
@@ -106,56 +108,25 @@ impl<'a> Default for &RuntimeValue<'a> {
 
 impl<'a> RuntimeValue<'a> {
     pub(crate) fn strict_eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (RuntimeValue::Boolean(b1), RuntimeValue::Boolean(b2)) => b1 == b2,
-            (RuntimeValue::String(b1), RuntimeValue::String(b2)) => b1 == b2,
-            (RuntimeValue::Float(b1), RuntimeValue::Float(b2)) => b1 == b2,
-            (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => b1 == b2,
-            (RuntimeValue::Null, RuntimeValue::Null)
-            | (RuntimeValue::Undefined, RuntimeValue::Undefined) => true,
-            _ => false,
-        }
+        let left: Value = (*self).into();
+        let right: Value = (*other).into();
+
+        left.strict_eq(right)
     }
 
     pub(crate) fn non_strict_eq(&self, other: &Self, frame: &mut JsThread<'a>) -> bool {
-        match (self, other) {
-            (RuntimeValue::Undefined, RuntimeValue::Undefined) => true,
-            (RuntimeValue::Boolean(b1), RuntimeValue::Boolean(b2)) => b1 == b2,
-            (RuntimeValue::String(b1), RuntimeValue::String(b2)) => b1.eq(b2),
-            (RuntimeValue::String(b1), RuntimeValue::Float(f))
-                if *b1 == frame.realm.constants.empty_string && *f as u32 == 0 =>
-            {
-                true
-            }
-            (RuntimeValue::String(b1), RuntimeValue::Boolean(false))
-                if *b1 == frame.realm.constants.empty_string =>
-            {
-                true
-            }
-            (RuntimeValue::Float(b1), RuntimeValue::Float(b2)) => b1 == b2,
-            (RuntimeValue::Object(b1), RuntimeValue::Object(b2)) => b1 == b2,
-            (RuntimeValue::String(s1), RuntimeValue::Object(b1))
-            | (RuntimeValue::Object(b1), RuntimeValue::String(s1)) => {
-                let unwrapped_value = b1.unwrap(frame);
+        let left: Value = (*self).into();
+        let right: Value = (*other).into();
 
-                unwrapped_value.map_or(false, |b1| {
-                    let string_value1: JsPrimitiveString = b1.to_string(frame).unwrap();
-
-                    s1.eq(&string_value1)
-                })
-            }
-            (RuntimeValue::Null, RuntimeValue::Null) => true,
-            _ => false,
-        }
+        left.non_strict_eq(right, frame)
     }
 
-    pub fn call(&self, thread: &mut JsThread<'a>, args: &[RuntimeValue<'a>]) -> JsResult<'a> {
+    pub fn call(&self, thread: &mut JsThread<'a>, args: &[Value<'a>]) -> JsResult<'a, Value<'a>> {
         match self {
             RuntimeValue::Object(obj) => obj.call(thread, args),
-            other => Err(ExecutionError::Thrown(
-                thread.new_type_error(format!("{} is not a function", other)),
-                None,
-            )),
+            other => Err(thread
+                .new_type_error(format!("{} is not a function", other))
+                .into()),
         }
     }
 
@@ -181,26 +152,9 @@ impl<'a> RuntimeValue<'a> {
         self,
         thread: &'c mut JsThread<'a>,
     ) -> Result<Self, ExecutionError<'a>> {
-        let result = match self.clone() {
-            RuntimeValue::Local(index) => Ok(thread.current_context().read(index)),
-            RuntimeValue::StringReference(name) => {
-                let base: RuntimeValue = thread.pop_stack();
-                let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+        let value: Value<'a> = self.into();
 
-                base_object.get_value(thread, name)
-            }
-            RuntimeValue::NumberReference(index) => {
-                let base: RuntimeValue = thread.pop_stack();
-                let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
-
-                base_object.get_indexed(thread, index as usize)
-            }
-            other => Ok(other),
-        }?;
-
-        Ok(result)
+        value.resolve(thread).map(RuntimeValue::from)
     }
 
     pub(crate) fn update_reference(
@@ -208,106 +162,21 @@ impl<'a> RuntimeValue<'a> {
         thread: &mut JsThread<'a>,
         with_value: impl FnOnce(RuntimeValue<'a>, &mut JsThread<'a>) -> JsResult<'a>,
     ) -> JsResult<'a, ()> {
-        match self {
-            RuntimeValue::Local(index) => {
-                let value = thread.current_context().read(index);
+        let value: Value<'a> = self.into();
 
-                let updated_value = with_value(value, thread)?;
-
-                thread.current_context().write(index, updated_value);
-                Ok(())
-            }
-            RuntimeValue::StringReference(name) => {
-                let base: RuntimeValue = thread.pop_stack();
-                let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
-
-                let original = base_object.get_value(thread, name)?;
-
-                let updated_value = with_value(original, thread)?;
-
-                base_object.set(&mut thread.realm.objects, name, updated_value);
-                Ok(())
-            }
-            RuntimeValue::NumberReference(index) => {
-                let base: RuntimeValue = thread.pop_stack();
-                let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
-
-                let original = base_object.get_indexed(thread, index as usize)?;
-
-                let updated_value = with_value(original, thread)?;
-
-                base_object.set_indexed(thread, index as usize, updated_value);
-                Ok(())
-            }
-            value => InternalError::new_stackless(format!("Unable to update - {:?}", value)).into(),
-        }
+        value.update_reference(thread, |v, t| with_value(v.into(), t).map(Value::from))
     }
 
     pub fn to_string(&self, thread: &mut JsThread<'a>) -> JsResult<'a, JsPrimitiveString> {
-        let strings = &mut thread.realm.strings;
+        let value: Value<'a> = (*self).into();
 
-        let result: JsPrimitiveString = match self {
-            RuntimeValue::Float(v) => strings.intern((*v).to_string()),
-            RuntimeValue::Boolean(true) => thread.realm.constants.r#true,
-            RuntimeValue::Boolean(false) => thread.realm.constants.r#false,
-            RuntimeValue::String(str) => *str,
-            RuntimeValue::Undefined => thread.realm.constants.undefined,
-            RuntimeValue::Null => thread.realm.constants.null,
-            RuntimeValue::Object(obj) => {
-                let to_string = obj.get_value(thread, thread.realm.constants.to_string)?;
-
-                // println!("{:?}\n{:?}", obj, to_string);
-
-                if to_string == RuntimeValue::Undefined {
-                    return Ok(thread.realm.strings.intern("[Object object]"));
-                }
-
-                if let RuntimeValue::Object(function) = to_string {
-                    if let Some(callable) = function.get_callable(&mut thread.realm.objects) {
-                        let callable = callable.clone();
-
-                        return thread
-                            .call_from_native((*obj).into(), callable, 0, false)?
-                            .to_string(thread);
-                    }
-                }
-
-                return Err(thread
-                    .new_type_error("Cannot convert object to primitive value")
-                    .into());
-            }
-            value => todo!("Unsupported types {:?}", value),
-        };
-
-        Ok(result)
+        value.to_string(thread)
     }
 
     pub(crate) fn to_object(&self, thread: &mut JsThread<'a>) -> JsResult<'a, ObjectPointer<'a>> {
-        let result = match self {
-            RuntimeValue::String(str) => thread
-                .realm
-                .wrappers
-                .wrap_string(&mut thread.realm.objects, str.clone()),
-            RuntimeValue::Object(obj) => *obj,
-            RuntimeValue::Float(f) => thread
-                .realm
-                .wrappers
-                .wrap_number(&mut thread.realm.objects, *f),
-            RuntimeValue::Boolean(f) => thread
-                .realm
-                .wrappers
-                .wrap_boolean(&mut thread.realm.objects, *f),
-            value => {
-                panic!("Ohnoes {}", value)
-                // return Err(thread
-                //     .new_type_error(format!("Can't wrap {} with object", value))
-                //     .into())
-            }
-        };
+        let value: Value<'a> = (*self).into();
 
-        Ok(result)
+        value.to_object(thread)
     }
 
     pub(crate) fn to_bool(&self, realm: &Realm) -> bool {
@@ -379,13 +248,16 @@ impl<'a> Display for RuntimeValue<'a> {
 }
 
 pub(crate) fn make_arguments<'a>(
-    arguments: Vec<RuntimeValue<'a>>,
+    arguments: Vec<Value<'a>>,
     thread: &mut JsThread<'a>,
-) -> RuntimeValue<'a> {
+) -> Value<'a> {
     thread
         .realm
         .wrappers
-        .wrap_arguments(&mut thread.realm.objects, arguments)
+        .wrap_arguments(
+            &mut thread.realm.objects,
+            arguments.into_iter().map(From::from).collect(),
+        )
         .into()
 }
 
@@ -413,11 +285,11 @@ impl<'a> From<i32> for RuntimeValue<'a> {
     }
 }
 
-// impl<'a> From<RuntimeValue<'a>> for String {
-//     fn from(value: RuntimeValue<'a>) -> Self {
-//         (&value).into()
-//     }
-// }
+impl<'a> From<ObjectPointer<'a>> for RuntimeValue<'a> {
+    fn from(value: ObjectPointer<'a>) -> Self {
+        RuntimeValue::Object(value)
+    }
+}
 //
 // impl<'a> From<&RuntimeValue<'a>> for String {
 //     fn from(value: &RuntimeValue<'a>) -> Self {

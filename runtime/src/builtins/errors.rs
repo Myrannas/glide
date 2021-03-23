@@ -1,10 +1,11 @@
 use crate::result::JsResult;
+use crate::values::nan::Value;
 use crate::values::value::RuntimeValue;
 use crate::JsThread;
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsError<'a, 'b> {
-    target: RuntimeValue<'a>,
+    target: Value<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -12,14 +13,14 @@ pub(crate) struct JsError<'a, 'b> {
 #[named("Error")]
 impl<'a, 'b> JsError<'a, 'b> {
     #[constructor]
-    fn constructor(&mut self, message: &RuntimeValue<'a>) {
+    fn constructor(&mut self, message: Value<'a>) {
         self.target
             .to_object(self.thread)
             .expect("Constructor must have an object target")
             .set(
                 &mut self.thread.realm.objects,
                 self.thread.realm.constants.message,
-                message.clone(),
+                message.into(),
             );
     }
 
@@ -35,7 +36,7 @@ impl<'a, 'b> JsError<'a, 'b> {
 }
 
 pub(crate) struct TypeError<'a, 'b> {
-    target: RuntimeValue<'a>,
+    target: Value<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -43,20 +44,20 @@ pub(crate) struct TypeError<'a, 'b> {
 #[named("TypeError")]
 impl<'a, 'b> TypeError<'a, 'b> {
     #[constructor]
-    fn constructor(&mut self, message: &RuntimeValue<'a>) {
+    fn constructor(&mut self, message: Value<'a>) {
         self.target
             .to_object(self.thread)
             .expect("Constructor must have an object target")
             .set(
                 &mut self.thread.realm.objects,
                 self.thread.realm.constants.message,
-                message.clone(),
+                message.into(),
             );
     }
 }
 
 pub(crate) struct ReferenceError<'a, 'b> {
-    target: RuntimeValue<'a>,
+    target: Value<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -64,14 +65,14 @@ pub(crate) struct ReferenceError<'a, 'b> {
 #[named("ReferenceError")]
 impl<'a, 'b> ReferenceError<'a, 'b> {
     #[constructor]
-    fn constructor(&mut self, message: &RuntimeValue<'a>) {
+    fn constructor(&mut self, message: Value<'a>) {
         self.target
             .to_object(self.thread)
             .expect("Constructor must have an object target")
             .set(
                 &mut self.thread.realm.objects,
                 self.thread.realm.constants.message,
-                message.clone(),
+                message.into(),
             );
     }
 }

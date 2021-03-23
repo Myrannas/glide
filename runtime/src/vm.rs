@@ -5,7 +5,8 @@ use crate::ops::Operand;
 use crate::primordials::Realm;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
-use crate::values::value::{make_arguments, RuntimeValue};
+use crate::values::nan::Value;
+use crate::values::value::make_arguments;
 use crate::{ExecutionError, JsFunction, JsObject};
 use instruction_set::{Constant, Instruction};
 use log::trace;
@@ -85,7 +86,7 @@ impl<'a> From<&mut JsThread<'a>> for Stack {
 }
 
 pub struct JsThread<'a> {
-    pub(crate) stack: Vec<RuntimeValue<'a>>,
+    pub(crate) stack: Vec<Value<'a>>,
     call_stack: Vec<StackFrame<'a>>,
     catch_stack: Vec<CatchFrame>,
     current_frame: StackFrame<'a>,
@@ -105,7 +106,7 @@ impl<'a> JsThread<'a> {
     }
 
     #[must_use]
-    pub fn read_arg(&self, count: usize, index: usize) -> Option<RuntimeValue<'a>> {
+    pub fn read_arg(&self, count: usize, index: usize) -> Option<Value<'a>> {
         if index > count {
             None
         } else {
@@ -146,15 +147,15 @@ impl<'a> JsThread<'a> {
         self.current_frame.index += 1;
     }
 
-    pub(crate) fn push_stack(&mut self, value: impl Into<RuntimeValue<'a>>) {
+    pub(crate) fn push_stack(&mut self, value: impl Into<Value<'a>>) {
         self.stack.push(value.into());
     }
 
-    pub(crate) fn pop_stack<S: From<RuntimeValue<'a>>>(&mut self) -> S {
+    pub(crate) fn pop_stack<S: From<Value<'a>>>(&mut self) -> S {
         self.stack.pop().unwrap().into()
     }
 
-    pub(crate) fn return_value(&mut self, value: impl Into<RuntimeValue<'a>>) {
+    pub(crate) fn return_value(&mut self, value: impl Into<Value<'a>>) {
         let value = value.into();
 
         trace!(
@@ -272,7 +273,7 @@ impl<'a> JsThread<'a> {
 
             self.current_frame.index = *instruction_index;
 
-            self.stack.push(error);
+            self.stack.push(error.into());
         } else {
             unreachable!("This should not be possible :(");
         }
@@ -323,7 +324,7 @@ impl<'a> JsThread<'a> {
 
     pub(crate) fn call(
         &mut self,
-        target: RuntimeValue<'a>,
+        target: Value<'a>,
         CustomFunctionReference {
             function,
             parent_context: context,
@@ -352,12 +353,17 @@ impl<'a> JsThread<'a> {
         let arguments = (stack_length - args)..stack_length;
 
         for (write_to, read_from) in arguments.clone().enumerate().take(function.args_size()) {
-            new_context.write(write_to + 1, self.stack[read_from].clone())
+            new_context.write(write_to + 1, self.stack[read_from])
         }
 
         new_context.write(
             0,
-            make_arguments(arguments.map(|_| self.stack.pop().unwrap()).collect(), self),
+            make_arguments(
+                arguments
+                    .map(|_| self.stack.pop().unwrap_or_default())
+                    .collect(),
+                self,
+            ),
         );
 
         self.current_frame.stack_size = self.stack.len();
@@ -379,7 +385,7 @@ impl<'a> JsThread<'a> {
         }
     }
 
-    pub fn run(&mut self) -> JsResult<'a, RuntimeValue<'a>> {
+    pub fn run(&mut self) -> JsResult<'a, Value<'a>> {
         while self.current_frame.index < self.current_frame.current_function.instructions().len() {
             let frame_index = self.current_frame.index;
 
@@ -400,11 +406,11 @@ impl<'a> JsThread<'a> {
 
     pub fn call_from_native(
         &mut self,
-        target: RuntimeValue<'a>,
+        target: Value<'a>,
         function_reference: impl Into<FunctionReference<'a>>,
         args: usize,
         new: bool,
-    ) -> JsResult<'a, RuntimeValue<'a>> {
+    ) -> JsResult<'a, Value<'a>> {
         match function_reference.into() {
             FunctionReference::BuiltIn(builtin) => {
                 let result = builtin.apply_return(args, self, target)?;
@@ -476,10 +482,8 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
 
             Instruction::SetLocal { local } => {
                 let locals = &self.thread.current_frame.current_function.locals()[*local];
-                let last = DebuggableWithThread::from(
-                    self.thread.stack.last().unwrap_or_default(),
-                    self.thread,
-                );
+                let value1 = self.thread.stack.last().cloned().unwrap_or_default();
+                let last = DebuggableWithThread::from(&value1, self.thread);
 
                 f.debug_struct("SetLocal")
                     .field("local", &locals.name)
@@ -492,10 +496,8 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
                 let atom = self.thread.current_frame.current_function.get_atom(*name);
                 let str = self.thread.realm.strings.get(atom).as_ref();
 
-                let last = DebuggableWithThread::from(
-                    self.thread.stack.last().unwrap_or_default(),
-                    self.thread,
-                );
+                let value = self.thread.stack.last().cloned().unwrap_or_default();
+                let last = DebuggableWithThread::from(&value, self.thread);
                 f.debug_struct("SetLocal")
                     .field("field", &str)
                     .field("value", &last)

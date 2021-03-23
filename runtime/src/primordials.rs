@@ -5,29 +5,22 @@ use crate::debugging::DebugRepresentation;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
 use crate::values::function::FunctionReference;
+use crate::values::nan::Value;
 use crate::values::object::{JsObject, Property};
 use crate::values::string::JsPrimitiveString;
 use crate::values::value::RuntimeValue;
 use crate::{BuiltIn, JsThread};
 
 trait Helpers<'a> {
-    fn define_readonly_value<V: Into<RuntimeValue<'a>>>(
-        &mut self,
-        key: JsPrimitiveString,
-        value: V,
-    );
+    fn define_readonly_value<V: Into<Value<'a>>>(&mut self, key: JsPrimitiveString, value: V);
 }
 
 impl<'a> Helpers<'a> for JsObject<'a> {
-    fn define_readonly_value<V: Into<RuntimeValue<'a>>>(
-        &mut self,
-        key: JsPrimitiveString,
-        value: V,
-    ) {
+    fn define_readonly_value<V: Into<Value<'a>>>(&mut self, key: JsPrimitiveString, value: V) {
         self.define_property(
             key.into(),
             Some(FunctionReference::BuiltIn(BuiltIn {
-                context: Some(Box::new(value.into())),
+                context: Some(value.into()),
                 op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
             })),
             None,
@@ -177,16 +170,8 @@ impl<'a> Realm<'a> {
 
             global_this.set(&mut object_pool, eval_string, value);
         }
-        global_this.set(
-            &mut object_pool,
-            constants.undefined,
-            RuntimeValue::Undefined,
-        );
-        global_this.set(
-            &mut object_pool,
-            constants.nan,
-            RuntimeValue::Float(f64::NAN),
-        );
+        global_this.set(&mut object_pool, constants.undefined, Value::UNDEFINED);
+        global_this.set(&mut object_pool, constants.nan, Value::NAN);
 
         Realm {
             global_this,
@@ -282,15 +267,13 @@ impl<'a> Primitives<'a> {
             name,
         };
 
-        let parse_int: RuntimeValue = number_prototype
+        let parse_int = number_prototype
             .get_property(object_pool, constants.parse_int)
             .and_then(|p| match p {
-                Property::DataDescriptor { value, .. } => Some(value),
+                Property::DataDescriptor { value, .. } => Some(*value),
                 _ => None,
             })
-            .cloned()
-            .unwrap()
-            .into();
+            .unwrap();
 
         global_this.set(object_pool, constants.parse_int, parse_int);
 
@@ -303,14 +286,14 @@ impl<'a> Primitives<'a> {
         string: JsPrimitiveString,
     ) -> ObjectPointer<'a> {
         JsObject::builder(pool)
-            .with_wrapped_value(RuntimeValue::String(string))
+            .with_wrapped_value(Value::from(string))
             .with_prototype(self.string)
             .build()
     }
 
     pub(crate) fn wrap_number(&self, pool: &mut ObjectPool<'a>, number: f64) -> ObjectPointer<'a> {
         JsObject::builder(pool)
-            .with_wrapped_value(RuntimeValue::Float(number))
+            .with_wrapped_value(Value::from(number))
             .with_prototype(self.number)
             .build()
     }
@@ -321,7 +304,7 @@ impl<'a> Primitives<'a> {
         number: bool,
     ) -> ObjectPointer<'a> {
         JsObject::builder(pool)
-            .with_wrapped_value(RuntimeValue::Boolean(number))
+            .with_wrapped_value(Value::from(number))
             .with_prototype(self.number) //todo: fixme
             .build()
     }
@@ -360,7 +343,7 @@ impl<'a> Primitives<'a> {
     pub(crate) fn wrap_arguments(
         &self,
         pool: &mut ObjectPool<'a>,
-        arguments: Vec<RuntimeValue<'a>>,
+        arguments: Vec<Value<'a>>,
     ) -> ObjectPointer<'a> {
         JsObject::builder(pool)
             .with_indexed_properties(arguments)
@@ -371,7 +354,7 @@ impl<'a> Primitives<'a> {
     pub(crate) fn wrap_array(
         &self,
         pool: &mut ObjectPool<'a>,
-        array: Vec<RuntimeValue<'a>>,
+        array: Vec<Value<'a>>,
     ) -> ObjectPointer<'a> {
         JsObject::builder(pool)
             .with_indexed_properties(array)
@@ -385,9 +368,9 @@ impl<'a> Primitives<'a> {
 }
 
 pub(crate) trait RuntimeHelpers<'a> {
-    fn new_reference_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a>;
-    fn new_syntax_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a>;
-    fn new_type_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a>;
+    fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a>;
+    fn new_syntax_error(&mut self, message: impl AsRef<str>) -> Value<'a>;
+    fn new_type_error(&mut self, message: impl AsRef<str>) -> Value<'a>;
     fn new_function(
         &mut self,
         name: JsPrimitiveString,
@@ -396,15 +379,15 @@ pub(crate) trait RuntimeHelpers<'a> {
 }
 
 impl<'a> RuntimeHelpers<'a> for JsThread<'a> {
-    fn new_reference_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a> {
+    fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.realm.new_reference_error(message)
     }
 
-    fn new_syntax_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a> {
+    fn new_syntax_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.realm.new_syntax_error(message)
     }
 
-    fn new_type_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a> {
+    fn new_type_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.realm.new_type_error(message)
     }
 
@@ -418,7 +401,7 @@ impl<'a> RuntimeHelpers<'a> for JsThread<'a> {
 }
 
 impl<'a> RuntimeHelpers<'a> for Realm<'a> {
-    fn new_reference_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a> {
+    fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.errors
             .new_error(
                 &mut self.objects,
@@ -430,7 +413,7 @@ impl<'a> RuntimeHelpers<'a> for Realm<'a> {
     }
 
     #[allow(dead_code)]
-    fn new_syntax_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a> {
+    fn new_syntax_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.errors
             .new_error(
                 &mut self.objects,
@@ -441,7 +424,7 @@ impl<'a> RuntimeHelpers<'a> for Realm<'a> {
             .into()
     }
 
-    fn new_type_error(&mut self, message: impl AsRef<str>) -> RuntimeValue<'a> {
+    fn new_type_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.errors
             .new_error(
                 &mut self.objects,

@@ -1,9 +1,10 @@
 use crate::result::JsResult;
+use crate::values::nan::{Value, ValueType};
 use crate::{JsThread, RuntimeValue};
 use builtin::{constructor, getter, named, prototype, varargs};
 
 pub(crate) struct JsArray<'a, 'b> {
-    target: RuntimeValue<'a>,
+    target: Value<'a>,
     thread: &'b mut JsThread<'a>,
 }
 
@@ -12,13 +13,13 @@ pub(crate) struct JsArray<'a, 'b> {
 impl<'a, 'b> JsArray<'a, 'b> {
     #[varargs]
     #[constructor]
-    fn constructor(&mut self, args: Vec<RuntimeValue<'a>>) {
+    fn constructor(&mut self, args: Vec<Value<'a>>) {
         if args.len() > 1 {
             self.target
                 .to_object(self.thread)
                 .expect("Constructor must have an object target")
                 .get_mut_object(&mut self.thread.realm.objects)
-                .set_indexed_properties(args)
+                .set_indexed_properties(args.into_iter().map(|v| v.into()).collect())
         }
     }
 
@@ -27,7 +28,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
         todo!("Reduce right is not supported")
     }
 
-    fn map(&mut self, function: &RuntimeValue<'a>) -> JsResult<'a> {
+    fn map(&mut self, function: Value<'a>) -> JsResult<'a> {
         let mut elements = self
             .target
             .to_object(self.thread)?
@@ -37,6 +38,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
 
         for element in &mut elements {
             let element_to_map = (*element).clone();
+            let function: RuntimeValue = function.into();
             *element = function.call(self.thread, &[element_to_map])?;
         }
 
@@ -49,7 +51,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     }
 
     #[named("forEach")]
-    fn for_each(&mut self, function: &RuntimeValue<'a>) -> JsResult<'a, Option<RuntimeValue<'a>>> {
+    fn for_each(&mut self, function: Value<'a>) -> JsResult<'a, Option<Value<'a>>> {
         let elements = self
             .target
             .to_object(self.thread)?
@@ -59,25 +61,28 @@ impl<'a, 'b> JsArray<'a, 'b> {
 
         for element in &elements {
             let element_to_map = (*element).clone();
+
+            let function: RuntimeValue = function.into();
             function.call(self.thread, &[element_to_map])?;
         }
 
         Ok(None)
     }
 
-    fn pop(&mut self) -> JsResult<'a, RuntimeValue<'a>> {
+    fn pop(&mut self) -> JsResult<'a, Value<'a>> {
         let result = self
             .target
             .to_object(self.thread)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties()
             .pop()
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into();
 
         Ok(result)
     }
 
-    fn shift(&mut self) -> JsResult<'a, RuntimeValue<'a>> {
+    fn shift(&mut self) -> JsResult<'a, Value<'a>> {
         let indexed_properties = self
             .target
             .to_object(self.thread)?
@@ -85,13 +90,13 @@ impl<'a, 'b> JsArray<'a, 'b> {
             .get_mut_indexed_properties();
 
         if indexed_properties.is_empty() {
-            return Ok(RuntimeValue::Undefined);
+            return Ok(Value::UNDEFINED);
         }
 
-        Ok(indexed_properties.remove(0))
+        Ok(indexed_properties.remove(0).into())
     }
 
-    fn index_of(&mut self, value: &RuntimeValue<'a>) -> JsResult<'a> {
+    fn index_of(&mut self, value: Value<'a>) -> JsResult<'a> {
         let indexed_properties = self
             .target
             .to_object(self.thread)?
@@ -112,16 +117,17 @@ impl<'a, 'b> JsArray<'a, 'b> {
 
     #[named("push")]
     #[varargs]
-    fn push(&mut self, value: Vec<RuntimeValue<'a>>) -> JsResult<'a, Option<RuntimeValue<'a>>> {
-        match &self.target {
-            RuntimeValue::Boolean(_) => Ok(Some(0.0.into())),
-            other => {
-                let indexed_properties = other
+    fn push(&mut self, values: Vec<Value<'a>>) -> JsResult<'a, Option<Value<'a>>> {
+        match &self.target.get_type() {
+            ValueType::Boolean(_) => Ok(Some(0.0.into())),
+            _ => {
+                let indexed_properties = self
+                    .target
                     .to_object(self.thread)?
                     .get_mut_object(&mut self.thread.realm.objects)
                     .get_mut_indexed_properties();
 
-                indexed_properties.extend(value);
+                indexed_properties.extend(values);
 
                 Ok(Some((indexed_properties.len() as f64).into()))
             }

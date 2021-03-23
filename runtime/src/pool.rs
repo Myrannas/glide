@@ -27,6 +27,12 @@ pub struct PoolPointer<V> {
     phantom_data: std::marker::PhantomData<Pool<V>>,
 }
 
+impl<V> From<PoolPointer<V>> for u32 {
+    fn from(value: PoolPointer<V>) -> Self {
+        value.index
+    }
+}
+
 impl<T> Display for PoolPointer<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}", self.index))

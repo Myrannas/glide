@@ -48,6 +48,12 @@ impl Display for StringPointer {
     }
 }
 
+impl<'a> From<StringPointer> for u32 {
+    fn from(value: StringPointer) -> Self {
+        value.inner.into()
+    }
+}
+
 #[derive(Clone)]
 pub struct StringPool {
     pool: Pool<StringValue>,

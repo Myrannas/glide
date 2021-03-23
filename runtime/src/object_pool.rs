@@ -3,9 +3,10 @@ use crate::pool::{Pool, PoolPointer};
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
-use crate::values::object::{ObjectValue, Property};
+use crate::values::nan::{Value, ValueType};
+use crate::values::object::Property;
 use crate::values::primitives::JsPrimitive;
-use crate::{JsObject, JsPrimitiveString, JsThread, RuntimeValue};
+use crate::{JsObject, JsPrimitiveString, JsThread};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 
@@ -26,6 +27,12 @@ impl<'a> Display for ObjectPointer<'a> {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ObjectPointer<'a> {
     inner: PoolPointer<JsObject<'a>>,
+}
+
+impl<'a> From<ObjectPointer<'a>> for u32 {
+    fn from(value: ObjectPointer<'a>) -> Self {
+        value.inner.into()
+    }
 }
 
 #[derive(Clone)]
@@ -92,11 +99,11 @@ impl<'a> ObjectPointer<'a> {
         self,
         thread: &mut JsThread<'a>,
         key: JsPrimitiveString,
-    ) -> JsResult<'a, RuntimeValue<'a>> {
+    ) -> JsResult<'a, Value<'a>> {
         if key == thread.realm.constants.prototype {
             return Ok(self
                 .get_prototype(thread)
-                .map(RuntimeValue::Object)
+                .map(Value::from)
                 .unwrap_or_default());
         }
 
@@ -109,21 +116,19 @@ impl<'a> ObjectPointer<'a> {
                 ..
             }) => {
                 let reference = function.clone();
-                thread
-                    .call_from_native(self.into(), reference, 0, false)?
-                    .into()
+                thread.call_from_native(self.into(), reference, 0, false)?
             }
-            _ => ObjectValue::Undefined,
+            _ => Value::UNDEFINED,
         };
 
-        Ok(result.into())
+        Ok(result)
     }
 
-    pub fn get_indexed(self, thread: &mut JsThread<'a>, key: usize) -> JsResult<'a> {
+    pub fn get_indexed(self, thread: &mut JsThread<'a>, key: usize) -> JsResult<'a, Value<'a>> {
         let object = thread.realm.objects.get(self);
 
         if let Some(JsPrimitive::String(str)) = &object.wrapped {
-            let result: RuntimeValue = thread
+            let result = thread
                 .realm
                 .strings
                 .get(*str)
@@ -132,7 +137,7 @@ impl<'a> ObjectPointer<'a> {
                 .map(|v| v.to_owned())
                 .and_then(|v| match v {
                     value if value.is_empty() => None,
-                    other => Some(RuntimeValue::String(thread.realm.strings.intern(other))),
+                    other => Some(Value::from(thread.realm.strings.intern(other))),
                 })
                 .unwrap_or_default();
 
@@ -150,15 +155,11 @@ impl<'a> ObjectPointer<'a> {
         Ok(result)
     }
 
-    pub fn extend(
-        self,
-        pool: &mut ObjectPool<'a>,
-        values: &[(JsPrimitiveString, RuntimeValue<'a>)],
-    ) {
+    pub fn extend(self, pool: &mut ObjectPool<'a>, values: &[(JsPrimitiveString, Value<'a>)]) {
         let obj = self.get_mut_object(pool);
 
         for (k, v) in values {
-            obj.properties.insert(k.clone(), Property::value(v.clone()));
+            obj.properties.insert(*k, Property::value(*v));
         }
     }
 
@@ -190,21 +191,14 @@ impl<'a> ObjectPointer<'a> {
         object.properties.contains_key(&key)
     }
 
-    pub fn set(
-        self,
-        objects: &mut ObjectPool<'a>,
-        key: JsPrimitiveString,
-        value: RuntimeValue<'a>,
-    ) {
+    pub fn set(self, objects: &mut ObjectPool<'a>, key: JsPrimitiveString, value: Value<'a>) {
         let object = objects.get_mut(self);
 
         object.set(key, value)
     }
 
-    pub fn set_indexed(self, thread: &mut JsThread<'a>, key: usize, value: RuntimeValue<'a>) {
+    pub fn set_indexed(self, thread: &mut JsThread<'a>, key: usize, value: Value<'a>) {
         let object = thread.realm.objects.get_mut(self);
-
-        let value = value.into();
 
         if key < 10000 {
             let indexed_properties = &mut object.indexed_properties;
@@ -215,7 +209,7 @@ impl<'a> ObjectPointer<'a> {
                     Ordering::Equal => indexed_properties.push(value),
                     Ordering::Greater => {
                         for _ in indexed_properties.len()..key {
-                            indexed_properties.push(RuntimeValue::Undefined)
+                            indexed_properties.push(Value::UNDEFINED)
                         }
                         indexed_properties.push(value)
                     }
@@ -236,7 +230,7 @@ impl<'a> ObjectPointer<'a> {
         self,
         pool: &mut ObjectPool<'a>,
         key: JsPrimitiveString,
-        value: impl Into<RuntimeValue<'a>>,
+        value: impl Into<Value<'a>>,
         writable: bool,
         enumerable: bool,
         configurable: bool,
@@ -246,19 +240,19 @@ impl<'a> ObjectPointer<'a> {
         object.define_value_property(key, value, writable, enumerable, configurable)
     }
 
-    pub fn unwrap(self, thread: &mut JsThread<'a>) -> Option<RuntimeValue<'a>> {
+    pub fn unwrap(self, thread: &mut JsThread<'a>) -> Option<Value<'a>> {
         let object = thread.realm.objects.get(self);
 
         object.get_wrapped_value()
     }
 
-    pub fn wrap(self, thread: &mut JsThread<'a>, value: impl Into<RuntimeValue<'a>>) {
+    pub fn wrap(self, thread: &mut JsThread<'a>, value: Value<'a>) {
         let object = thread.realm.objects.get_mut(self);
 
-        object.set_wrapped_value(value.into());
+        object.set_wrapped_value(value);
     }
 
-    pub fn call(self, thread: &mut JsThread<'a>, args: &[RuntimeValue<'a>]) -> JsResult<'a> {
+    pub fn call(self, thread: &mut JsThread<'a>, args: &[Value<'a>]) -> JsResult<'a, Value<'a>> {
         let function_reference = self
             .get_callable(&thread.realm.objects)
             .cloned()
@@ -266,7 +260,7 @@ impl<'a> ObjectPointer<'a> {
             .clone();
 
         for arg in args {
-            thread.push_stack(arg.clone());
+            thread.push_stack(*arg);
         }
 
         thread.call_from_native(self.into(), function_reference, args.len(), false)

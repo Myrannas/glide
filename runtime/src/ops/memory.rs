@@ -1,45 +1,42 @@
-use crate::debugging::DebuggableWithThread;
 use crate::primordials::RuntimeHelpers;
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
-use crate::values::value::{InternalValue, Reference};
-use crate::{InternalError, JsThread, RuntimeValue};
+use crate::values::nan::Value;
+
+use crate::{InternalError, JsThread, ValueType};
 use instruction_set::{Constant, Environmental};
 
 pub(crate) fn set(thread: &mut JsThread) {
-    let value: RuntimeValue = pop!(thread);
+    let value = pop!(thread);
     let attribute = pop!(thread);
 
-    let target: RuntimeValue = pop!(thread, "Need a target");
+    let target = pop!(thread, "Need a target");
 
-    if target == RuntimeValue::Undefined {
+    if target == Value::UNDEFINED {
         let type_error =
-            thread.new_type_error(format!("Cannot set property {} of undefined", attribute));
+            thread.new_type_error(format!("Cannot set property {:?} of undefined", attribute));
 
         return thread.throw(type_error);
     }
 
     let target = catch!(thread, target.to_object(thread));
 
-    if let RuntimeValue::String(str) = attribute {
-        target.set(&mut thread.realm.objects, str, value);
-        // println!("{:?} {:?}", target, obj);
-    } else if let RuntimeValue::Float(number) = attribute {
-        target.set_indexed(thread, number as usize, value);
-    } else {
-        thread.throw(InternalError::new_stackless(format!(
+    match attribute.get_type() {
+        ValueType::String(str) => target.set(&mut thread.realm.objects, str, value),
+        ValueType::Float => target.set_indexed(thread, attribute.float() as usize, value),
+        _ => thread.throw(InternalError::new_stackless(format!(
             "Cannot set attribute: {:?}",
             attribute
-        )))
-    };
+        ))),
+    }
 
     thread.step();
 }
 
 pub(crate) fn get(thread: &mut JsThread) {
-    let attribute: RuntimeValue = pop!(thread);
-    let target: RuntimeValue = pop!(thread);
+    let attribute = pop!(thread);
+    let target = pop!(thread);
 
-    if target == RuntimeValue::Undefined {
+    if target == Value::UNDEFINED {
         let attribute = catch!(thread, attribute.to_string(thread));
         let attribute = thread.realm.strings.get(attribute);
 
@@ -52,9 +49,9 @@ pub(crate) fn get(thread: &mut JsThread) {
 
     let target = catch!(thread, target.to_object(thread));
 
-    let reference = match attribute {
-        RuntimeValue::Float(index) => RuntimeValue::NumberReference(index as u32),
-        value => RuntimeValue::StringReference(catch!(thread, value.to_string(thread))),
+    let reference = match attribute.get_type() {
+        ValueType::Float => ValueType::NumberReference(attribute.float() as u32),
+        _ => ValueType::StringReference(catch!(thread, attribute.to_string(thread))),
     };
 
     thread.push_stack(target);
@@ -63,8 +60,8 @@ pub(crate) fn get(thread: &mut JsThread) {
 }
 
 pub(crate) fn set_named(thread: &mut JsThread, atom: usize) {
-    let value: RuntimeValue = pop!(thread);
-    let target: RuntimeValue = pop!(thread, "Need a target");
+    let value = pop!(thread);
+    let target = pop!(thread, "Need a target");
 
     // println!("Get named, target {:?}.{}", target, atom);
 
@@ -86,7 +83,7 @@ pub(crate) fn set_local(thread: &mut JsThread, local: usize) {
 }
 
 pub(crate) fn get_local(thread: &mut JsThread, local: usize) {
-    thread.push_stack(RuntimeValue::Local(local));
+    thread.push_stack(ValueType::Local(local as u32));
     thread.step();
 }
 
@@ -128,14 +125,14 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
     let child_class = function.child_class(class_id).clone();
 
     let prototype = if extends {
-        let prototype: RuntimeValue = pop!(thread);
+        let prototype = pop!(thread);
 
-        match prototype {
-            RuntimeValue::Object(obj) => Prototype::Custom(obj),
-            RuntimeValue::Null => Prototype::Null,
+        match prototype.get_type() {
+            ValueType::Object(obj) => Prototype::Custom(obj),
+            ValueType::Null => Prototype::Null,
             value => {
                 let type_error = thread.new_type_error(format!(
-                    "Class extends value {} is not a constructor or null",
+                    "Class extends value {:?} is not a constructor or null",
                     value,
                 ));
 
@@ -157,9 +154,9 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
 
 pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
     let atom = thread.current_function().get_atom(atom);
-    let target: RuntimeValue = pop!(thread, "Need a target");
+    let target = pop!(thread, "Need a target");
 
-    if target == RuntimeValue::Undefined {
+    if target == Value::UNDEFINED {
         let attribute = thread.realm.strings.get(atom);
         let message = format!("Cannot get property {} of undefined", attribute);
 
@@ -171,24 +168,24 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
     let target = catch!(thread, target.to_object(thread));
 
     thread.push_stack(target);
-    thread.push_stack(RuntimeValue::StringReference(atom));
+    thread.push_stack(ValueType::StringReference(atom));
 
     thread.step();
 }
 
 pub(crate) fn load_constant(thread: &mut JsThread, constant: &Constant) {
-    thread.stack.push(RuntimeValue::from_constant(
+    thread.push_stack(Value::from_constant(
         thread.current_function().atoms(),
-        constant,
+        *constant,
     ));
 
     thread.step();
 }
 
 pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environmental) {
-    let value: RuntimeValue = match environmental {
-        Environmental::GlobalThis => thread.realm.global_this.clone().into(),
-        Environmental::This => thread.current_context().this().clone(),
+    let value: Value = match environmental {
+        Environmental::GlobalThis => thread.realm.global_this.into(),
+        Environmental::This => thread.current_context().this(),
         Environmental::NewObject => thread
             .realm
             .wrappers
@@ -210,14 +207,14 @@ pub(crate) fn delete(_thread: &mut JsThread) {
 }
 
 pub(crate) fn resolve(thread: &mut JsThread) {
-    let value: RuntimeValue = pop!(thread);
+    let value = pop!(thread);
 
     thread.push_stack(value);
     thread.step();
 }
 
 pub(crate) fn duplicate(thread: &mut JsThread) {
-    let element = thread.stack.last().unwrap_or_default().clone();
+    let element = thread.stack.last().cloned().unwrap_or_default();
 
     thread.stack.push(element);
     thread.step();

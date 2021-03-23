@@ -1,7 +1,8 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::object_pool::ObjectPool;
 use crate::primordials::Primitives;
-use crate::{JsFunction, JsThread, Realm, RuntimeValue};
+use crate::values::nan::Value;
+use crate::{JsFunction, JsThread, Realm};
 use std::cell::{Ref, RefCell};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -19,9 +20,9 @@ impl<'a, 'b> Debug for JsContext<'a> {
 }
 
 struct JsContextInner<'a> {
-    locals: Vec<RuntimeValue<'a>>,
+    locals: Vec<Value<'a>>,
     parent: Option<JsContext<'a>>,
-    this: RuntimeValue<'a>,
+    this: Value<'a>,
 }
 
 #[derive(Clone)]
@@ -71,8 +72,8 @@ struct ContextIter {
 }
 
 impl<'a, 'b> JsContext<'a> {
-    pub(crate) fn this(&self) -> Ref<RuntimeValue<'a>> {
-        Ref::map(self.inner.borrow(), |value| &value.this)
+    pub(crate) fn this(&self) -> Value<'a> {
+        self.inner.borrow().this
     }
 
     pub(crate) fn root(global_this: &Realm<'a>) -> JsContext<'a> {
@@ -88,7 +89,7 @@ impl<'a, 'b> JsContext<'a> {
     pub(crate) fn with_parent<'c>(
         realm: &mut Realm<'a>,
         parent: JsContext<'a>,
-        this: RuntimeValue<'a>,
+        this: Value<'a>,
         function: &'c JsFunction,
     ) -> JsContext<'a> {
         JsContext {
@@ -100,19 +101,19 @@ impl<'a, 'b> JsContext<'a> {
         }
     }
 
-    pub(crate) fn read(&self, index: usize) -> RuntimeValue<'a> {
-        self.inner.borrow().locals[index].clone()
+    pub(crate) fn read(&self, index: usize) -> Value<'a> {
+        self.inner.borrow().locals[index]
     }
 
-    pub(crate) fn write(&self, index: usize, value: RuntimeValue<'a>) {
-        if matches!(value, RuntimeValue::Local(_)) {
+    pub(crate) fn write(&self, index: usize, value: Value<'a>) {
+        if value.is_local() {
             panic!("Can't assign an internal to the context");
         }
 
         self.inner.borrow_mut().locals[index] = value
     }
 
-    pub(crate) fn capture(&self, offset: usize, index: usize) -> Option<RuntimeValue<'a>> {
+    pub(crate) fn capture(&self, offset: usize, index: usize) -> Option<Value<'a>> {
         let ctx = self.inner.borrow();
 
         if offset > 0 {
@@ -125,7 +126,7 @@ impl<'a, 'b> JsContext<'a> {
         ctx.locals.get(index).cloned()
     }
 
-    pub(crate) fn write_capture(&self, offset: usize, index: usize, value: RuntimeValue<'a>) {
+    pub(crate) fn write_capture(&self, offset: usize, index: usize, value: Value<'a>) {
         let mut ctx = self.inner.borrow_mut();
 
         if offset > 0 {

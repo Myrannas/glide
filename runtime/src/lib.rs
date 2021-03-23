@@ -13,7 +13,12 @@
     clippy::cast_sign_loss,
     clippy::cast_possible_truncation
 )]
-
+#![deny(
+    clippy::useless_conversion,
+    clippy::redundant_clone,
+    clippy::clone_on_copy,
+    clippy::trivially_copy_pass_by_ref
+)]
 mod builtins;
 mod context;
 mod debugging;
@@ -36,6 +41,7 @@ extern crate rand;
 pub use primordials::Realm;
 pub use result::{ExecutionError, InternalError, SyntaxError};
 pub use values::function::{BuiltIn, JsFunction};
+pub use values::nan::{Value, ValueType};
 pub use values::object::{FunctionObject, JsObject};
 pub use values::string::JsPrimitiveString;
 pub use values::value::RuntimeValue;
