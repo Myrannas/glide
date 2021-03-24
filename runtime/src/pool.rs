@@ -106,13 +106,4 @@ impl<V> Pool<V> {
             phantom_data: PhantomData,
         }
     }
-
-    fn convert_raw_index(&self, index: u32) -> PoolPointer<V> {
-        assert!((index as usize) < self.values.len());
-
-        PoolPointer {
-            index,
-            phantom_data: PhantomData,
-        }
-    }
 }

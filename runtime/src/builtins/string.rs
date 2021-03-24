@@ -1,8 +1,7 @@
 use crate::result::JsResult;
-use crate::values::primitives::JsPrimitive;
 
 use crate::values::nan::{Value, ValueType};
-use crate::{InternalError, JsThread, RuntimeValue};
+use crate::{InternalError, JsThread};
 use builtin::{callable, constructor, getter, named, prototype};
 
 pub(crate) struct JsString<'a, 'b> {
@@ -15,8 +14,11 @@ pub(crate) struct JsString<'a, 'b> {
 impl<'a, 'b> JsString<'a, 'b> {
     #[getter]
     fn length(&mut self) -> JsResult<'a, Value<'a>> {
-        let value: Value<'a> = self.target.into();
-        let unwrapped_result: Value = value.to_object(self.thread)?.unwrap(self.thread).into();
+        let unwrapped_result: Value = self
+            .target
+            .to_object(self.thread)?
+            .unwrap(self.thread)
+            .into();
 
         let str = match unwrapped_result.get_type() {
             ValueType::String(str) => str,
@@ -37,7 +39,7 @@ impl<'a, 'b> JsString<'a, 'b> {
 
     #[named("charAt")]
     fn char_at(&mut self, index: Option<Value<'a>>) -> JsResult<'a, Value<'a>> {
-        let start_at: f64 = index.unwrap_or(0.0.into()).to_number(&self.thread.realm);
+        let start_at: f64 = index.unwrap_or(Value::ZERO).to_number(&self.thread.realm);
         let end_at = (start_at + 1.0).into();
         let start_at = start_at.into();
 
@@ -57,14 +59,14 @@ impl<'a, 'b> JsString<'a, 'b> {
             .unwrap_or_default()
             .to_string(self.thread)?;
 
-        let start_at = start_at.unwrap_or(0.0.into()).to_usize(&self.thread.realm);
-        let end_at = end_at.unwrap_or(0.0.into()).to_usize(&self.thread.realm);
+        let start_at = start_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm);
+        let end_at = end_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm);
 
         let str = self.thread.realm.strings.get(str).as_ref();
 
-        let chars = &str[start_at..end_at];
+        let chars = str[start_at..end_at].to_owned();
 
-        Ok(ValueType::String(self.thread.realm.strings.intern(chars.to_owned())).into())
+        Ok(ValueType::String(self.thread.realm.strings.intern(chars)).into())
     }
 
     #[callable]

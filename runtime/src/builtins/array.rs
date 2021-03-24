@@ -1,6 +1,7 @@
+use crate::debugging::Unwrap;
 use crate::result::JsResult;
-use crate::values::nan::{Value, ValueType};
-use crate::{JsThread, RuntimeValue};
+use crate::values::nan::Value;
+use crate::JsThread;
 use builtin::{constructor, getter, named, prototype, varargs};
 
 pub(crate) struct JsArray<'a, 'b> {
@@ -17,14 +18,17 @@ impl<'a, 'b> JsArray<'a, 'b> {
         if args.len() > 1 {
             self.target
                 .to_object(self.thread)
-                .expect("Constructor must have an object target")
+                .expect_value(
+                    self.thread.get_realm(),
+                    "Constructor must have an object target",
+                )
                 .get_mut_object(&mut self.thread.realm.objects)
-                .set_indexed_properties(args.into_iter().map(|v| v.into()).collect())
+                .set_indexed_properties(args)
         }
     }
 
     #[named("reduceRight")]
-    fn reduce_right(thread: &mut JsThread<'a>) -> JsResult<'a> {
+    fn reduce_right(_: &mut JsThread<'a>) -> JsResult<'a> {
         todo!("Reduce right is not supported")
     }
 
@@ -37,9 +41,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
             .clone();
 
         for element in &mut elements {
-            let element_to_map = (*element).clone();
-            let function: RuntimeValue = function.into();
-            *element = function.call(self.thread, &[element_to_map])?;
+            *element = function.call(self.thread, &[*element])?;
         }
 
         Ok(self
@@ -60,10 +62,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
             .clone();
 
         for element in &elements {
-            let element_to_map = (*element).clone();
-
-            let function: RuntimeValue = function.into();
-            function.call(self.thread, &[element_to_map])?;
+            function.call(self.thread, &[*element])?;
         }
 
         Ok(None)
@@ -76,8 +75,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties()
             .pop()
-            .unwrap_or_default()
-            .into();
+            .unwrap_or_default();
 
         Ok(result)
     }
@@ -93,7 +91,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
             return Ok(Value::UNDEFINED);
         }
 
-        Ok(indexed_properties.remove(0).into())
+        Ok(indexed_properties.remove(0))
     }
 
     fn index_of(&mut self, value: Value<'a>) -> JsResult<'a> {
@@ -118,20 +116,19 @@ impl<'a, 'b> JsArray<'a, 'b> {
     #[named("push")]
     #[varargs]
     fn push(&mut self, values: Vec<Value<'a>>) -> JsResult<'a, Option<Value<'a>>> {
-        match &self.target.get_type() {
-            ValueType::Boolean(_) => Ok(Some(0.0.into())),
-            _ => {
-                let indexed_properties = self
-                    .target
-                    .to_object(self.thread)?
-                    .get_mut_object(&mut self.thread.realm.objects)
-                    .get_mut_indexed_properties();
-
-                indexed_properties.extend(values);
-
-                Ok(Some((indexed_properties.len() as f64).into()))
-            }
+        if self.target == Value::TRUE || self.target == Value::FALSE {
+            return Ok(Some(0.0.into()));
         }
+
+        let indexed_properties = self
+            .target
+            .to_object(self.thread)?
+            .get_mut_object(&mut self.thread.realm.objects)
+            .get_mut_indexed_properties();
+
+        indexed_properties.extend(values);
+
+        Ok(Some((indexed_properties.len() as f64).into()))
     }
 
     #[getter]
@@ -139,7 +136,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
         let length = self
             .target
             .to_object(self.thread)?
-            .get_object(&mut self.thread.realm.objects)
+            .get_object(&self.thread.realm.objects)
             .get_indexed_properties()
             .len() as f64;
 

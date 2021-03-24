@@ -2,6 +2,7 @@ use crate::primordials::RuntimeHelpers;
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::nan::Value;
 
+use crate::debugging::{DebugWithRealm, X};
 use crate::{InternalError, JsThread, ValueType};
 use instruction_set::{Constant, Environmental};
 
@@ -12,8 +13,12 @@ pub(crate) fn set(thread: &mut JsThread) {
     let target = pop!(thread, "Need a target");
 
     if target == Value::UNDEFINED {
-        let type_error =
-            thread.new_type_error(format!("Cannot set property {:?} of undefined", attribute));
+        let str_value = catch!(thread, attribute.to_string(thread));
+
+        let type_error = thread.new_type_error(format!(
+            "Cannot set property {:?} of undefined",
+            thread.realm.get_string(str_value)
+        ));
 
         return thread.throw(type_error);
     }
@@ -24,8 +29,8 @@ pub(crate) fn set(thread: &mut JsThread) {
         ValueType::String(str) => target.set(&mut thread.realm.objects, str, value),
         ValueType::Float => target.set_indexed(thread, attribute.float() as usize, value),
         _ => thread.throw(InternalError::new_stackless(format!(
-            "Cannot set attribute: {:?}",
-            attribute
+            "Cannot set attribute: {}",
+            thread.debug_value(&attribute)
         ))),
     }
 
@@ -49,10 +54,11 @@ pub(crate) fn get(thread: &mut JsThread) {
 
     let target = catch!(thread, target.to_object(thread));
 
-    let reference = match attribute.get_type() {
+    let reference: Value = match attribute.get_type() {
         ValueType::Float => ValueType::NumberReference(attribute.float() as u32),
         _ => ValueType::StringReference(catch!(thread, attribute.to_string(thread))),
-    };
+    }
+    .into();
 
     thread.push_stack(target);
     thread.push_stack(reference);
@@ -132,8 +138,8 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
             ValueType::Null => Prototype::Null,
             value => {
                 let type_error = thread.new_type_error(format!(
-                    "Class extends value {:?} is not a constructor or null",
-                    value,
+                    "Class extends value {} is not a constructor or null",
+                    thread.debug_value(&prototype),
                 ));
 
                 return thread.throw(type_error);

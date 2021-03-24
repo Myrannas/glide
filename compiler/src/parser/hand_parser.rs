@@ -7,10 +7,9 @@ use crate::parser::ast::{
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
 use crate::parser::strings::parse_string;
-use logos::{Lexer, Source, Span, SpannedIter};
+use logos::{Source, Span, SpannedIter};
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
-use std::iter::Peekable;
 use std::ops::Range;
 
 pub(crate) struct WhitespaceTrackingLexer<'a> {
@@ -190,7 +189,7 @@ impl<'a> WhitespaceTrackingLexer<'a> {
     fn expect_one_of(&mut self, tokens: &[Token<'a>]) -> Result<'a, ()> {
         let next = self.next().unwrap_or((Token::EndOfFile, 0..0));
 
-        if tokens.iter().position(|t| *t == next.0).is_some() {
+        if tokens.iter().any(|t| *t == next.0) {
             return Ok(());
         }
 
@@ -247,7 +246,7 @@ impl<'a> WhitespaceTrackingLexer<'a> {
     }
 }
 
-fn parse_object_literal<'a, 'b>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
+fn parse_object_literal<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
     let mut attributes = Vec::new();
 
     while !input.consume_if(Token::CloseBrace) {
@@ -335,7 +334,7 @@ fn parse_value<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
 }
 
 fn parse_accessor<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
-    let mut is_new = input.consume_if(Token::New);
+    let is_new = input.consume_if(Token::New);
 
     let mut expression = parse_value(input)?;
 
@@ -809,7 +808,7 @@ impl<'a> Parse<'a> for Statement<'a> {
 
                 Ok(Statement::Continue)
             }
-            Some(other) => {
+            Some(_) => {
                 let expression = parse_expression(input);
 
                 input.expect_end_of_statement()?;
@@ -923,21 +922,21 @@ impl<'a> Parse<'a> for ClassStatement<'a> {
 
         let mut members = Vec::new();
         while !input.consume_if(Token::CloseBrace) {
-            let is_static = input.consume_if(Token::Static);
-
-            let is_getter = if matches!(input.lookahead(), Some((Token::Id("get"), ..))) {
-                input.next();
-                true
-            } else {
-                false
-            };
-
-            let is_setter = if matches!(input.lookahead(), Some((Token::Id("set"), ..))) {
-                input.next();
-                true
-            } else {
-                false
-            };
+            // let is_static = input.consume_if(Token::Static);
+            //
+            // let is_getter = if matches!(input.lookahead(), Some((Token::Id("get"), ..))) {
+            //     input.next();
+            //     true
+            // } else {
+            //     false
+            // };
+            //
+            // let is_setter = if matches!(input.lookahead(), Some((Token::Id("set"), ..))) {
+            //     input.next();
+            //     true
+            // } else {
+            //     false
+            // };
 
             match input.lookahead() {
                 Some((Token::Id(identifier), ..)) => {

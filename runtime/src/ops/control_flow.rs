@@ -1,26 +1,18 @@
-use crate::debugging::DebuggableWithThread;
+use crate::debugging::X;
 use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
-use crate::{ExecutionError, JsObject, JsThread, Value, ValueType};
+use crate::{ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
 use instruction_set::Constant;
 
-fn get_callable<'a>(
-    thread: &mut JsThread<'a>,
-    value: Value<'a>,
-) -> JsResult<'a, ObjectPointer<'a>> {
+fn get_callable<'a>(realm: &mut Realm<'a>, value: Value<'a>) -> JsResult<'a, ObjectPointer<'a>> {
     // 1. Assert: F is an ECMAScript function object.
 
     match value.get_type() {
-        ValueType::Object(obj) if obj.is_callable(&thread.realm.objects) => Ok(obj),
+        ValueType::Object(obj) if obj.is_callable(&realm.objects) => Ok(obj),
         _ => Err(ExecutionError::Thrown(
-            thread
-                .new_type_error(format!(
-                    "{:?} is not a function",
-                    DebuggableWithThread::from(&value, thread)
-                ))
-                .into(),
+            realm.new_type_error(format!("{:?} is not a function", X::from(&value, realm))),
             None,
         )),
     }
@@ -47,7 +39,7 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
     };
 
     let fn_object = resolve!(fn_value, thread);
-    let fn_object = catch!(thread, get_callable(thread, fn_object));
+    let fn_object = catch!(thread, get_callable(&mut thread.realm, fn_object));
 
     // 2. If F.[[IsClassConstructor]] is true, throw a TypeError exception.
     if fn_object.is_class_constructor(&thread.realm.objects) {
@@ -90,13 +82,13 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let fn_value: Value = thread.pop_stack();
 
     let resolved_value = resolve!(fn_value, thread);
-    let fn_object = catch!(thread, get_callable(thread, resolved_value));
+    let fn_object = catch!(thread, get_callable(&mut thread.realm, resolved_value));
 
     let callable = if let Some(constructor) = fn_object.get_construct(&thread.realm.objects) {
         constructor.clone()
     } else {
         let error = thread.new_type_error("is not a constructor");
-        return thread.throw(ExecutionError::Thrown(error.into(), None));
+        return thread.throw(ExecutionError::Thrown(error, None));
     };
 
     let mut target = JsObject::new();

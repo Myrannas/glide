@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 glide_compiler = { path = "../compiler", features=["eval"] }
-glide_runtime = { path = "../runtime", features=["eval"] }
+glide_runtime = { path = "../runtime", features=["eval", "debugging"] }
 anyhow = "1.0.38"
 colored = "2.0.0"
 log = { version = "0.4", features = ["max_level_trace"] }

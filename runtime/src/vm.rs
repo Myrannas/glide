@@ -1,13 +1,12 @@
 use crate::context::JsContext;
-use crate::debugging::{DebugRepresentation, DebuggableWithThread};
-use crate::object_pool::{ObjectPointer, ObjectPool};
+use crate::debugging::{DebugRepresentation, DebugWithRealm, X};
 use crate::ops::Operand;
 use crate::primordials::Realm;
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::nan::Value;
 use crate::values::value::make_arguments;
-use crate::{ExecutionError, JsFunction, JsObject};
+use crate::{ExecutionError, JsFunction};
 use instruction_set::{Constant, Instruction};
 use log::trace;
 use std::fmt::{Debug, Formatter};
@@ -55,7 +54,7 @@ struct CatchFrame {
 
 impl<'a> From<&mut JsThread<'a>> for Stack {
     fn from(thread: &mut JsThread<'a>) -> Self {
-        let mut strings = &mut thread.realm.strings;
+        let strings = &thread.realm.strings;
 
         let mut call_stack: Vec<StackTraceFrame> = thread
             .call_stack
@@ -160,7 +159,7 @@ impl<'a> JsThread<'a> {
 
         trace!(
             "return {:?} {:?} {:?}",
-            value,
+            self.debug_value(&value),
             self.current_frame,
             self.call_stack.last()
         );
@@ -273,7 +272,7 @@ impl<'a> JsThread<'a> {
 
             self.current_frame.index = *instruction_index;
 
-            self.stack.push(error.into());
+            self.stack.push(error);
         } else {
             unreachable!("This should not be possible :(");
         }
@@ -333,7 +332,12 @@ impl<'a> JsThread<'a> {
         new: bool,
         native: bool,
     ) {
-        // println!("{} \n =====", function.name());
+        let args_debug: Vec<Value<'a>> = self.stack.iter().rev().take(args).cloned().collect();
+        trace!(
+            "{}({:?}) \n =====",
+            self.realm.get_string(function.name()),
+            X::from(&args_debug, &self.realm)
+        );
         if self.call_stack.len() > self.call_stack_limit {
             return self.throw(InternalError::new_stackless("Stack overflow"));
         }
@@ -431,13 +435,14 @@ impl<'a> JsThread<'a> {
 
     #[must_use]
     pub fn debug<'b, 'c>(&self, value: &impl DebugRepresentation<'a>) -> String {
-        format!("{:?}", DebuggableWithThread::from(value, &self))
+        format!("{:?}", X::from(value, self.get_realm()))
     }
 
     pub fn get_realm_mut(&mut self) -> &mut Realm<'a> {
         &mut self.realm
     }
 
+    #[must_use]
     pub fn get_realm(&self) -> &Realm<'a> {
         &self.realm
     }
@@ -483,7 +488,7 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
             Instruction::SetLocal { local } => {
                 let locals = &self.thread.current_frame.current_function.locals()[*local];
                 let value1 = self.thread.stack.last().cloned().unwrap_or_default();
-                let last = DebuggableWithThread::from(&value1, self.thread);
+                let last = X::from(&value1, self.thread.get_realm());
 
                 f.debug_struct("SetLocal")
                     .field("local", &locals.name)
@@ -497,7 +502,7 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
                 let str = self.thread.realm.strings.get(atom).as_ref();
 
                 let value = self.thread.stack.last().cloned().unwrap_or_default();
-                let last = DebuggableWithThread::from(&value, self.thread);
+                let last = X::from(&value, self.thread.get_realm());
                 f.debug_struct("SetLocal")
                     .field("field", &str)
                     .field("value", &last)
@@ -513,11 +518,6 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
                 f.debug_struct("LoadConstant").field("value", &str).finish()
             }
 
-            Instruction::SetNamed { name } => {
-                let atom = self.thread.current_frame.current_function.get_atom(*name);
-
-                f.debug_struct("SetNamed").field("name", &atom).finish()
-            }
             instr => Instruction::fmt(instr, f),
         }
     }

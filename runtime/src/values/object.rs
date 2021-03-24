@@ -1,19 +1,16 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter, Pointer, Write};
+use std::fmt::{Debug, Formatter, Write};
 use std::hash::{BuildHasher, Hasher};
 
 use colored::Colorize;
 
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::values::primitives::JsPrimitive;
 
 use super::string::JsPrimitiveString;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 
 use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
-use ahash::AHashMap;
 
 #[derive(Clone)]
 pub struct JsObject<'a> {
@@ -21,7 +18,7 @@ pub struct JsObject<'a> {
     pub(crate) indexed_properties: Vec<Value<'a>>,
     pub(crate) name: Option<JsPrimitiveString>,
     pub(crate) prototype: Option<ObjectPointer<'a>>,
-    pub(crate) wrapped: Option<JsPrimitive>,
+    pub(crate) wrapped: Option<Value<'a>>,
     pub(crate) callable: Option<FunctionReference<'a>>,
     pub(crate) construct: Option<FunctionReference<'a>>,
 }
@@ -40,33 +37,6 @@ impl<'a> Default for Property<'a> {
 impl Default for PropertyHasher {
     fn default() -> Self {
         PropertyHasher { i: 0 }
-    }
-}
-
-impl<'a> Debug for JsObject<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut debug = f.debug_struct("[Object object]");
-
-        for (key, value) in &self.properties {
-            match value {
-                Property::DataDescriptor { value, .. } => {
-                    debug.field(&format!("[{}]", key), value);
-                }
-                Property::AccessorDescriptor { .. } => {
-                    // debug.field(&format!("[{}]", key), "complex");
-                }
-            }
-        }
-
-        if let Some(prototype) = &self.prototype {
-            debug.field("[[Prototype]]", prototype);
-        }
-
-        if self.callable.is_some() {
-            debug.field("[[Callable]]", &"function() {}".to_owned());
-        }
-
-        debug.finish()
     }
 }
 
@@ -135,8 +105,8 @@ impl<'a, 'b> JsObjectBuilder<'a, 'b> {
         self
     }
 
-    pub fn with_wrapped_value(&mut self, value: impl Into<JsPrimitive>) -> &mut Self {
-        self.inner.wrapped = Some(value.into());
+    pub fn with_wrapped_value(&mut self, value: Value<'a>) -> &mut Self {
+        self.inner.wrapped = Some(value);
         self
     }
 
@@ -201,14 +171,13 @@ impl<'a> JsObject<'a> {
         self.construct.is_some()
     }
 
-    pub fn wrap(&mut self, value: impl Into<JsPrimitive>) {
-        self.wrapped = Some(value.into());
+    pub fn wrap(&mut self, value: Value<'a>) {
+        self.wrapped = Some(value);
     }
 
     #[must_use]
     pub fn get_wrapped_value(&self) -> Option<Value<'a>> {
-        let value = self;
-        value.wrapped.as_ref().cloned().map(|v| v.into())
+        self.wrapped
     }
 
     pub fn set_callable(&mut self, value: impl Into<FunctionReference<'a>>) {
@@ -219,8 +188,8 @@ impl<'a> JsObject<'a> {
         self.construct = Some(value.into());
     }
 
-    pub fn set_wrapped_value(&mut self, value: impl Into<Value<'a>>) {
-        self.wrapped = Some(value.into().into());
+    pub fn set_wrapped_value(&mut self, value: Value<'a>) {
+        self.wrapped = Some(value);
     }
 
     pub fn set_prototype(&mut self, prototype: ObjectPointer<'a>) {
@@ -268,7 +237,7 @@ impl<'a> JsObject<'a> {
         configurable: bool,
     ) {
         self.properties.insert(
-            key.into(),
+            key,
             Property::AccessorDescriptor {
                 getter,
                 setter,
@@ -278,19 +247,10 @@ impl<'a> JsObject<'a> {
         );
     }
 
-    pub(crate) fn define_value(
-        &mut self,
-        key: impl Into<JsPrimitiveString>,
-        value: impl Into<Value<'a>>,
-    ) {
-        self.properties
-            .insert(key.into(), Property::value(value.into()));
-    }
-
     pub(crate) fn define_value_property(
         &mut self,
         key: JsPrimitiveString,
-        value: impl Into<Value<'a>>,
+        value: Value<'a>,
         writable: bool,
         enumerable: bool,
         configurable: bool,
@@ -298,7 +258,7 @@ impl<'a> JsObject<'a> {
         self.properties.insert(
             key,
             Property::DataDescriptor {
-                value: value.into().into(),
+                value,
                 writable,
                 enumerable,
                 configurable,
@@ -340,17 +300,6 @@ impl<'a> Property<'a> {
     }
 }
 
-impl<'a> Debug for Property<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Property::DataDescriptor { value, .. } => value.fmt(f),
-            Property::AccessorDescriptor { .. } => {
-                f.write_fmt(format_args!("{}", "property".blue()))
-            }
-        }
-    }
-}
-
 impl<'a> DebugRepresentation<'a> for JsObject<'a> {
     fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
         if let Some(name) = &self.name {
@@ -360,7 +309,7 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
         if self.callable.is_some() || self.construct.is_some() {
             let name = self
                 .name
-                .map_or("", |s| renderer.thread.realm.strings.get(s).as_ref());
+                .map_or("", |s| renderer.realm.strings.get(s).as_ref());
             renderer.formatter.write_str("[Function: ")?;
             renderer.formatter.write_str(name)?;
 
@@ -369,24 +318,34 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
 
         if renderer.representation != Representation::Compact {
             renderer.formatter.write_char('{')?;
+
+            let mut first_property = true;
             for (k, v) in self.indexed_properties.iter().enumerate() {
+                if first_property {
+                    first_property = false;
+                } else {
+                    renderer.formatter.write_str(", ")?;
+                }
                 renderer.formatter.write_str(&k.to_string())?;
                 renderer.formatter.write_str(": ")?;
                 renderer.render(v)?;
-                renderer.formatter.write_str(", ")?;
             }
 
+            first_property = true;
             for (k, v) in &self.properties {
-                let key = renderer.thread.realm.strings.get(*k);
+                if first_property {
+                    first_property = false;
+                } else {
+                    renderer.formatter.write_str(", ")?;
+                }
+
+                let key = renderer.realm.strings.get(*k);
                 renderer.formatter.write_str(key.as_ref())?;
                 renderer.formatter.write_str(": ")?;
                 match v {
-                    Property::DataDescriptor { value, .. } => {
-                        Value::render(&value.clone().into(), renderer)?
-                    }
+                    Property::DataDescriptor { value, .. } => Value::render(value, renderer)?,
                     Property::AccessorDescriptor { .. } => renderer.literal("complex")?,
                 };
-                renderer.formatter.write_str(", ")?;
             }
 
             renderer.formatter.write_char('}')?;
@@ -399,7 +358,7 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
 #[cfg(test)]
 mod tests {
     use crate::values::object::{Property, PropertyHasher};
-    use crate::{JsPrimitiveString, RuntimeValue};
+    use crate::{JsPrimitiveString, Value};
     use std::collections::HashMap;
 
     #[test]
@@ -409,6 +368,6 @@ mod tests {
             std::mem::size_of::<HashMap<JsPrimitiveString, Property, PropertyHasher>>()
         );
 
-        println!("{}", std::mem::size_of::<RuntimeValue>());
+        println!("{}", std::mem::size_of::<Value>());
     }
 }

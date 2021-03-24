@@ -3,37 +3,34 @@ use crate::{JsThread, Value, ValueType};
 pub(crate) fn add(thread: &mut JsThread, times: u8) {
     let left: Value = pop!(thread);
 
-    match left.get_type() {
-        ValueType::String(l_str) => {
-            let l_str = thread.realm.strings.get(l_str).as_ref().to_owned();
+    if let ValueType::String(l_str) = left.get_type() {
+        let l_str = thread.realm.strings.get(l_str).as_ref().to_owned();
 
-            let mut string = l_str;
-            for _ in 0..times {
-                let right: Value = pop!(thread);
+        let mut string = l_str;
+        for _ in 0..times {
+            let right: Value = pop!(thread);
 
-                let r_str = catch!(thread, right.to_string(thread));
-                let r_str = thread.realm.strings.get(r_str).as_ref();
+            let r_str = catch!(thread, right.to_string(thread));
+            let r_str = thread.realm.strings.get(r_str).as_ref();
 
-                string += r_str;
-            }
-
-            let pointer = thread.realm.strings.intern(string);
-            thread.push_stack(pointer);
+            string += r_str;
         }
-        _ => {
-            let l_val: f64 = left.to_number(&thread.realm);
 
-            let mut value = l_val;
-            for _ in 0..times {
-                let right: Value = pop!(thread);
+        let pointer = thread.realm.strings.intern(string);
+        thread.push_stack(pointer);
+    } else {
+        let l_val: f64 = left.to_number(&thread.realm);
 
-                let r_val = right.to_number(&thread.realm);
+        let mut value = l_val;
+        for _ in 0..times {
+            let right: Value = pop!(thread);
 
-                value += r_val;
-            }
+            let r_val = right.to_number(&thread.realm);
 
-            thread.push_stack(value);
+            value += r_val;
         }
+
+        thread.push_stack(value);
     }
 
     thread.step();

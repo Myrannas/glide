@@ -1,4 +1,3 @@
-use crate::object_pool::ObjectPool;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
@@ -41,15 +40,14 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                             configurable.into(),
                         ),
                         (self.thread.realm.constants.writable, writable.into()),
-                        (self.thread.realm.constants.value, value.into()),
+                        (self.thread.realm.constants.value, value),
                     ],
                 );
             }
             Some(Property::AccessorDescriptor {
-                getter,
-                setter,
                 enumerable,
                 configurable,
+                ..
             }) => {
                 object.extend(
                     &mut self.thread.realm.objects,
@@ -110,26 +108,17 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
 
         let constants = self.thread.realm.constants;
 
-        let value: Value = descriptor.get_value(self.thread, constants.value)?.into();
+        let value: Value = descriptor.get_value(self.thread, constants.value)?;
 
-        let enumerable = match descriptor
-            .get_value(self.thread, constants.enumerable)?
-            .into()
-        {
+        let enumerable = match descriptor.get_value(self.thread, constants.enumerable)? {
             Value::UNDEFINED => true,
             other => other.to_bool(&self.thread.realm),
         };
-        let writable = match descriptor
-            .get_value(self.thread, constants.writable)?
-            .into()
-        {
+        let writable = match descriptor.get_value(self.thread, constants.writable)? {
             Value::UNDEFINED => true,
             other => other.to_bool(&self.thread.realm),
         };
-        let configurable = match descriptor
-            .get_value(self.thread, constants.configurable)?
-            .into()
-        {
+        let configurable = match descriptor.get_value(self.thread, constants.configurable)? {
             Value::UNDEFINED => true,
             other => other.to_bool(&self.thread.realm),
         };

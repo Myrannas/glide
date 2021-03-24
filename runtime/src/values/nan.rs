@@ -1,9 +1,9 @@
-use crate::debugging::{DebugRepresentation, Renderer, Representation};
+use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer, Representation, Unwrap};
 use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::string_pool::StringPointer;
-use crate::{ExecutionError, InternalError, JsPrimitiveString, JsThread, Realm, RuntimeValue};
+use crate::{ExecutionError, InternalError, JsPrimitiveString, JsThread, Realm};
 use instruction_set::Constant;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
@@ -15,21 +15,9 @@ pub struct Value<'a> {
     phantom: PhantomData<ObjectPointer<'a>>,
 }
 
-impl<'a> Debug for Value<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let tpe = self.get_type();
-
-        match tpe {
-            ValueType::Float => f.write_fmt(format_args!("{}", self.float())),
-            tpe => f.write_fmt(format_args!("{:?}", tpe)),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub enum ValueType<'a> {
     Float,
-    FloatNaN,
     Object(ObjectPointer<'a>),
     String(JsPrimitiveString),
     Null,
@@ -41,7 +29,7 @@ pub enum ValueType<'a> {
 }
 
 const DOWNSHIFT: u64 = 47;
-const FLOAT_NAN_TAG: u64 = 9221120237041090560u64 >> DOWNSHIFT;
+const FLOAT_NAN_TAG: u64 = 9_221_120_237_041_090_560_u64 >> DOWNSHIFT;
 const OBJECT_TAG: u64 = FLOAT_NAN_TAG + 1;
 const NULL_TAG: u64 = FLOAT_NAN_TAG + 2;
 const UNDEFINED_TAG: u64 = FLOAT_NAN_TAG + 3;
@@ -55,10 +43,6 @@ const NUMBER_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 9;
 impl<'a> From<ValueType<'a>> for Value<'a> {
     fn from(value: ValueType<'a>) -> Self {
         match value {
-            ValueType::FloatNaN => Value {
-                inner: f64::NAN.to_bits(),
-                phantom: PhantomData,
-            },
             ValueType::Object(object) => {
                 let ptr: u32 = object.into();
                 Value {
@@ -67,10 +51,10 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
                 }
             }
             ValueType::String(str) => {
-                let ptr: u32 = str.into();
+                let str_index: u32 = str.into();
 
                 Value {
-                    inner: (STRING_TAG << DOWNSHIFT) + u64::from(ptr),
+                    inner: (STRING_TAG << DOWNSHIFT) + u64::from(str_index),
                     phantom: PhantomData,
                 }
             }
@@ -95,51 +79,18 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
                 phantom: PhantomData,
             },
             ValueType::StringReference(str) => {
-                let ptr: u32 = str.into();
+                let str_index: u32 = str.into();
 
                 Value {
-                    inner: (STRING_REFERENCE_TAG << DOWNSHIFT) + u64::from(ptr),
+                    inner: (STRING_REFERENCE_TAG << DOWNSHIFT) + u64::from(str_index),
                     phantom: PhantomData,
                 }
             }
             ValueType::NumberReference(number_reference) => Value {
-                inner: (STRING_REFERENCE_TAG << DOWNSHIFT) + u64::from(number_reference),
+                inner: (NUMBER_REFERENCE_TAG << DOWNSHIFT) + u64::from(number_reference),
                 phantom: PhantomData,
             },
             ValueType::Float => panic!("Unreachable"),
-        }
-    }
-}
-
-impl<'a> From<RuntimeValue<'a>> for Value<'a> {
-    fn from(value: RuntimeValue<'a>) -> Self {
-        match value {
-            RuntimeValue::Undefined => ValueType::Undefined.into(),
-            RuntimeValue::Null => ValueType::Null.into(),
-            RuntimeValue::Boolean(value) => ValueType::Boolean(value).into(),
-            RuntimeValue::Float(float) => float.into(),
-            RuntimeValue::String(str) => ValueType::String(str).into(),
-            RuntimeValue::Object(obj) => ValueType::Object(obj).into(),
-            RuntimeValue::StringReference(str) => ValueType::StringReference(str).into(),
-            RuntimeValue::NumberReference(number) => ValueType::NumberReference(number).into(),
-            RuntimeValue::Local(local) => ValueType::Local(local as u32).into(),
-        }
-    }
-}
-
-impl<'a> From<Value<'a>> for RuntimeValue<'a> {
-    fn from(value: Value<'a>) -> Self {
-        match value.get_type() {
-            ValueType::Undefined => RuntimeValue::Undefined,
-            ValueType::Null => RuntimeValue::Null,
-            ValueType::Boolean(value) => RuntimeValue::Boolean(value),
-            ValueType::Float => RuntimeValue::Float(value.float()),
-            ValueType::String(str) => RuntimeValue::String(str),
-            ValueType::Object(obj) => RuntimeValue::Object(obj),
-            ValueType::StringReference(str) => RuntimeValue::StringReference(str),
-            ValueType::NumberReference(number) => RuntimeValue::NumberReference(number),
-            ValueType::Local(local) => RuntimeValue::Local(local as usize),
-            ValueType::FloatNaN => RuntimeValue::Float(f64::NAN),
         }
     }
 }
@@ -187,15 +138,15 @@ impl<'a> Value<'a> {
         phantom: PhantomData,
     };
     pub const ZERO: Self = Value {
-        inner: 0u64,
+        inner: 0_u64,
         phantom: PhantomData,
     };
 
+    #[must_use]
     pub fn get_type(self) -> ValueType<'a> {
         let tag = self.inner >> DOWNSHIFT;
 
         match tag {
-            FLOAT_NAN_TAG => ValueType::FloatNaN,
             OBJECT_TAG => ValueType::Object(ObjectPointer::new(self.inner as u32)),
             NULL_TAG => ValueType::Null,
             UNDEFINED_TAG => ValueType::Undefined,
@@ -215,7 +166,8 @@ impl<'a> Value<'a> {
         f64::from_bits(self.inner)
     }
 
-    pub fn from_constant(atoms: &Vec<JsPrimitiveString>, constant: Constant) -> Value<'a> {
+    #[must_use]
+    pub fn from_constant(atoms: &[JsPrimitiveString], constant: Constant) -> Value<'a> {
         match constant {
             Constant::Null => Self::NULL,
             Constant::Undefined => Self::UNDEFINED,
@@ -257,32 +209,14 @@ impl<'a> From<i32> for Value<'a> {
     }
 }
 
-impl<'a> From<Option<RuntimeValue<'a>>> for Value<'a> {
-    #[allow(clippy::cast_lossless)]
-    fn from(value: Option<RuntimeValue<'a>>) -> Self {
-        value.unwrap_or_default().into()
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use crate::object_pool::ObjectPointer;
     use crate::values::nan::{Value, ValueType};
-    use crate::RuntimeValue;
 
     #[test]
     fn test() {
         assert_eq!(std::mem::size_of::<Value>(), 8);
         assert_eq!(std::mem::size_of::<ValueType>(), 8);
-    }
-
-    #[test]
-    fn convert_object() {
-        let value = RuntimeValue::Object(ObjectPointer::new(1));
-        let converted_value: Value = value.into();
-        let converted_back: RuntimeValue = converted_value.into();
-
-        assert_eq!(value, converted_back);
     }
 }
 
@@ -295,7 +229,7 @@ impl<'a, 'b> DebugRepresentation<'a> for Value<'a> {
             (.., ValueType::Null) => render.literal("null"),
             (.., ValueType::Object(obj)) => render.render(&obj),
             (.., ValueType::String(str)) => {
-                render.string_literal(render.thread.realm.strings.get(str).as_ref())
+                render.string_literal(render.realm.strings.get(str).as_ref())
             }
             (.., ValueType::NumberReference(reference)) => {
                 render.start_internal("REFERENCE")?;
@@ -307,7 +241,7 @@ impl<'a, 'b> DebugRepresentation<'a> for Value<'a> {
             (.., ValueType::StringReference(reference)) => {
                 render.start_internal("REFERENCE")?;
                 render.internal_key("key")?;
-                render.string_literal(render.thread.realm.strings.get(reference).as_ref())?;
+                render.string_literal(render.realm.strings.get(reference).as_ref())?;
                 render.end_internal()?;
                 Ok(())
             }
@@ -390,7 +324,11 @@ impl<'a> Value<'a> {
                 base_object.set_indexed(thread, index as usize, updated_value);
                 Ok(())
             }
-            value => InternalError::new_stackless(format!("Unable to update - {:?}", value)).into(),
+            _ => InternalError::new_stackless(format!(
+                "Unable to update - {}",
+                thread.debug_value(&self)
+            ))
+            .into(),
         }
     }
 
@@ -414,7 +352,7 @@ impl<'a> Value<'a> {
                 }
 
                 if let ValueType::Object(function) = to_string.get_type() {
-                    if let Some(callable) = function.get_callable(&mut thread.realm.objects) {
+                    if let Some(callable) = function.get_callable(&thread.realm.objects) {
                         let callable = callable.clone();
 
                         let result = thread.call_from_native(obj.into(), callable, 0, false)?;
@@ -427,13 +365,13 @@ impl<'a> Value<'a> {
                     .new_type_error("Cannot convert object to primitive value")
                     .into());
             }
-            value => todo!("Unsupported types {:?}", value),
+            _ => todo!("Unsupported types {:?}", thread.debug_value(&self)),
         };
 
         Ok(result)
     }
 
-    pub(crate) fn to_object(self, thread: &mut JsThread<'a>) -> JsResult<'a, ObjectPointer<'a>> {
+    pub fn to_object(self, thread: &mut JsThread<'a>) -> JsResult<'a, ObjectPointer<'a>> {
         let result = match self.get_type() {
             ValueType::String(str) => thread
                 .realm
@@ -450,7 +388,10 @@ impl<'a> Value<'a> {
                 .wrap_boolean(&mut thread.realm.objects, f),
             value => {
                 return Err(thread
-                    .new_type_error(format!("Can't wrap {:?} with object", value))
+                    .new_type_error(format!(
+                        "Can't wrap {:?} with object",
+                        thread.debug_value(&self)
+                    ))
                     .into())
             }
         };
@@ -458,7 +399,7 @@ impl<'a> Value<'a> {
         Ok(result)
     }
 
-    pub(crate) fn to_bool(self, realm: &Realm) -> bool {
+    pub(crate) fn to_bool(self, realm: &Realm<'a>) -> bool {
         match self.get_type() {
             ValueType::Float => self.float() > 0.0,
             ValueType::Boolean(bool) => bool,
@@ -466,7 +407,7 @@ impl<'a> Value<'a> {
             ValueType::String(str) if str == realm.constants.empty_string => false,
             ValueType::String(..) | ValueType::Object(..) => true,
             ValueType::Null | ValueType::Undefined => false,
-            value => todo!("Unsupported types {:?}", value),
+            _ => todo!("Unsupported types {:?}", realm.debug_value(&self)),
         }
     }
 
@@ -476,7 +417,6 @@ impl<'a> Value<'a> {
             ValueType::Null | ValueType::Boolean(false) => 0.0,
             ValueType::Boolean(true) => 1.0,
             ValueType::Float => self.float(),
-            ValueType::FloatNaN => self.float(),
             ValueType::StringReference(..) | ValueType::NumberReference(..) => {
                 todo!("References are not supported")
             }
@@ -520,6 +460,15 @@ impl<'a> Value<'a> {
         f_val as i32
     }
 
+    pub fn call(self, thread: &mut JsThread<'a>, args: &[Value<'a>]) -> JsResult<'a, Value<'a>> {
+        match self.get_type() {
+            ValueType::Object(obj) => obj.call(thread, args),
+            other => Err(thread
+                .new_type_error(format!("{} is not a function", thread.debug_value(&self)))
+                .into()),
+        }
+    }
+
     pub(crate) fn strict_eq(self, other: Self) -> bool {
         self.inner == other.inner
     }
@@ -545,7 +494,8 @@ impl<'a> Value<'a> {
                 let unwrapped_value = b1.unwrap(frame);
 
                 unwrapped_value.map_or(false, |b1| {
-                    let string_value1: JsPrimitiveString = b1.to_string(frame).unwrap();
+                    let string_value1: JsPrimitiveString =
+                        b1.to_string(frame).unwrap_value(frame.get_realm());
 
                     s1.eq(&string_value1)
                 })

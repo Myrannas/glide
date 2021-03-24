@@ -9,7 +9,7 @@ use logos::Logos;
 
 pub use ast::ParsedModule;
 
-pub fn parse_input<'a>(input: &str) -> Result<ParsedModule> {
+pub fn parse_input(input: &str) -> Result<ParsedModule> {
     let lexer = lexer::Token::lexer(input).spanned();
 
     match hand_parser::parse(&mut WhitespaceTrackingLexer {

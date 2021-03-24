@@ -1,14 +1,12 @@
 use crate::context::JsContext;
-use crate::debugging::{DebugRepresentation, Renderer};
-use crate::primordials::{Primitives, RuntimeHelpers};
+use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer};
+use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
-use crate::values::value::RuntimeValue;
 use crate::vm::JsThread;
 
-use crate::object_pool::{ObjectPointer, ObjectPool};
-use crate::string_pool::StringPool;
+use crate::object_pool::ObjectPointer;
 use crate::values::nan::Value;
 use crate::Realm;
 use core::cmp::PartialEq;
@@ -118,7 +116,7 @@ impl JsClass {
         context: &JsContext<'a>,
         thread: &mut JsThread<'a>,
         prototype: Prototype<'a>,
-    ) -> JsResult<'a, RuntimeValue<'a>> {
+    ) -> JsResult<'a> {
         let constructor = if let Some(constructor) = &self.construct {
             Some(FunctionReference::Custom(CustomFunctionReference {
                 function: constructor.clone(),
@@ -135,7 +133,7 @@ impl JsClass {
                 return Err(thread
                     .new_type_error(format!(
                         "Class extends value {:?} is not a constructor or null",
-                        obj
+                        thread.debug_value(&obj)
                     ))
                     .into());
             }
@@ -159,7 +157,7 @@ impl JsClass {
             Prototype::Null => {}
         };
 
-        object_builder.with_name(self.name.clone());
+        object_builder.with_name(self.name);
 
         let object = object_builder.build();
 
@@ -284,9 +282,7 @@ impl<'a> JsFunction {
                 stack_size,
                 locals_init,
                 classes,
-                name: name
-                    .map(|n| realm.strings.intern(n))
-                    .unwrap_or(realm.constants.empty_string),
+                name: name.map_or(realm.constants.empty_string, |n| realm.strings.intern(n)),
             }),
         }
     }

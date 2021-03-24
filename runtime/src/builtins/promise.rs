@@ -1,6 +1,6 @@
 use crate::result::JsResult;
 use crate::values::nan::Value;
-use crate::{BuiltIn, JsObject, JsThread, RuntimeValue};
+use crate::{BuiltIn, JsObject, JsThread};
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsPromise<'a, 'b> {
@@ -34,10 +34,13 @@ impl<'a, 'b> JsPromise<'a, 'b> {
         Ok(())
     }
 
+    #[allow(clippy::unused_self)]
     fn then(&mut self) {}
 
+    #[allow(clippy::unused_self)]
     fn catch(&mut self) {}
 
+    #[allow(clippy::unused_self)]
     fn finally(&mut self) {}
 
     fn all(_: &mut JsThread<'a>) {}

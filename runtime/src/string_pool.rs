@@ -1,7 +1,6 @@
 use crate::pool::{Pool, PoolPointer};
-use crate::values::object::PropertyHasher;
 use ahash::{AHashMap, AHasher};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 
@@ -73,9 +72,7 @@ impl StringPool {
     pub(crate) fn intern(&mut self, value: impl AsRef<str>) -> StringPointer {
         let value_str = value.as_ref();
 
-        if let Some(existing_id) = self.lookup.get(value_str) {
-            *existing_id
-        } else {
+        self.lookup.get(value_str).cloned().unwrap_or_else(|| {
             let mut hasher = AHasher::default();
 
             value_str.hash(&mut hasher);
@@ -90,7 +87,7 @@ impl StringPool {
             self.lookup.insert(value_str.to_owned(), identifier);
 
             identifier
-        }
+        })
     }
 
     pub(crate) fn intern_native(&mut self, value: &str) -> StringPointer {

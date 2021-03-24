@@ -1,3 +1,4 @@
+use crate::debugging::DebugWithRealm;
 use crate::primordials::RuntimeHelpers;
 use crate::{JsThread, Value, ValueType};
 
@@ -66,13 +67,10 @@ pub(crate) fn instance_of(thread: &mut JsThread) {
 }
 
 pub(crate) fn logical_or(thread: &mut JsThread, left: usize, right: usize) {
-    let l_ref: Value = thread.pop_stack();
-
-    let l_prim = l_ref.clone();
-    let l_prim = resolve!(l_prim, thread);
+    let l_prim = pop!(thread);
 
     if l_prim.to_bool(&thread.realm) {
-        thread.push_stack(l_ref);
+        thread.push_stack(l_prim);
 
         thread.jump(left);
     } else {
@@ -130,7 +128,8 @@ fn numeric_comparison_op(
         (ValueType::String(s1), ValueType::String(s2)) => {
             let left = thread.realm.strings.get(s1).as_ref();
             let right = thread.realm.strings.get(s2).as_ref();
-            thread.push_stack(str_op(left, right))
+            let result = str_op(left, right);
+            thread.push_stack(result)
         }
         _ => thread.push_stack(num_op(
             left.to_number(&thread.realm),
@@ -149,8 +148,9 @@ pub(crate) fn in_operator(thread: &mut JsThread) {
         obj
     } else {
         let type_error = thread.new_type_error(format!(
-            "Cannot use 'in' operator to search for '{:?}' in {:?}",
-            left, right
+            "Cannot use 'in' operator to search for '{}' in {}",
+            thread.debug_value(&left),
+            thread.debug_value(&right)
         ));
         return thread.throw(type_error);
     };

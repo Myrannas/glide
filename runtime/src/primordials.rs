@@ -1,14 +1,11 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, string};
-use crate::builtins::string::JsString;
-use crate::debugging::DebugRepresentation;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
 use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
 use crate::values::object::{JsObject, Property};
 use crate::values::string::JsPrimitiveString;
-use crate::values::value::RuntimeValue;
 use crate::{BuiltIn, JsThread};
 
 trait Helpers<'a> {
@@ -18,10 +15,10 @@ trait Helpers<'a> {
 impl<'a> Helpers<'a> for JsObject<'a> {
     fn define_readonly_value<V: Into<Value<'a>>>(&mut self, key: JsPrimitiveString, value: V) {
         self.define_property(
-            key.into(),
+            key,
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(value.into()),
-                op: |_, _thread, _, context| Ok(Some(context.unwrap().clone())),
+                op: |_, _thread, _, context| Ok(Some(context.unwrap_or_default())),
             })),
             None,
             true,
@@ -130,7 +127,7 @@ impl<'a> Realm<'a> {
     #[must_use]
     pub fn new() -> Realm<'a> {
         let mut object_pool = ObjectPool::new();
-        let mut global_this = object_pool.allocate(JsObject::new());
+        let global_this = object_pool.allocate(JsObject::new());
         let mut string_pool = StringPool::new();
         let constants = Constants::new(&mut string_pool);
 
@@ -309,6 +306,7 @@ impl<'a> Primitives<'a> {
             .build()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn wrap_function(
         &self,
         realm: &mut Realm<'a>,

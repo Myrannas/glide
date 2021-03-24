@@ -11,6 +11,7 @@ description = "GlideJS Runtime"
 [features]
 default = []
 eval = ["glide_compiler"]
+debugging = []
 
 [dependencies]
 anyhow = "1.0.38"

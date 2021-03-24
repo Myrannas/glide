@@ -1,5 +1,5 @@
 use crate::values::nan::Value;
-use crate::{JsThread, RuntimeValue};
+use crate::JsThread;
 use builtin::{named, prototype};
 
 #[allow(dead_code)]

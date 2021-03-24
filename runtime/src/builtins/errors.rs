@@ -1,6 +1,6 @@
+use crate::debugging::Unwrap;
 use crate::result::JsResult;
 use crate::values::nan::Value;
-use crate::values::value::RuntimeValue;
 use crate::JsThread;
 use builtin::{constructor, named, prototype};
 
@@ -16,11 +16,14 @@ impl<'a, 'b> JsError<'a, 'b> {
     fn constructor(&mut self, message: Value<'a>) {
         self.target
             .to_object(self.thread)
-            .expect("Constructor must have an object target")
+            .expect_value(
+                self.thread.get_realm(),
+                "Constructor must have an object target",
+            )
             .set(
                 &mut self.thread.realm.objects,
                 self.thread.realm.constants.message,
-                message.into(),
+                message,
             );
     }
 
@@ -47,11 +50,14 @@ impl<'a, 'b> TypeError<'a, 'b> {
     fn constructor(&mut self, message: Value<'a>) {
         self.target
             .to_object(self.thread)
-            .expect("Constructor must have an object target")
+            .expect_value(
+                self.thread.get_realm(),
+                "Constructor must have an object target",
+            )
             .set(
                 &mut self.thread.realm.objects,
                 self.thread.realm.constants.message,
-                message.into(),
+                message,
             );
     }
 }
@@ -68,11 +74,14 @@ impl<'a, 'b> ReferenceError<'a, 'b> {
     fn constructor(&mut self, message: Value<'a>) {
         self.target
             .to_object(self.thread)
-            .expect("Constructor must have an object target")
+            .expect_value(
+                self.thread.get_realm(),
+                "Constructor must have an object target",
+            )
             .set(
                 &mut self.thread.realm.objects,
                 self.thread.realm.constants.message,
-                message.into(),
+                message,
             );
     }
 }

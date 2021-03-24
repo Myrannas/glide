@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::enum_variant_names)]
 
 mod compiler;
 mod parser;

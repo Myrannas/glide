@@ -38,11 +38,11 @@ extern crate colored;
 extern crate instruction_set;
 extern crate rand;
 
+pub use debugging::Unwrap;
 pub use primordials::Realm;
 pub use result::{ExecutionError, InternalError, SyntaxError};
 pub use values::function::{BuiltIn, JsFunction};
 pub use values::nan::{Value, ValueType};
 pub use values::object::{FunctionObject, JsObject};
 pub use values::string::JsPrimitiveString;
-pub use values::value::RuntimeValue;
 pub use vm::JsThread;

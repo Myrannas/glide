@@ -3,14 +3,17 @@ use crate::JsThread;
 use builtin::{named, prototype};
 use rand::prelude::*;
 
-pub(crate) struct JsMath<'a, 'b> {
-    target: Value<'a>,
-    thread: &'b mut JsThread<'a>,
-}
+// #[allow(dead_code)]
+pub(crate) struct JsMath {}
 
 #[prototype]
 #[named("Math")]
-impl<'a, 'b> JsMath<'a, 'b> {
+impl<'a, 'b> JsMath {
+    #[allow(dead_code)]
+    fn new(_: crate::values::nan::Value<'a>, _: &'b mut JsThread<'a>) -> Self {
+        Self {}
+    }
+
     fn floor(thread: &mut JsThread<'a>, value1: Value<'a>) -> Value<'a> {
         let number: f64 = value1.to_number(&thread.realm);
 

@@ -52,7 +52,7 @@ pub(crate) fn eval<'a>(
 
             let loaded_function = JsFunction::load(function, &mut frame.realm);
             let result = frame.call_from_native(
-                this.into(),
+                this,
                 FunctionReference::Custom(CustomFunctionReference {
                     function: loaded_function,
                     parent_context: context,

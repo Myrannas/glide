@@ -11,7 +11,7 @@ enum StringToken {
     Error,
 }
 
-fn unicode<'a>(lex: &mut Lexer<'a, StringToken>) -> Option<char> {
+fn unicode(lex: &mut Lexer<StringToken>) -> Option<char> {
     let slice = &lex.slice()[2..6];
 
     match u32::from_str_radix(slice, 16) {
@@ -20,11 +20,11 @@ fn unicode<'a>(lex: &mut Lexer<'a, StringToken>) -> Option<char> {
     }
 }
 
-fn normal<'a>(lex: &mut Lexer<'a, StringToken>) -> Option<char> {
+fn normal(lex: &mut Lexer<StringToken>) -> Option<char> {
     lex.slice().chars().next()
 }
 
-fn escaped<'a>(lex: &mut Lexer<'a, StringToken>) -> Option<char> {
+fn escaped(lex: &mut Lexer<StringToken>) -> Option<char> {
     match lex.slice() {
         "\\n" => Some('\n'),
         "\\0" => Some('\0'),
@@ -36,11 +36,8 @@ pub(crate) fn parse_string(input: &str) -> String {
     let mut lexer: Lexer<StringToken> = StringToken::lexer(input);
 
     let mut str = String::new();
-    loop {
-        match lexer.next() {
-            Some(StringToken::Character(char)) => str.push(char),
-            _ => break,
-        }
+    while let Some(StringToken::Character(char)) = lexer.next() {
+        str.push(char)
     }
 
     str
@@ -48,8 +45,7 @@ pub(crate) fn parse_string(input: &str) -> String {
 
 #[cfg(test)]
 mod test {
-    use crate::parser::strings::{parse_string, StringToken};
-    use logos::{Lexer, Logos};
+    use crate::parser::strings::parse_string;
 
     #[test]
     fn test_parse_normal_string() {

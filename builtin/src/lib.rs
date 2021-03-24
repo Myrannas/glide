@@ -88,7 +88,7 @@ impl ToTokens for Constructor {
             }.into();
 
             object.set_construct(pool, constructor.clone());
-            prototype.define_value_property(strings.intern_native("constructor"), object.clone(), false, false, true);
+            prototype.define_value_property(strings.intern_native("constructor"), Value::from(object), false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -125,9 +125,9 @@ impl ToTokens for StaticMethod {
             }).with_prototype(function_prototype).build();
 
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
-            method.define_value_property(pool, strings.intern_native("name"), name.clone(), false, false, true);
-            method.define_value_property(pool, strings.intern_native("length"), 1.0, false, false, true);
-            object.define_value_property(pool, name, method, false, false, true);
+            method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
+            method.define_value_property(pool, strings.intern_native("length"), Value::from(1.0), false, false, true);
+            object.define_value_property(pool, name, Value::from(method), false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -164,9 +164,9 @@ impl ToTokens for Method {
             }).with_prototype(function_prototype).build();
 
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
-            method.define_value_property(pool, strings.intern_native("length"), 1.0, false, false, true);
-            method.define_value_property(pool, strings.intern_native("name"), name.clone(), false, false, true);
-            prototype.define_value_property(name, method, false, false, true);
+            method.define_value_property(pool, strings.intern_native("length"), Value::from(1.0), false, false, true);
+            method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
+            prototype.define_value_property(name, Value::from(method), false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -576,7 +576,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 #(#methods)*
 
                 let type_name: crate::JsPrimitiveString = strings.intern_native(#name);
-                object.define_value_property(pool, strings.intern_native("name"), strings.intern_native(#type_identifier), false, false, true);
+                object.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true);
 
                 let allocated_object = pool.allocate(prototype);
                 object.set_prototype(pool, allocated_object);

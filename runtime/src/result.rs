@@ -1,5 +1,5 @@
+use crate::debugging::{DebugRepresentation, Renderer};
 use crate::values::nan::Value;
-use crate::values::value::RuntimeValue;
 use crate::JsThread;
 use std::fmt::{Display, Formatter};
 
@@ -24,9 +24,9 @@ impl Display for Stack {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ExecutionError<'a> {
-    Thrown(RuntimeValue<'a>, Option<Stack>),
+    Thrown(Value<'a>, Option<Stack>),
     InternalError(InternalError),
     SyntaxError(SyntaxError),
 }
@@ -107,7 +107,9 @@ impl<'a> ExecutionError<'a> {
                 rendered_error
             }
             ExecutionError::Thrown(err, stack) => {
-                let string_value = err.to_string(thread).unwrap();
+                let string_value = err
+                    .to_string(thread)
+                    .unwrap_or(thread.realm.constants.to_string);
                 let str = thread.get_realm().get_string(string_value);
                 let rendered_error = anyhow::Error::msg(str.to_string());
 
@@ -145,15 +147,9 @@ impl<'a> From<InternalError> for ExecutionError<'a> {
     }
 }
 
-impl<'a> From<RuntimeValue<'a>> for ExecutionError<'a> {
-    fn from(err: RuntimeValue<'a>) -> Self {
-        ExecutionError::Thrown(err, None)
-    }
-}
-
 impl<'a> From<Value<'a>> for ExecutionError<'a> {
     fn from(err: Value<'a>) -> Self {
-        ExecutionError::Thrown(err.into(), None)
+        ExecutionError::Thrown(err, None)
     }
 }
 
@@ -179,11 +175,35 @@ impl From<StaticExecutionError> for anyhow::Error {
     }
 }
 
-pub type JsResult<'a, T = RuntimeValue<'a>> = std::result::Result<T, ExecutionError<'a>>;
+pub type JsResult<'a, T = Value<'a>> = std::result::Result<T, ExecutionError<'a>>;
 pub type StaticJsResult<T> = std::result::Result<T, StaticExecutionError>;
 
 impl From<InternalError> for anyhow::Error {
     fn from(err: InternalError) -> Self {
         anyhow::Error::msg(err.message)
+    }
+}
+
+impl<'a> DebugRepresentation<'a> for ExecutionError<'a> {
+    fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
+        let stack = match self {
+            ExecutionError::Thrown(value, stack) => {
+                value.render(renderer)?;
+
+                stack
+            }
+            ExecutionError::InternalError(InternalError { message, stack })
+            | ExecutionError::SyntaxError(SyntaxError { message, stack }) => {
+                renderer.string_literal(message)?;
+
+                stack
+            }
+        };
+
+        if let Some(stack) = stack {
+            renderer.formatter.write_fmt(format_args!("{:?}", stack))?
+        }
+
+        Ok(())
     }
 }

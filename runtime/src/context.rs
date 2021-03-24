@@ -1,9 +1,7 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
-use crate::object_pool::ObjectPool;
-use crate::primordials::Primitives;
 use crate::values::nan::Value;
-use crate::{JsFunction, JsThread, Realm};
-use std::cell::{Ref, RefCell};
+use crate::{JsFunction, Realm};
+use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 
@@ -46,12 +44,8 @@ impl<'a, 'b> DebugRepresentation<'a> for JsContext<'a> {
 
                 if !inner.locals.is_empty() {
                     render.internal_key(" locals: ")?;
-                }
 
-                for value in &inner.locals {
-                    value.render(render)?;
-
-                    render.formatter.write_str(", ")?;
+                    inner.locals.render(render)?;
                 }
 
                 if let Some(parent) = &inner.parent {

@@ -1,5 +1,6 @@
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::StringPool;
+use crate::Value;
 use crate::{JsObject, JsPrimitiveString};
 
 pub(crate) trait Prototype<'a> {
@@ -30,7 +31,14 @@ pub(crate) trait Prototype<'a> {
             function_prototype,
         );
 
-        global_this.define_value_property(pool, name, allocated_object, true, true, false);
+        global_this.define_value_property(
+            pool,
+            name,
+            Value::from(allocated_object),
+            true,
+            true,
+            false,
+        );
 
         allocated_object
     }

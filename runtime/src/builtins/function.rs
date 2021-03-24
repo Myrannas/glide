@@ -1,9 +1,7 @@
-use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
-use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
-use crate::{ExecutionError, InternalError, JsObject, JsThread};
+use crate::{InternalError, JsThread};
 use builtin::{named, prototype, varargs};
 
 pub(crate) struct JsFunctionObject<'a, 'b> {
@@ -20,7 +18,7 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
         let args_len = args.len() - 1;
 
         for arg in args.into_iter().skip(1) {
-            self.thread.push_stack(arg.clone());
+            self.thread.push_stack(arg);
         }
 
         let callable = self
@@ -32,15 +30,15 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
         if let Some(callable) = callable {
             let result = self
                 .thread
-                .call_from_native(target.into(), callable, args_len, false)?;
+                .call_from_native(target, callable, args_len, false)?;
 
-            return Ok(result.into());
+            return Ok(result);
         }
 
         InternalError::new_stackless("Can't use Function.call on a non-function").into()
     }
 
-    fn apply(&mut self, target: Value<'a>, values: &Value<'a>) -> JsResult<'a> {
+    fn apply(&mut self, target: Value<'a>, values: Value<'a>) -> JsResult<'a> {
         let args = if let ValueType::Object(value) = values.get_type() {
             value
         } else {
@@ -50,7 +48,7 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
         let args = args.get_object(&self.thread.realm.objects);
 
         for arg in args.indexed_properties.iter().skip(1) {
-            self.thread.stack.push(arg.clone().into());
+            self.thread.stack.push(*arg);
         }
 
         let args_len = args.indexed_properties.len();
@@ -64,9 +62,9 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
         if let Some(callable) = callable {
             let result = self
                 .thread
-                .call_from_native(target.into(), callable, args_len, false)?;
+                .call_from_native(target, callable, args_len, false)?;
 
-            return Ok(result.into());
+            return Ok(result);
         }
 
         InternalError::new_stackless("Can't use Function.call on a non-function").into()

@@ -12,10 +12,9 @@ use crate::suite::{Negative, NegativeType, Phase, Suite};
 use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
-use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions, Module};
-use glide_runtime::{ExecutionError, JsFunction, JsThread, Realm, RuntimeValue, ValueType};
+use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions};
+use glide_runtime::{ExecutionError, JsFunction, JsThread, Realm, Unwrap, ValueType};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -25,7 +24,7 @@ use std::time::Duration;
 fn bootstrap_harness<'a>() -> ModuleSet<'a> {
     let mut realm = Realm::new();
 
-    for file in vec![
+    for file in &[
         "./test262/harness/sta.js",
         "./test262/harness/assert.js",
         "./test262/harness/propertyHelper.js",
@@ -44,19 +43,11 @@ fn bootstrap_harness<'a>() -> ModuleSet<'a> {
         let result = thread.run();
 
         match result {
-            Err(ExecutionError::Thrown(RuntimeValue::Object(obj), _)) => {
-                let obj = thread.debug(&obj);
-
-                // let to_string = realm.intern_string("message");
-                // let to_string = obj.get_value(&mut thread, to_string).unwrap();
-
-                panic!("{:?}", obj);
-            }
-            Err(other) => {
-                panic!("{:?}", other)
-            }
             Ok(_) => {
                 realm = thread.finalize();
+            }
+            Err(other) => {
+                panic!("{:?}", thread.debug(&other))
             }
         }
     }
@@ -152,16 +143,21 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
         {
             match result {
                 Ok(_) => Err(Error::msg("Expected a Test262Error error")),
-                Err(ExecutionError::Thrown(RuntimeValue::Object(obj), ..)) => {
+                Err(ExecutionError::Thrown(value, ..)) => {
+                    let obj = value
+                        .to_object(&mut thread)
+                        .unwrap_value(thread.get_realm());
                     let to_string = thread.get_realm_mut().intern_string("toString");
-                    let to_string = obj.get_value(&mut thread, to_string).unwrap();
+                    let to_string = obj
+                        .get_value(&mut thread, to_string)
+                        .unwrap_value(thread.get_realm());
 
                     if let ValueType::Object(fn_object) = to_string.get_type() {
                         let result = fn_object
                             .call(&mut thread, &[])
-                            .unwrap()
+                            .unwrap_value(thread.get_realm())
                             .to_string(&mut thread)
-                            .unwrap();
+                            .unwrap_value(thread.get_realm());
 
                         if thread
                             .get_realm()

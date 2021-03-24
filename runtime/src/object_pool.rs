@@ -5,26 +5,18 @@ use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
-use crate::values::primitives::JsPrimitive;
 use crate::{JsObject, JsPrimitiveString, JsThread};
 use std::cmp::Ordering;
-use std::fmt::{Display, Formatter};
 
 impl<'a> DebugRepresentation<'a> for ObjectPointer<'a> {
     fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
-        let obj = renderer.thread.realm.objects.get(*self);
+        let obj = renderer.realm.objects.get(*self);
 
         JsObject::render(obj, renderer)
     }
 }
 
-impl<'a> Display for ObjectPointer<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Object@{}", self.inner))
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct ObjectPointer<'a> {
     inner: PoolPointer<JsObject<'a>>,
 }
@@ -110,7 +102,7 @@ impl<'a> ObjectPointer<'a> {
         let property = self.get_property(&thread.realm.objects, key);
 
         let result = match property {
-            Some(Property::DataDescriptor { value, .. }) => value.clone(),
+            Some(Property::DataDescriptor { value, .. }) => *value,
             Some(Property::AccessorDescriptor {
                 getter: Some(function),
                 ..
@@ -127,14 +119,14 @@ impl<'a> ObjectPointer<'a> {
     pub fn get_indexed(self, thread: &mut JsThread<'a>, key: usize) -> JsResult<'a, Value<'a>> {
         let object = thread.realm.objects.get(self);
 
-        if let Some(JsPrimitive::String(str)) = &object.wrapped {
+        if let Some(ValueType::String(str)) = &object.wrapped.map(Value::get_type) {
             let result = thread
                 .realm
                 .strings
                 .get(*str)
                 .as_ref()
                 .get(key..key)
-                .map(|v| v.to_owned())
+                .map(ToOwned::to_owned)
                 .and_then(|v| match v {
                     value if value.is_empty() => None,
                     other => Some(Value::from(thread.realm.strings.intern(other))),
@@ -230,7 +222,7 @@ impl<'a> ObjectPointer<'a> {
         self,
         pool: &mut ObjectPool<'a>,
         key: JsPrimitiveString,
-        value: impl Into<Value<'a>>,
+        value: Value<'a>,
         writable: bool,
         enumerable: bool,
         configurable: bool,
@@ -256,7 +248,7 @@ impl<'a> ObjectPointer<'a> {
         let function_reference = self
             .get_callable(&thread.realm.objects)
             .cloned()
-            .ok_or_else(|| thread.new_type_error(format!("{} is not a function", self)))?
+            .ok_or_else(|| thread.new_type_error("is not a function".to_string()))?
             .clone();
 
         for arg in args {
@@ -270,10 +262,8 @@ impl<'a> ObjectPointer<'a> {
         thread.realm.objects.get(self).prototype()
     }
 
-    pub fn get_name<'b>(self, pool: &ObjectPool<'a>) -> Option<JsPrimitiveString> {
-        let object = pool.get(self);
-
-        object.name.clone()
+    pub fn get_name(self, pool: &ObjectPool<'a>) -> Option<JsPrimitiveString> {
+        pool.get(self).name
     }
 
     pub fn get_construct<'b>(self, pool: &'b ObjectPool<'a>) -> Option<&'b FunctionReference<'a>> {
