@@ -109,7 +109,7 @@ impl<'a> JsThread<'a> {
         if index > count {
             None
         } else {
-            self.stack.get(self.stack.len() - count).cloned()
+            self.stack.get(self.stack.len() - count + index).cloned()
         }
     }
 

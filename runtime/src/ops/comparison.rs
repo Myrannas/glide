@@ -103,7 +103,7 @@ pub(crate) fn type_of(thread: &mut JsThread) {
     let constants = thread.realm.constants;
     let str = match left.get_type() {
         ValueType::Boolean(_) => constants.boolean,
-        ValueType::Null => constants.null,
+        ValueType::Null => constants.object,
         ValueType::Object(obj) if obj.is_callable(&thread.realm.objects) => constants.function,
         ValueType::Object(_) => constants.object,
         ValueType::String(..) => constants.string,
@@ -170,9 +170,9 @@ pub(crate) fn greater_than_equal(thread: &mut JsThread) {
 }
 
 pub(crate) fn less_than(thread: &mut JsThread) {
-    numeric_comparison_op(thread, |l, r| l < r, |l, r| l >= r)
+    numeric_comparison_op(thread, |l, r| l < r, |l, r| l < r)
 }
 
 pub(crate) fn less_than_equal(thread: &mut JsThread) {
-    numeric_comparison_op(thread, |l, r| l <= r, |l, r| l >= r)
+    numeric_comparison_op(thread, |l, r| l <= r, |l, r| l <= r)
 }

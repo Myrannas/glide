@@ -3,7 +3,7 @@ use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
 use crate::{JsObject, JsThread};
-use builtin::{named, prototype};
+use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsObjectBase<'a, 'b> {
     target: Value<'a>,
@@ -13,6 +13,9 @@ pub(crate) struct JsObjectBase<'a, 'b> {
 #[prototype]
 #[named("Object")]
 impl<'a, 'b> JsObjectBase<'a, 'b> {
+    #[constructor]
+    fn constructor(&mut self) {}
+
     #[named("getOwnPropertyDescriptor")]
     fn get_property_descriptor(&mut self, property: Value<'a>) -> JsResult<'a, Value<'a>> {
         let string_key = property.to_string(self.thread)?;

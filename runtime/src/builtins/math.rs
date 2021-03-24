@@ -1,3 +1,4 @@
+use crate::debugging::DebugWithRealm;
 use crate::values::nan::Value;
 use crate::JsThread;
 use builtin::{named, prototype};
@@ -24,6 +25,15 @@ impl<'a, 'b> JsMath {
         let number: f64 = value1.to_number(&thread.realm);
 
         Value::from(number.ceil())
+    }
+
+    fn pow(thread: &mut JsThread<'a>, value1: Value<'a>, value2: Value<'a>) -> Value<'a> {
+        let number: f64 = value1.to_number(&thread.realm);
+        let number2: f64 = value2.to_number(&thread.realm);
+
+        let result: Value = number.powf(number2).into();
+
+        result
     }
 
     fn round(thread: &mut JsThread<'a>, value1: Value<'a>) -> Value<'a> {

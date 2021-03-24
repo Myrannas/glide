@@ -69,6 +69,9 @@ pub struct Constants {
     pub r#false: StringPointer,
     pub undefined: StringPointer,
     pub nan: StringPointer,
+    pub infinity: StringPointer,
+    pub negative_infinity: StringPointer,
+    pub positive_infinity: StringPointer,
     pub null: StringPointer,
     pub to_string: StringPointer,
     pub prototype: StringPointer,
@@ -113,6 +116,9 @@ impl Constants {
             object: string_pool.intern_native("object"),
             function: string_pool.intern_native("function"),
             message: string_pool.intern_native("message"),
+            infinity: string_pool.intern_native("Infinity"),
+            negative_infinity: string_pool.intern_native("NEGATIVE_INFINITY"),
+            positive_infinity: string_pool.intern_native("POSITIVE_INFINITY"),
         }
     }
 }
@@ -169,6 +175,7 @@ impl<'a> Realm<'a> {
         }
         global_this.set(&mut object_pool, constants.undefined, Value::UNDEFINED);
         global_this.set(&mut object_pool, constants.nan, Value::NAN);
+        global_this.set(&mut object_pool, constants.infinity, f64::INFINITY.into());
 
         Realm {
             global_this,
@@ -235,6 +242,19 @@ impl<'a> Primitives<'a> {
             Some(&object_prototype),
             function_prototype,
         );
+
+        number_prototype.set(object_pool, constants.nan, Value::NAN);
+        number_prototype.set(
+            object_pool,
+            constants.negative_infinity,
+            f64::NEG_INFINITY.into(),
+        );
+        number_prototype.set(
+            object_pool,
+            constants.positive_infinity,
+            f64::INFINITY.into(),
+        );
+
         let array_prototype = array::JsArray::bind_thread(
             global_this,
             object_pool,

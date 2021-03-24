@@ -1,5 +1,6 @@
 use crate::result::JsResult;
 
+use crate::debugging::DebugWithRealm;
 use crate::values::nan::{Value, ValueType};
 use crate::{InternalError, JsThread};
 use builtin::{callable, constructor, getter, named, prototype};
@@ -80,6 +81,8 @@ impl<'a, 'b> JsString<'a, 'b> {
 
     #[constructor]
     fn construct(&mut self, value: Option<Value<'a>>) -> JsResult<'a, ()> {
+        dbg!(self.thread.debug_value(&self.target));
+
         let str = value
             .unwrap_or_else(|| self.thread.realm.constants.empty_string.into())
             .to_string(self.thread)?;

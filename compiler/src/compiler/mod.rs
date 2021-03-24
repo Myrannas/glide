@@ -500,8 +500,8 @@ impl<'a, 'c> ChunkBuilder {
                 .append(operator.to_op()),
             Expression::UnaryExpression {
                 operator: UnaryOperator::Add,
-                ..
-            } => internal_error!("Add unary operator not implemented"),
+                value,
+            } => self.compile_expression(*value)?,
             Expression::UnaryExpression { value, operator } => {
                 self.compile_expression(*value)?.append(operator.to_op())
             }

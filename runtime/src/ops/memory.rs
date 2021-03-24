@@ -208,8 +208,14 @@ pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environm
     thread.step();
 }
 
-pub(crate) fn delete(_thread: &mut JsThread) {
-    todo!("Not yet working");
+pub(crate) fn delete(thread: &mut JsThread) {
+    let target: Value = thread.pop_stack();
+
+    catch!(thread, target.delete_reference(thread));
+
+    thread.push_stack(Value::TRUE);
+
+    thread.step();
 }
 
 pub(crate) fn resolve(thread: &mut JsThread) {

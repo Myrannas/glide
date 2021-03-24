@@ -234,7 +234,9 @@ pub enum Token<'a> {
 // Note: callbacks can return `Option` or `Result`
 fn float<'b>(lex: &mut Lexer<'b, Token<'b>>) -> Option<f64> {
     let val: &str = lex.slice();
-    val.parse().ok()
+    let result = val.parse();
+
+    Some(result.unwrap_or(f64::NAN))
 }
 
 // Note: callbacks can return `Option` or `Result`

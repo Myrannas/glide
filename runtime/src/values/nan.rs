@@ -287,7 +287,7 @@ impl<'a> Value<'a> {
         self,
         thread: &mut JsThread<'a>,
         with_value: impl FnOnce(Value<'a>, &mut JsThread<'a>) -> JsResult<'a, Value<'a>>,
-    ) -> JsResult<'a, ()> {
+    ) -> JsResult<'a> {
         match self.get_type() {
             ValueType::Local(index) => {
                 let value = thread.current_context().read(index as usize);
@@ -298,7 +298,7 @@ impl<'a> Value<'a> {
                     .current_context()
                     .write(index as usize, updated_value);
 
-                Ok(())
+                Ok(updated_value)
             }
             ValueType::StringReference(name) => {
                 let base: Value = thread.pop_stack();
@@ -310,7 +310,7 @@ impl<'a> Value<'a> {
                 let updated_value = with_value(original, thread)?;
 
                 base_object.set(&mut thread.realm.objects, name, updated_value);
-                Ok(())
+                Ok(updated_value)
             }
             ValueType::NumberReference(index) => {
                 let base: Value = thread.pop_stack();
@@ -322,10 +322,44 @@ impl<'a> Value<'a> {
                 let updated_value = with_value(original, thread)?;
 
                 base_object.set_indexed(thread, index as usize, updated_value);
-                Ok(())
+                Ok(updated_value)
             }
             _ => InternalError::new_stackless(format!(
                 "Unable to update - {}",
+                thread.debug_value(&self)
+            ))
+            .into(),
+        }
+    }
+
+    pub(crate) fn delete_reference(self, thread: &mut JsThread<'a>) -> JsResult<'a, ()> {
+        match self.get_type() {
+            ValueType::Local(index) => {
+                thread
+                    .current_context()
+                    .write(index as usize, Value::UNDEFINED);
+                Ok(())
+            }
+            ValueType::StringReference(name) => {
+                let base: Value = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(thread)?;
+
+                base_object.delete(&mut thread.realm.objects, name);
+
+                Ok(())
+            }
+            ValueType::NumberReference(index) => {
+                let base: Value = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(thread)?;
+
+                base_object.delete_indexed(&mut thread.realm.objects, index as usize);
+
+                Ok(())
+            }
+            _ => InternalError::new_stackless(format!(
+                "Unable to delete - {}",
                 thread.debug_value(&self)
             ))
             .into(),
@@ -470,11 +504,11 @@ impl<'a> Value<'a> {
     }
 
     pub(crate) fn strict_eq(self, other: Self) -> bool {
-        self.inner == other.inner
+        self.inner == other.inner && self.inner != Self::NAN.inner
     }
 
     pub(crate) fn non_strict_eq(self, other: Self, frame: &mut JsThread<'a>) -> bool {
-        if self.inner == other.inner {
+        if self.strict_eq(other) {
             return true;
         }
 

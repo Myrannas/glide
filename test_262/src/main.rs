@@ -433,7 +433,7 @@ fn main() {
 
     let success_count = differences
         .iter()
-        .filter(|(current, previous)| current.result != previous.result)
+        .filter(|(current, previous)| !compare || current.result != previous.result)
         .filter(|f| f.0.result == SuiteResult::Success)
         .count();
 

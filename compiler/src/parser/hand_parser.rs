@@ -334,7 +334,7 @@ fn parse_value<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
 }
 
 fn parse_accessor<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
-    let is_new = input.consume_if(Token::New);
+    let mut is_new = input.consume_if(Token::New);
 
     let mut expression = parse_value(input)?;
 
@@ -344,7 +344,18 @@ fn parse_accessor<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
             // Some((Token::NullSafe, ..)) => (true, false, false),
             Some((Token::OpenBracket, ..)) => (false, true, false),
             Some((Token::OpenParen, ..)) => (false, false, true),
-            _ => break,
+            other => {
+                expression = if is_new {
+                    Expression::NewWithArgs {
+                        target: Box::new(expression),
+                        parameters: vec![],
+                    }
+                } else {
+                    expression
+                };
+
+                break;
+            }
         };
 
         input.next();
@@ -364,6 +375,8 @@ fn parse_accessor<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
             }
 
             if is_new {
+                is_new = false;
+
                 Expression::NewWithArgs {
                     target: Box::new(expression),
                     parameters,

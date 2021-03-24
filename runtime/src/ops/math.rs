@@ -85,7 +85,9 @@ pub(crate) fn increment(thread: &mut JsThread, by: f64) {
     catch!(
         thread,
         target.update_reference(thread, |value, thread| {
-            Ok(Value::from(value.to_number(&thread.realm) + by))
+            let as_number = value.to_number(&thread.realm);
+            thread.push_stack(as_number);
+            Ok(Value::from(as_number + by))
         })
     );
 

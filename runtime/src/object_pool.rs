@@ -177,6 +177,18 @@ impl<'a> ObjectPointer<'a> {
         }
     }
 
+    pub(crate) fn delete(self, pool: &mut ObjectPool<'a>, key: JsPrimitiveString) {
+        let current = pool.get_mut(self);
+
+        current.properties.remove(&key);
+    }
+
+    pub(crate) fn delete_indexed(self, pool: &mut ObjectPool<'a>, key: usize) {
+        let current = pool.get_mut(self);
+
+        current.indexed_properties.remove(key);
+    }
+
     pub fn has(self, objects: &ObjectPool<'a>, key: JsPrimitiveString) -> bool {
         let object = objects.get(self);
 
