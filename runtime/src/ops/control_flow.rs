@@ -3,6 +3,7 @@ use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
+use crate::values::object::Property;
 use crate::{ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
 use instruction_set::Constant;
 
@@ -97,8 +98,15 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
         target.set_name(name);
     }
 
-    if let Some(prototype) = fn_object.get_prototype(thread) {
-        target.set_prototype(prototype);
+    if let Some(Property::DataDescriptor { value, .. }) =
+        fn_object.get_property(&thread.realm.objects, thread.realm.constants.prototype)
+    {
+        // dbg!(thread.debug(&fn_object));
+        // dbg!(thread.debug(value));
+
+        if let ValueType::Object(object) = value.get_type() {
+            target.set_prototype(object);
+        }
     }
 
     target.set(thread.realm.constants.constructor, resolved_value);

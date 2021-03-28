@@ -12,6 +12,8 @@ impl<'a> DebugRepresentation<'a> for ObjectPointer<'a> {
     fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
         let obj = renderer.realm.objects.get(*self);
 
+        renderer.literal(&format!("{:?}#", self.inner.to_string()))?;
+
         JsObject::render(obj, renderer)
     }
 }
@@ -92,13 +94,6 @@ impl<'a> ObjectPointer<'a> {
         thread: &mut JsThread<'a>,
         key: JsPrimitiveString,
     ) -> JsResult<'a, Value<'a>> {
-        if key == thread.realm.constants.prototype {
-            return Ok(self
-                .get_prototype(thread)
-                .map(Value::from)
-                .unwrap_or_default());
-        }
-
         let property = self.get_property(&thread.realm.objects, key);
 
         let result = match property {
@@ -160,6 +155,15 @@ impl<'a> ObjectPointer<'a> {
         pool: &'b ObjectPool<'a>,
         key: JsPrimitiveString,
     ) -> Option<&'b Property<'a>> {
+        self.get_property_traverse(pool, key, false)
+    }
+
+    pub(crate) fn get_property_traverse<'b>(
+        self,
+        pool: &'b ObjectPool<'a>,
+        key: JsPrimitiveString,
+        own_properties_only: bool,
+    ) -> Option<&'b Property<'a>> {
         let mut current = self;
 
         loop {
@@ -167,6 +171,10 @@ impl<'a> ObjectPointer<'a> {
 
             if let Some(obj_property) = object.properties.get(&key) {
                 return Some(obj_property);
+            }
+
+            if own_properties_only {
+                return None;
             }
 
             if let Some(parent) = &object.prototype {
@@ -197,6 +205,13 @@ impl<'a> ObjectPointer<'a> {
 
     pub fn set(self, objects: &mut ObjectPool<'a>, key: JsPrimitiveString, value: Value<'a>) {
         let object = objects.get_mut(self);
+
+        if let Some(Property::DataDescriptor {
+            writable: false, ..
+        }) = object.properties.get(&key)
+        {
+            return;
+        }
 
         object.set(key, value)
     }
@@ -242,6 +257,20 @@ impl<'a> ObjectPointer<'a> {
         let object = pool.get_mut(self);
 
         object.define_value_property(key, value, writable, enumerable, configurable)
+    }
+
+    pub fn define_property(
+        self,
+        pool: &mut ObjectPool<'a>,
+        key: JsPrimitiveString,
+        getter: Option<FunctionReference<'a>>,
+        setter: Option<FunctionReference<'a>>,
+        enumerable: bool,
+        configurable: bool,
+    ) {
+        let object = pool.get_mut(self);
+
+        object.define_property(key, getter, setter, enumerable, configurable)
     }
 
     pub fn unwrap(self, thread: &mut JsThread<'a>) -> Option<Value<'a>> {

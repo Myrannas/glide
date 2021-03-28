@@ -214,6 +214,20 @@ where
     }
 }
 
+impl<'a, T> DebugRepresentation<'a> for Option<T>
+where
+    T: DebugRepresentation<'a>,
+{
+    fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> Result {
+        match self {
+            Some(value) => renderer.render(value)?,
+            None => {}
+        }
+
+        Ok(())
+    }
+}
+
 pub trait Unwrap<'a, T> {
     fn expect_value(self, realm: &Realm<'a>, message: &str) -> T;
     fn unwrap_value(self, realm: &Realm<'a>) -> T;

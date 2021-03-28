@@ -303,13 +303,16 @@ impl<'a> Property<'a> {
 impl<'a> DebugRepresentation<'a> for JsObject<'a> {
     fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
         if let Some(name) = &self.name {
-            renderer.formatter.write_fmt(format_args!("{} ", name))?;
+            renderer
+                .formatter
+                .write_fmt(format_args!("{} ", renderer.realm.strings.get(*name)))?;
         }
 
         if self.callable.is_some() || self.construct.is_some() {
             let name = self
                 .name
                 .map_or("", |s| renderer.realm.strings.get(s).as_ref());
+
             renderer.formatter.write_str("[Function: ")?;
             renderer.formatter.write_str(name)?;
 
@@ -349,6 +352,12 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
             }
 
             renderer.formatter.write_char('}')?;
+
+            // if let Some(prototype) = self.prototype {
+            //     renderer.formatter.write_str("__proto__: [")?;
+            //     renderer.render(&prototype)?;
+            //     renderer.formatter.write_str("], ")?;
+            // }
         }
 
         Ok(())

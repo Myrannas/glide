@@ -35,7 +35,10 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
             return Ok(result);
         }
 
-        InternalError::new_stackless("Can't use Function.call on a non-function").into()
+        Err(self
+            .thread
+            .new_type_error("Can't use Function.call on a non-function")
+            .into())
     }
 
     fn apply(&mut self, target: Value<'a>, values: Value<'a>) -> JsResult<'a> {

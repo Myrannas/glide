@@ -1,6 +1,6 @@
 use crate::context::JsContext;
 use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer};
-use crate::primordials::RuntimeHelpers;
+use crate::primordials::{get_prototype_property, RuntimeHelpers};
 use crate::result::JsResult;
 use crate::values::object::JsObject;
 use crate::values::string::JsPrimitiveString;
@@ -141,23 +141,30 @@ impl JsClass {
             None
         };
 
+        let maybe_prototype = match &prototype {
+            Prototype::Object => Some(thread.realm.wrappers.object),
+            Prototype::Custom(obj) => {
+                let pointer = get_prototype_property(&thread.realm, *obj);
+                Some(pointer)
+            }
+            Prototype::Null => None,
+        };
+
+        let mut actual_prototype = JsObject::builder(&mut thread.realm.objects);
+        if let Some(prototype) = maybe_prototype {
+            actual_prototype.with_prototype(prototype);
+        }
+        let prototype = actual_prototype.build();
+
         let mut object_builder = JsObject::builder(&mut thread.realm.objects);
 
         if let Some(construct) = constructor {
             object_builder.with_construct(construct);
         }
 
-        match &prototype {
-            Prototype::Object => {
-                object_builder.with_prototype(thread.realm.wrappers.object);
-            }
-            Prototype::Custom(obj) => {
-                object_builder.with_prototype(*obj);
-            }
-            Prototype::Null => {}
-        };
-
+        object_builder.with_property(thread.realm.constants.prototype, prototype);
         object_builder.with_name(self.name);
+        object_builder.with_prototype(thread.realm.wrappers.function);
 
         let object = object_builder.build();
 

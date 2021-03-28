@@ -1,4 +1,4 @@
-use crate::primordials::RuntimeHelpers;
+use crate::primordials::{get_prototype_property, RuntimeHelpers};
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::nan::Value;
 
@@ -136,7 +136,7 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
         match prototype.get_type() {
             ValueType::Object(obj) => Prototype::Custom(obj),
             ValueType::Null => Prototype::Null,
-            value => {
+            _ => {
                 let type_error = thread.new_type_error(format!(
                     "Class extends value {} is not a constructor or null",
                     thread.debug_value(&prototype),

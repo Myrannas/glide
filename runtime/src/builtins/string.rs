@@ -81,8 +81,6 @@ impl<'a, 'b> JsString<'a, 'b> {
 
     #[constructor]
     fn construct(&mut self, value: Option<Value<'a>>) -> JsResult<'a, ()> {
-        dbg!(self.thread.debug_value(&self.target));
-
         let str = value
             .unwrap_or_else(|| self.thread.realm.constants.empty_string.into())
             .to_string(self.thread)?;

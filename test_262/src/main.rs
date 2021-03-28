@@ -375,7 +375,10 @@ fn main() {
                     let difference = (previous.runtime - result.runtime).abs();
                     let difference_percent = (difference / previous.runtime) * 100.0;
 
-                    if !compare || previous.result != result.result || difference_percent > 10.0 {
+                    if !compare
+                        || previous.result != result.result
+                        || (is_profiling && difference_percent > 10.0)
+                    {
                         Some((result, previous))
                     } else {
                         None

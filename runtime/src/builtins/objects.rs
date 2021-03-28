@@ -1,9 +1,10 @@
+use crate::debugging::DebugWithRealm;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
 use crate::{JsObject, JsThread};
-use builtin::{constructor, named, prototype};
+use builtin::{callable, constructor, named, prototype};
 
 pub(crate) struct JsObjectBase<'a, 'b> {
     target: Value<'a>,
@@ -17,15 +18,18 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
     fn constructor(&mut self) {}
 
     #[named("getOwnPropertyDescriptor")]
-    fn get_property_descriptor(&mut self, property: Value<'a>) -> JsResult<'a, Value<'a>> {
-        let string_key = property.to_string(self.thread)?;
+    fn get_property_descriptor(
+        thread: &mut JsThread<'a>,
+        target: Value<'a>,
+        property: Value<'a>,
+    ) -> JsResult<'a, Value<'a>> {
+        let string_key = property.to_string(thread)?;
 
-        let object = self.thread.realm.objects.allocate(JsObject::new());
+        let object = thread.realm.objects.allocate(JsObject::new());
 
-        match self
-            .target
-            .to_object(self.thread)?
-            .get_property(&self.thread.realm.objects, string_key)
+        match target
+            .to_object(thread)?
+            .get_property_traverse(&thread.realm.objects, string_key, true)
             .cloned()
         {
             Some(Property::DataDescriptor {
@@ -35,15 +39,12 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                 writable,
             }) => {
                 object.extend(
-                    &mut self.thread.realm.objects,
+                    &mut thread.realm.objects,
                     &[
-                        (self.thread.realm.constants.enumerable, enumerable.into()),
-                        (
-                            self.thread.realm.constants.configurable,
-                            configurable.into(),
-                        ),
-                        (self.thread.realm.constants.writable, writable.into()),
-                        (self.thread.realm.constants.value, value),
+                        (thread.realm.constants.enumerable, enumerable.into()),
+                        (thread.realm.constants.configurable, configurable.into()),
+                        (thread.realm.constants.writable, writable.into()),
+                        (thread.realm.constants.value, value),
                     ],
                 );
             }
@@ -53,13 +54,10 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                 ..
             }) => {
                 object.extend(
-                    &mut self.thread.realm.objects,
+                    &mut thread.realm.objects,
                     &[
-                        (self.thread.realm.constants.enumerable, enumerable.into()),
-                        (
-                            self.thread.realm.constants.configurable,
-                            configurable.into(),
-                        ),
+                        (thread.realm.constants.enumerable, enumerable.into()),
+                        (thread.realm.constants.configurable, configurable.into()),
                     ],
                 );
                 // object.set("get");

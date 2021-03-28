@@ -1,5 +1,5 @@
 use crate::debugging::DebugWithRealm;
-use crate::primordials::RuntimeHelpers;
+use crate::primordials::{get_prototype_property, RuntimeHelpers};
 use crate::{JsThread, Value, ValueType};
 
 pub(crate) fn equality<'a>(
@@ -42,22 +42,21 @@ pub(crate) fn instance_of(thread: &mut JsThread) {
     let result = if let (ValueType::Object(left), ValueType::Object(right)) =
         (left.get_type(), right.get_type())
     {
-        if let Some(right_proto) = right.get_prototype(thread) {
-            let mut left_proto = left.get_prototype(thread);
-            let mut result = false;
-            while let Some(proto) = left_proto {
-                if proto == right_proto {
-                    result = true;
-                    break;
-                }
+        let target_prototype = get_prototype_property(&thread.realm, right);
 
-                left_proto = proto.get_prototype(thread);
+        let mut left_proto = left.get_prototype(thread);
+
+        let mut result = false;
+        while let Some(proto) = left_proto {
+            if proto == target_prototype {
+                result = true;
+                break;
             }
 
-            result
-        } else {
-            false
+            left_proto = proto.get_prototype(thread);
         }
+
+        result
     } else {
         false
     };

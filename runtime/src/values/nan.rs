@@ -97,6 +97,10 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
 
 impl<'a> From<f64> for Value<'a> {
     fn from(value: f64) -> Self {
+        if value.is_nan() {
+            return Value::NAN;
+        }
+
         Value {
             inner: value.to_bits(),
             phantom: PhantomData,

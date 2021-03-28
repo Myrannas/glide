@@ -87,8 +87,8 @@ impl ToTokens for Constructor {
                 }
             }.into();
 
-            object.set_construct(pool, constructor.clone());
-            prototype.define_value_property(strings.intern_native("constructor"), Value::from(object), false, false, true);
+            constructor_object.set_construct(pool, constructor.clone());
+            prototype.define_value_property(pool, strings.intern_native("constructor"), Value::from(constructor_object), false, false, true);
         };
 
         output.to_tokens(tokens);
@@ -110,6 +110,7 @@ impl ToTokens for StaticMethod {
         let method_name_string = &self.js_name;
         let setup = &self.arguments.setup();
         let arguments = &self.arguments.call();
+        let args_len = self.arguments.len();
 
         let call = self.return_type.as_tokens(quote! {
             <#type_name>::#method_name(thread, #arguments)
@@ -126,8 +127,8 @@ impl ToTokens for StaticMethod {
 
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
             method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
-            method.define_value_property(pool, strings.intern_native("length"), Value::from(1.0), false, false, true);
-            object.define_value_property(pool, name, Value::from(method), false, false, true);
+            method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true);
+            constructor_object.define_value_property(pool, name, Value::from(method), true, false, true);
         };
 
         output.to_tokens(tokens);
@@ -149,6 +150,7 @@ impl ToTokens for Method {
         let method_name_string = &self.js_name;
         let setup = &self.arguments.setup();
         let arguments = &self.arguments.call();
+        let args_len = self.arguments.len();
 
         let call = self.return_type.as_tokens(quote! {
             <#type_name>::new(receiver, thread).#method_name(#arguments)
@@ -164,9 +166,9 @@ impl ToTokens for Method {
             }).with_prototype(function_prototype).build();
 
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
-            method.define_value_property(pool, strings.intern_native("length"), Value::from(1.0), false, false, true);
+            method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true);
             method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
-            prototype.define_value_property(name, Value::from(method), false, false, true);
+            prototype.define_value_property(pool, name, Value::from(method), true, false, true);
         };
 
         output.to_tokens(tokens);
@@ -192,6 +194,7 @@ impl ToTokens for Getter {
 
         let output = quote! {
             prototype.define_property(
+                pool,
                 strings.intern_native(#method_name_string),
                 Some(crate::BuiltIn {
                     context: None,
@@ -284,6 +287,13 @@ impl Arguments {
             }
         }
     }
+
+    fn len(&self) -> f64 {
+        match self {
+            Arguments::List(args) => args.len() as f64,
+            Arguments::Varargs => 0.0,
+        }
+    }
 }
 
 impl ToTokens for Callable {
@@ -298,7 +308,7 @@ impl ToTokens for Callable {
         });
 
         let output = quote! {
-            object.set_callable(
+            constructor_object.set_callable(
                 pool,
                 crate::BuiltIn {
                     context: None,
@@ -563,23 +573,15 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             fn bind<'c>(
                 pool: &mut crate::object_pool::ObjectPool<'a>,
                 strings: &mut crate::string_pool::StringPool,
-                parent_prototype: Option<&crate::object_pool::ObjectPointer<'a>>,
-                object: crate::object_pool::ObjectPointer<'a>,
+                constructor_object: crate::object_pool::ObjectPointer<'a>,
+                prototype: crate::object_pool::ObjectPointer<'a>,
                 function_prototype: crate::object_pool::ObjectPointer<'a>
             ) -> crate::JsPrimitiveString {
-                let mut prototype = crate::JsObject::new();
-
-                if let Some(parent_prototype) = parent_prototype {
-                    prototype.set_prototype(parent_prototype.clone());
-                }
-
                 #(#methods)*
 
                 let type_name: crate::JsPrimitiveString = strings.intern_native(#name);
-                object.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true);
-
-                let allocated_object = pool.allocate(prototype);
-                object.set_prototype(pool, allocated_object);
+                constructor_object.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true);
+                prototype.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true);
 
                 strings.intern_native(#type_identifier)
             }

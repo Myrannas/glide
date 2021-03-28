@@ -1,12 +1,13 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, string};
+use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
 use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
 use crate::values::object::{JsObject, Property};
 use crate::values::string::JsPrimitiveString;
-use crate::{BuiltIn, JsThread};
+use crate::{BuiltIn, JsThread, ValueType};
 
 trait Helpers<'a> {
     fn define_readonly_value<V: Into<Value<'a>>>(&mut self, key: JsPrimitiveString, value: V);
@@ -43,7 +44,7 @@ pub(crate) struct Errors<'a> {
 #[derive(Clone)]
 pub(crate) struct Primitives<'a> {
     string: ObjectPointer<'a>,
-    function: ObjectPointer<'a>,
+    pub(crate) function: ObjectPointer<'a>,
     number: ObjectPointer<'a>,
     pub(crate) object: ObjectPointer<'a>,
     array: ObjectPointer<'a>,
@@ -72,9 +73,13 @@ pub struct Constants {
     pub infinity: StringPointer,
     pub negative_infinity: StringPointer,
     pub positive_infinity: StringPointer,
+    pub min_value: StringPointer,
+    pub max_value: StringPointer,
+    pub epsilon: StringPointer,
     pub null: StringPointer,
     pub to_string: StringPointer,
     pub prototype: StringPointer,
+    pub proto: StringPointer,
     pub empty_string: StringPointer,
     pub name: StringPointer,
     pub parse_int: StringPointer,
@@ -101,6 +106,7 @@ impl Constants {
             undefined: string_pool.intern_native("undefined"),
             to_string: string_pool.intern_native("toString"),
             prototype: string_pool.intern_native("prototype"),
+            proto: string_pool.intern_native("__proto__"),
             empty_string: string_pool.intern_native(""),
             name: string_pool.intern_native("name"),
             parse_int: string_pool.intern_native("parseInt"),
@@ -119,7 +125,27 @@ impl Constants {
             infinity: string_pool.intern_native("Infinity"),
             negative_infinity: string_pool.intern_native("NEGATIVE_INFINITY"),
             positive_infinity: string_pool.intern_native("POSITIVE_INFINITY"),
+            min_value: string_pool.intern_native("MIN_VALUE"),
+            max_value: string_pool.intern_native("MAX_VALUE"),
+            epsilon: string_pool.intern_native("EPSILON"),
         }
+    }
+}
+
+pub(crate) fn get_prototype_property<'a>(
+    realm: &Realm<'a>,
+    object: ObjectPointer<'a>,
+) -> ObjectPointer<'a> {
+    if let Some(Property::DataDescriptor { value, .. }) =
+        object.get_property(&realm.objects, realm.constants.prototype)
+    {
+        if let ValueType::Object(obj) = value.get_type() {
+            obj
+        } else {
+            realm.wrappers.object
+        }
+    } else {
+        realm.wrappers.object
     }
 }
 
@@ -151,7 +177,7 @@ impl<'a> Realm<'a> {
             global_this,
             &mut object_pool,
             &mut string_pool,
-            None,
+            primitives.object,
             primitives.function,
         );
 
@@ -210,65 +236,71 @@ impl<'a> Primitives<'a> {
         constants: &Constants,
     ) -> Primitives<'a> {
         let function_prototype_base = JsObject::builder(object_pool).build();
+        let object_prototype_base = JsObject::builder(object_pool).build();
 
-        let object_prototype = objects::JsObjectBase::bind_thread(
+        objects::JsObjectBase::bind_thread_with_prototype(
             global_this,
             object_pool,
             strings,
-            None,
+            object_prototype_base,
             function_prototype_base,
         );
 
-        let function_prototype = function::JsFunctionObject::bind_thread(
+        function_prototype_base.set_prototype(object_pool, object_prototype_base);
+
+        let (_, function_prototype) = function::JsFunctionObject::bind_thread_with_prototype(
             global_this,
             object_pool,
             strings,
-            Some(&object_prototype),
+            function_prototype_base,
             function_prototype_base,
         );
 
-        let string_prototype = string::JsString::bind_thread(
+        let (_, string_prototype) = string::JsString::bind_thread(
             global_this,
             object_pool,
             strings,
-            Some(&object_prototype),
-            function_prototype,
+            object_prototype_base,
+            function_prototype_base,
         );
 
-        let number_prototype: ObjectPointer<'a> = number::JsNumber::bind_thread(
+        let (number_constructor, ..) = number::JsNumber::bind_thread(
             global_this,
             object_pool,
             strings,
-            Some(&object_prototype),
-            function_prototype,
+            object_prototype_base,
+            function_prototype_base,
         );
 
-        number_prototype.set(object_pool, constants.nan, Value::NAN);
-        number_prototype.set(
+        number_constructor.set(object_pool, constants.nan, Value::NAN);
+        number_constructor.set(
             object_pool,
             constants.negative_infinity,
             f64::NEG_INFINITY.into(),
         );
-        number_prototype.set(
+        number_constructor.set(
             object_pool,
             constants.positive_infinity,
             f64::INFINITY.into(),
         );
+        number_constructor.set(object_pool, constants.min_value, f64::MIN_POSITIVE.into());
+        number_constructor.set(object_pool, constants.max_value, f64::MAX.into());
+        number_constructor.set(object_pool, constants.epsilon, f64::EPSILON.into());
 
-        let array_prototype = array::JsArray::bind_thread(
+        let (_, array_prototype) = array::JsArray::bind_thread(
             global_this,
             object_pool,
             strings,
-            Some(&object_prototype),
-            function_prototype,
+            object_prototype_base,
+            function_prototype_base,
         );
 
-        let promise_prototype = promise::JsPromise::bind_thread(
+        let (promise_constructor, ..) = promise::JsPromise::bind_thread(
             global_this,
             object_pool,
             strings,
-            Some(&object_prototype),
-            function_prototype,
+            object_prototype_base,
+            function_prototype_base,
         );
 
         let name = strings.intern_native("name");
@@ -276,15 +308,15 @@ impl<'a> Primitives<'a> {
         let primitives = Primitives {
             string: string_prototype,
             function: function_prototype,
-            object: object_prototype,
+            object: object_prototype_base,
             array: array_prototype,
-            number: number_prototype,
+            number: number_constructor,
             arguments: array_prototype,
-            promise: promise_prototype,
+            promise: promise_constructor,
             name,
         };
 
-        let parse_int = number_prototype
+        let parse_int = number_constructor
             .get_property(object_pool, constants.parse_int)
             .and_then(|p| match p {
                 Property::DataDescriptor { value, .. } => Some(*value),
@@ -350,11 +382,14 @@ impl<'a> Primitives<'a> {
         function: impl Into<FunctionReference<'a>>,
     ) -> ObjectPointer<'a> {
         let function = function.into();
+        let prototype_property = self.new_object(objects);
+
         JsObject::builder(objects)
             .with_callable(function.clone())
             .with_construct(function)
             .with_prototype(self.function)
             .with_property(constants.name, name)
+            .with_property(constants.prototype, prototype_property)
             .build()
     }
 
@@ -420,35 +455,44 @@ impl<'a> RuntimeHelpers<'a> for JsThread<'a> {
 
 impl<'a> RuntimeHelpers<'a> for Realm<'a> {
     fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
+        let message = self.strings.intern(message);
+
         self.errors
+            .clone()
             .new_error(
-                &mut self.objects,
+                self,
                 self.errors.reference_error,
                 self.errors.reference_error_name,
-                self.strings.intern(message),
+                message,
             )
             .into()
     }
 
     #[allow(dead_code)]
     fn new_syntax_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
+        let message = self.strings.intern(message);
+
         self.errors
+            .clone()
             .new_error(
-                &mut self.objects,
+                self,
                 self.errors.syntax_error,
                 self.errors.syntax_error_name,
-                self.strings.intern(message),
+                message,
             )
             .into()
     }
 
     fn new_type_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
+        let message = self.strings.intern(message);
+
         self.errors
+            .clone()
             .new_error(
-                &mut self.objects,
+                self,
                 self.errors.type_error,
                 self.errors.type_error_name,
-                self.strings.intern(message),
+                message,
             )
             .into()
     }
@@ -459,11 +503,14 @@ impl<'a> RuntimeHelpers<'a> for Realm<'a> {
         function: impl Into<FunctionReference<'a>>,
     ) -> ObjectPointer<'a> {
         let function = function.into();
+        let prototype_property = self.wrappers.new_object(&mut self.objects);
+
         JsObject::builder(&mut self.objects)
             .with_callable(function.clone())
             .with_construct(function)
             .with_prototype(self.wrappers.function)
             .with_property(self.constants.name, name)
+            .with_property(self.constants.prototype, prototype_property)
             .build()
     }
 }
@@ -476,28 +523,30 @@ impl<'a> Errors<'a> {
         pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
     ) -> Errors<'a> {
-        let error = errors::JsError::bind_thread(
+        let (.., error_prototype) = errors::JsError::bind_thread(
             global_this,
             pool,
             strings,
-            Some(&object_prototype),
+            object_prototype,
             function_prototype,
         );
 
-        let syntax_error = JsObject::builder(pool).with_prototype(error).build();
+        let syntax_error = JsObject::builder(pool)
+            .with_prototype(error_prototype)
+            .build();
 
-        let type_error = errors::TypeError::bind_thread(
+        let (.., type_error_prototype) = errors::TypeError::bind_thread(
             global_this,
             pool,
             strings,
-            Some(&error),
+            error_prototype,
             function_prototype,
         );
-        let reference_error = errors::ReferenceError::bind_thread(
+        let (.., reference_error_prototype) = errors::ReferenceError::bind_thread(
             global_this,
             pool,
             strings,
-            Some(&error),
+            error_prototype,
             function_prototype,
         );
 
@@ -506,10 +555,10 @@ impl<'a> Errors<'a> {
         let reference_error_name = strings.intern_native("ReferenceError");
 
         Errors {
-            reference_error,
+            reference_error: reference_error_prototype,
             syntax_error,
-            type_error,
-            error,
+            type_error: type_error_prototype,
+            error: error_prototype,
 
             message: strings.intern_native("message"),
             syntax_error_name,
@@ -520,14 +569,16 @@ impl<'a> Errors<'a> {
 
     fn new_error(
         &self,
-        pool: &mut ObjectPool<'a>,
+        realm: &mut Realm<'a>,
         prototype: ObjectPointer<'a>,
         name: JsPrimitiveString,
         message: JsPrimitiveString,
     ) -> ObjectPointer<'a> {
-        JsObject::builder(pool)
-            .with_prototype(prototype)
+        let mut builder = JsObject::builder(&mut realm.objects);
+
+        builder
             .with_name(name)
+            .with_prototype(prototype)
             .with_property(self.message, message)
             .build()
     }
