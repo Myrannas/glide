@@ -381,6 +381,10 @@ impl<'a> Value<'a> {
             ValueType::Undefined => thread.realm.constants.undefined,
             ValueType::Null => thread.realm.constants.null,
             ValueType::Object(obj) => {
+                if let Some(value) = obj.unwrap(&thread.realm.objects) {
+                    return value.to_string(thread);
+                }
+
                 let to_string: Value = obj.get_value(thread, thread.realm.constants.to_string)?;
 
                 // println!("{:?}\n{:?}", obj, to_string);
@@ -529,7 +533,7 @@ impl<'a> Value<'a> {
             }
             (ValueType::String(s1), ValueType::Object(b1))
             | (ValueType::Object(b1), ValueType::String(s1)) => {
-                let unwrapped_value = b1.unwrap(frame);
+                let unwrapped_value = b1.unwrap(&frame.realm.objects);
 
                 unwrapped_value.map_or(false, |b1| {
                     let string_value1: JsPrimitiveString =

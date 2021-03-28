@@ -273,8 +273,8 @@ impl<'a> ObjectPointer<'a> {
         object.define_property(key, getter, setter, enumerable, configurable)
     }
 
-    pub fn unwrap(self, thread: &mut JsThread<'a>) -> Option<Value<'a>> {
-        let object = thread.realm.objects.get(self);
+    pub fn unwrap(self, pool: &ObjectPool<'a>) -> Option<Value<'a>> {
+        let object = pool.get(self);
 
         object.get_wrapped_value()
     }

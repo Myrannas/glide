@@ -90,6 +90,40 @@ impl StringPool {
         })
     }
 
+    pub(crate) fn manipulate(
+        &mut self,
+        pointer: StringPointer,
+        function: impl Fn(&str) -> &str,
+    ) -> StringPointer {
+        let current_strings = self.pool.get(pointer.inner);
+
+        let result = function(current_strings.as_ref());
+
+        if let Some(existing) = self.lookup.get(result) {
+            *existing
+        } else {
+            let owned_string = result.to_owned();
+            self.intern(owned_string)
+        }
+    }
+
+    pub(crate) fn manipulate_owned(
+        &mut self,
+        pointer: StringPointer,
+        function: impl Fn(&str) -> String,
+    ) -> StringPointer {
+        let current_strings = self.pool.get(pointer.inner);
+
+        let result = function(current_strings.as_ref());
+
+        if let Some(existing) = self.lookup.get(&result) {
+            *existing
+        } else {
+            let owned_string = result.to_owned();
+            self.intern(owned_string)
+        }
+    }
+
     pub(crate) fn intern_native(&mut self, value: &str) -> StringPointer {
         let pointer = self.intern(value);
 
