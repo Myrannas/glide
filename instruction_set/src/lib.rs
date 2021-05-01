@@ -117,6 +117,7 @@ pub struct Class {
     pub atoms: Vec<String>,
 
     pub methods: Vec<Function>,
+    pub static_methods: Vec<Function>,
 }
 
 #[derive(Debug)]

@@ -197,6 +197,7 @@ pub(crate) struct ClassStatement<'a> {
 pub(crate) enum ClassMember<'a> {
     Constructor(FunctionStatement<'a>),
     Function(FunctionStatement<'a>),
+    StaticFunction(FunctionStatement<'a>),
 }
 
 impl<'a> From<Statement<'a>> for BlockStatement<'a> {

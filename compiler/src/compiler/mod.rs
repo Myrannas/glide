@@ -1030,6 +1030,7 @@ impl<'a, 'c> ChunkBuilder {
                     name: Some(0),
                     atoms: vec![class.name.to_owned()],
                     methods: vec![],
+                    static_methods: vec![],
                 };
 
                 for member in class.members.into_iter() {
@@ -1048,9 +1049,29 @@ impl<'a, 'c> ChunkBuilder {
                             )?)
                         }
 
-                        ClassMember::Function(_) => {
-                            // Compile a function
-                        }
+                        ClassMember::StaticFunction(FunctionStatement {
+                            statements,
+                            identifier,
+                            arguments,
+                        }) => class_declaration.static_methods.push(compile_function(
+                            identifier,
+                            self.frame.locals.child(),
+                            arguments.to_owned(),
+                            statements.statements.to_owned(),
+                            DEFAULT_OPTIONS,
+                        )?),
+
+                        ClassMember::Function(FunctionStatement {
+                            statements,
+                            identifier,
+                            arguments,
+                        }) => class_declaration.methods.push(compile_function(
+                            identifier,
+                            self.frame.locals.child(),
+                            arguments.to_owned(),
+                            statements.statements.to_owned(),
+                            DEFAULT_OPTIONS,
+                        )?),
                     }
                 }
 

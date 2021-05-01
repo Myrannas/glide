@@ -964,6 +964,19 @@ impl<'a> Parse<'a> for ClassStatement<'a> {
                         statements,
                     }))
                 }
+                Some((Token::Static, ..)) => {
+                    input.next();
+
+                    let identifier = input.expect_id()?;
+                    let arguments = parse_args_list(input)?;
+                    let statements = BlockStatement::parse(input)?;
+
+                    members.push(ClassMember::StaticFunction(FunctionStatement {
+                        identifier,
+                        arguments,
+                        statements,
+                    }))
+                }
                 Some(token) => return input.expected(&[Token::Id("constructor")], token),
                 _ => panic!(":("),
             }

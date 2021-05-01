@@ -1,4 +1,5 @@
 mod suite;
+mod tree;
 
 extern crate anyhow;
 extern crate clap;
@@ -9,13 +10,14 @@ extern crate serde_json;
 extern crate serde_yaml;
 
 use crate::suite::{Negative, NegativeType, Phase, Suite};
+use crate::tree::Tree;
 use anyhow::{Context, Error, Result};
 use clap::{App, Arg};
 use colored::Colorize;
 use glide_compiler::{compile, parse_input, CompilerError, CompilerOptions};
 use glide_runtime::{ExecutionError, JsFunction, JsThread, Realm, Unwrap, ValueType};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -97,9 +99,14 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     // println!("{:#?}", global);
     //
 
-    if let Some(..) = details.features {
-        // panic!("{:?}", details);
-        return Ok(Outcome::Skip);
+    let supported_features = vec![].into_iter().collect::<HashSet<_>>();
+
+    if let Some(features) = details.features.clone() {
+        let unsupported_features = features.difference(&supported_features);
+
+        if unsupported_features.count() > 0 {
+            return Ok(Outcome::Skip);
+        }
     }
 
     if let Some(flags) = &details.flags {
@@ -195,14 +202,14 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     Ok(Outcome::Pass(time))
 }
 
-#[derive(PartialOrd, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(PartialOrd, PartialEq, Serialize, Deserialize, Clone, Debug)]
 enum SuiteResult {
     Success,
     Skip,
     Failure,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 struct TestResult {
     result: SuiteResult,
     name: String,
@@ -282,7 +289,7 @@ fn main() {
     for suite in suites {
         let suite_name = suite.to_str().unwrap().to_owned();
 
-        println!("Running suite {:80.80}\n", suite_name);
+        print!("Running suite {:80.80}", suite_name);
 
         let mut runtime = Duration::from_micros(0);
         let mut passed = true;
@@ -296,7 +303,9 @@ fn main() {
                     if time != Duration::from_micros(0) {
                         runtime += time;
 
-                        if run % 100 == 99 {
+                        if !is_profiling {
+                            println!("{}", "pass".green());
+                        } else if run % 100 == 99 {
                             println!(
                                 "{}: {} in {:.1}us",
                                 run,
@@ -350,7 +359,7 @@ fn main() {
     let commit = matches.is_present("commit");
     let input = read_to_string("./target/results.json").unwrap_or_else(|_| "{}".to_owned());
 
-    let mut previous: BTreeMap<_, _> = serde_json::from_str(&input).unwrap_or_default();
+    let mut previous: Tree<String, TestResult> = serde_json::from_str(&input).unwrap_or_default();
 
     let differences: Vec<(TestResult, TestResult)> = results
         .into_iter()
@@ -361,15 +370,15 @@ fn main() {
                     result.runtime
                 } else {
                     previous
-                        .get(&result.name)
-                        .map(|t: &TestResult| t.runtime)
+                        .get(result.name.split('/'))
+                        .map(|t| t.runtime)
                         .unwrap_or_default()
                 },
                 error: None,
                 result: result.result.clone(),
             };
 
-            match previous.insert(result.name.clone(), result_to_store) {
+            match previous.insert(result.name.split('/'), result_to_store) {
                 None => None,
                 Some(previous) => {
                     let difference = (previous.runtime - result.runtime).abs();
@@ -379,7 +388,7 @@ fn main() {
                         || previous.result != result.result
                         || (is_profiling && difference_percent > 10.0)
                     {
-                        Some((result, previous))
+                        Some((result.clone(), previous))
                     } else {
                         None
                     }
@@ -387,6 +396,37 @@ fn main() {
             }
         })
         .collect();
+
+    previous.reduce(
+        |_depth, _key, leaf| {
+            if leaf.result == SuiteResult::Success {
+                (1, 1)
+            } else {
+                (0, 1)
+            }
+        },
+        |depth, key, branch| {
+            let mut total = 0;
+            let mut total_success = 0;
+
+            for (success, count) in branch {
+                total += count;
+                total_success += success;
+            }
+
+            println!(
+                "{}{:<30}{} {:>5}/{:>5}    {:3.3}%",
+                "  ".repeat(depth),
+                key,
+                "  ".repeat(15 - depth),
+                total_success,
+                total,
+                (total_success as f64) / (total as f64) * 100.0
+            );
+
+            (total_success, total)
+        },
+    );
 
     if commit {
         write(
@@ -450,19 +490,19 @@ fn main() {
         .filter(|f| f.0.result == SuiteResult::Failure)
         .count();
 
-    let total_success_count = previous
-        .values()
-        .filter(|f| f.result == SuiteResult::Success)
-        .count();
+    // let total_success_count = previous
+    //     .values()
+    //     .filter(|f| f.result == SuiteResult::Success)
+    //     .count();
 
-    let total_count = previous.len();
+    // let total_count = previous.len();
 
-    let percent_passing = (total_success_count as f64 / total_count as f64) * 100.0;
+    // let percent_passing = (total_success_count as f64 / total_count as f64) * 100.0;
 
-    println!(
-        "{} / {} passing ({:3.1} %)",
-        total_success_count, total_count, percent_passing
-    );
+    // println!(
+    //     "{} / {} passing ({:3.1} %)",
+    //     total_success_count, total_count, percent_passing
+    // );
 
     if compare {
         println!("{} new suites succeeded", success_count);

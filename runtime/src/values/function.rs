@@ -101,6 +101,7 @@ pub struct JsClass {
     atoms: Vec<JsPrimitiveString>,
     name: JsPrimitiveString,
     methods: Vec<JsFunction>,
+    static_methods: Vec<JsFunction>,
 }
 
 #[derive(Copy, Clone)]
@@ -169,6 +170,18 @@ impl JsClass {
         let object = object_builder.build();
 
         for method in &self.methods {
+            let function = thread.new_function(
+                method.name(),
+                FunctionReference::Custom(CustomFunctionReference {
+                    function: method.clone(),
+                    parent_context: context.clone(),
+                }),
+            );
+
+            prototype.set(&mut thread.realm.objects, method.name(), function.into());
+        }
+
+        for method in &self.static_methods {
             let function = thread.new_function(
                 method.name(),
                 FunctionReference::Custom(CustomFunctionReference {
@@ -271,6 +284,11 @@ impl<'a> JsFunction {
                     name: realm.strings.intern(name),
                     methods: f
                         .methods
+                        .into_iter()
+                        .map(|f| JsFunction::load(f, realm))
+                        .collect(),
+                    static_methods: f
+                        .static_methods
                         .into_iter()
                         .map(|f| JsFunction::load(f, realm))
                         .collect(),

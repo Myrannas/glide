@@ -82,6 +82,23 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         Ok(result)
     }
 
+    #[named("propertyIsEnumerable")]
+    fn is_property_enumerable(&mut self, key: Value<'a>) -> JsResult<'a, bool> {
+        let result = match key.get_type() {
+            ValueType::String(str) => self
+                .target
+                .to_object(self.thread)?
+                .get_property(&self.thread.realm.objects, str)
+                .map_or(false, |property| match property {
+                    Property::DataDescriptor { enumerable, .. }
+                    | Property::AccessorDescriptor { enumerable, .. } => *enumerable,
+                }),
+            _ => false,
+        };
+
+        Ok(result)
+    }
+
     #[named("defineProperty")]
     fn define_property(
         &mut self,

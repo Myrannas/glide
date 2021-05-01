@@ -199,7 +199,14 @@ impl<'a> Realm<'a> {
 
             global_this.set(&mut object_pool, eval_string, value);
         }
-        global_this.set(&mut object_pool, constants.undefined, Value::UNDEFINED);
+        global_this.define_value_property(
+            &mut object_pool,
+            constants.undefined,
+            Value::UNDEFINED,
+            false,
+            false,
+            false,
+        );
         global_this.set(&mut object_pool, constants.nan, Value::NAN);
         global_this.set(&mut object_pool, constants.infinity, f64::INFINITY.into());
 
