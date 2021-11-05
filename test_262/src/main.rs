@@ -9,6 +9,11 @@ extern crate serde;
 extern crate serde_json;
 extern crate serde_yaml;
 
+use std::cell::RefCell;
+
+thread_local! {
+    static REALM: RefCell<Realm<'static>> = RefCell::new(bootstrap_harness());
+}
 use crate::suite::{Negative, NegativeType, Phase, Suite};
 use crate::tree::Tree;
 use anyhow::{Context, Error, Result};
@@ -22,8 +27,10 @@ use std::fs::{read_dir, read_to_string, write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Duration;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
-fn bootstrap_harness<'a>() -> ModuleSet<'a> {
+fn bootstrap_harness<'a>() -> Realm<'a> {
     let mut realm = Realm::new();
 
     for file in &[
@@ -54,7 +61,7 @@ fn bootstrap_harness<'a>() -> ModuleSet<'a> {
         }
     }
 
-    ModuleSet { realm }
+    realm
 }
 
 struct ModuleSet<'a> {
@@ -82,10 +89,12 @@ enum Outcome {
     Skip,
 }
 
-fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<Outcome> {
+fn run_suite(suite: PathBuf, cost_limit: usize) -> Result<Outcome> {
     let Suite { module, details } = Suite::parse(suite)?;
 
-    let harness = AssertUnwindSafe(harness);
+
+
+    // let harness = AssertUnwindSafe(harness);
 
     // let compiled = compile("assert.js", module, CompilerOptions::new()).unwrap();
     // let sta_compiled = compile("sta.js", sta_module, CompilerOptions::new()).unwrap();
@@ -132,7 +141,8 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
     let module = AssertUnwindSafe(module);
 
     let time = match catch_unwind(|| {
-        let mut global = harness.realm.clone();
+        let mut global = REALM.with(|f| { f.borrow().clone() });
+        // let mut global = harness.realm.clone();
 
         let start = std::time::Instant::now();
 
@@ -144,9 +154,9 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
         let result = thread.run();
 
         if let Some(Negative {
-            phase: Phase::Runtime,
-            tpe: NegativeType::Test262Error,
-        }) = details.negative
+                        phase: Phase::Runtime,
+                        tpe: NegativeType::Test262Error,
+                    }) = details.negative
         {
             match result {
                 Ok(_) => Err(Error::msg("Expected a Test262Error error")),
@@ -193,7 +203,8 @@ fn run_suite(suite: PathBuf, harness: &ModuleSet, cost_limit: usize) -> Result<O
                 }
             }
         }
-    }) {
+    })
+    {
         Ok(Ok(duration)) => Ok(duration),
         Ok(Err(error)) => Err(Error::msg(format!("{:?}", error))),
         Err(error) => Err(Error::msg(format!("{:?}", error))),
@@ -259,7 +270,14 @@ fn main() {
 
     let pattern = matches.value_of("pattern");
 
-    let harness = bootstrap_harness();
+    ThreadPoolBuilder::new()
+        .num_threads(10)
+        .stack_size(4194304)
+        .panic_handler(|err| {
+            panic!("Ohnoes")
+        })
+        .build_global()
+        .unwrap();
 
     let mut suites: Vec<PathBuf> = vec![
         PathBuf::from("./test262/test"),
@@ -282,78 +300,72 @@ fn main() {
 
     suites.sort();
 
-    let mut success_time = Duration::from_micros(0);
-    let mut results: Vec<TestResult> = Vec::new();
+    let success_time = Duration::from_micros(0);
     let is_profiling = matches.is_present("profile");
-    let runs = if is_profiling { 500 } else { 1 };
-    for suite in suites {
+    // let runs = if is_profiling { 500 } else { 1 };
+    let results: Vec<TestResult> = suites.par_iter().map(|suite| {
         let suite_name = suite.to_str().unwrap().to_owned();
 
-        print!("Running suite {:80.80}", suite_name);
+        // print!("Running suite {:80.80}", suite_name);
 
-        let mut runtime = Duration::from_micros(0);
-        let mut passed = true;
-        for run in 0..runs {
+        // let mut runtime = Duration::from_micros(0);
+        // let mut passed = true;
             match run_suite(
                 suite.clone(),
-                &harness,
                 matches.value_of("limit").unwrap().parse().unwrap(),
             ) {
                 Ok(Outcome::Pass(time)) => {
-                    if time != Duration::from_micros(0) {
-                        runtime += time;
+                    // if time != Duration::from_micros(0) {
+                    //     runtime += time;
+                    //
+                    //     if !is_profiling {
+                    //         println!("{}", "pass".green());
+                    //     } else if run % 100 == 99 {
+                    //         println!(
+                    //             "{}: {} in {:.1}us",
+                    //             run,
+                    //             "pass".green(),
+                    //             (runtime.as_secs_f64() * 1_000_000.0) / (run as f64)
+                    //         );
+                    //     }
+                    // } else {
+                    //     println!("{} (expected Syntax Error)", "pass".green());
+                    //     break;
+                    // }
 
-                        if !is_profiling {
-                            println!("{}", "pass".green());
-                        } else if run % 100 == 99 {
-                            println!(
-                                "{}: {} in {:.1}us",
-                                run,
-                                "pass".green(),
-                                (runtime.as_secs_f64() * 1_000_000.0) / (run as f64)
-                            );
-                        }
-                    } else {
-                        println!("{} (expected Syntax Error)", "pass".green());
-                        break;
+                    TestResult {
+                        result: SuiteResult::Success,
+                        name: suite_name.clone(),
+                        error: None,
+                        runtime: time.as_secs_f64(),
                     }
                 }
                 Ok(Outcome::Skip) => {
-                    println!("{}", "skip".yellow());
-                    results.push(TestResult {
+                    // println!("{}", "skip".yellow());
+                    TestResult {
                         result: SuiteResult::Skip,
                         name: suite_name.clone(),
                         error: None,
                         runtime: 0.0,
-                    });
-                    passed = false;
-                    break;
+                    }
                 }
                 Err(err) => {
-                    println!("{}", "fail".red());
-                    results.push(TestResult {
+                    // println!("{}", "fail".red());
+                    TestResult {
                         result: SuiteResult::Failure,
                         name: suite_name.clone(),
                         error: Some(err.to_string()),
                         runtime: 0.0,
-                    });
-                    passed = false;
-                    break;
+                    }
                 }
             }
-        }
 
-        if passed {
-            results.push(TestResult {
-                result: SuiteResult::Success,
-                name: suite_name.clone(),
-                error: None,
-                runtime: runtime.as_secs_f64() / (runs as f64),
-            });
-
-            success_time += runtime / (runs as u32);
-        }
-    }
+        // if passed {
+        //     results.push();
+        //
+        //     success_time += runtime / (runs as u32);
+        // }
+    }).collect();
 
     let compare = matches.is_present("compare");
     let commit = matches.is_present("commit");

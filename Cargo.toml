@@ -6,7 +6,6 @@ members = [
     "builtin",
     "instruction_set",
     "runtime",
-    "compiler_binary"
 ]
 
 [profile.release]
