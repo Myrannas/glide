@@ -1,13 +1,14 @@
 use super::ast::{Expression, Reference};
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ClassMember, ClassStatement, ConstStatement, ForStatement,
-    FunctionStatement, IfStatement, ParsedModule, ReturnStatement, Statement, ThrowStatement,
-    TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
+    BinaryOperator, BlockStatement, ClassMember, ClassStatement, ConstStatement, Field,
+    ForStatement, FunctionStatement, IfStatement, ParsedModule, ReturnStatement, Statement,
+    ThrowStatement, TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
 use crate::parser::strings::parse_string;
 use logos::{Source, Span, SpannedIter};
+use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
 use std::ops::Range;
@@ -42,6 +43,7 @@ pub(crate) enum Error<'a> {
     SyntaxError {
         message: &'static str,
     },
+    InvalidUnicodeEscape,
     EndOfFile,
 }
 
@@ -57,6 +59,7 @@ pub(crate) fn pretty_print(input: &str, err: Error) -> String {
     match err {
         Error::EndOfFile => "End of file".to_string(),
         Error::SyntaxError { message } => message.to_owned(),
+        Error::InvalidUnicodeEscape => "Invalid Unicode escape sequence".to_string(),
         Error::Expected {
             expected,
             got,
@@ -111,6 +114,8 @@ impl<'a> WhitespaceTrackingLexer<'a> {
 
     fn next(&mut self) -> Option<(Token<'a>, Span)> {
         if let Some(peeked) = self.peeked.take() {
+            // println!("{:?}", peeked);
+
             return peeked;
         }
 
@@ -140,6 +145,13 @@ impl<'a> WhitespaceTrackingLexer<'a> {
                 }
                 other => {
                     // println!("{:?}", other);
+
+                    let bt = Backtrace::capture();
+
+                    // do_some_work();
+
+                    // println!("{}", bt);
+
                     return Some(other);
                 }
             }
@@ -303,7 +315,7 @@ fn parse_value<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Expression<'a>> {
         Some((Token::This, ..)) => Ok(Expression::Reference(Reference::This)),
         Some((Token::Float(value), ..)) => Ok(Expression::Float(value)),
         Some((Token::String(value), ..)) => {
-            let decoded_value = parse_string(value.slice(1..(value.len() - 1)).unwrap());
+            let decoded_value = parse_string(value.slice(1..(value.len() - 1)).unwrap())?;
             Ok(Expression::String(decoded_value))
         }
         Some((Token::TemplateString(value), ..)) => {
@@ -934,6 +946,7 @@ impl<'a> Parse<'a> for ClassStatement<'a> {
         input.expect(Token::OpenBrace)?;
 
         let mut members = Vec::new();
+        let mut private_members = Vec::new();
         while !input.consume_if(Token::CloseBrace) {
             // let is_static = input.consume_if(Token::Static);
             //
@@ -963,6 +976,11 @@ impl<'a> Parse<'a> for ClassStatement<'a> {
                         arguments,
                         statements,
                     }))
+                }
+                Some((Token::PrivateId(identifier), ..)) => {
+                    input.next();
+
+                    private_members.push(ClassMember::PrivateField(Field { identifier }))
                 }
                 Some((Token::Static, ..)) => {
                     input.next();

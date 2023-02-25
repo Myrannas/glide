@@ -6,7 +6,11 @@ use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
 use crate::{JsObject, JsPrimitiveString, JsThread};
+use std::any::{Any, TypeId};
+use std::borrow::BorrowMut;
+use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 impl<'a> DebugRepresentation<'a> for ObjectPointer<'a> {
     fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
@@ -67,6 +71,45 @@ impl<'a> ObjectPointer<'a> {
 
     pub(crate) fn get_mut_object<'b>(self, pool: &'b mut ObjectPool<'a>) -> &'b mut JsObject<'a> {
         pool.get_mut(self)
+    }
+
+    pub(crate) fn get_native_handle<'b, T>(
+        self,
+        pool: &'b mut ObjectPool<'a>,
+    ) -> Option<Ref<'b, &'a mut T>> {
+        match &pool.get(self).native_handle {
+            Some(handle) => {
+                let handle_ref = (*handle).as_ref().borrow();
+
+                panic!()
+                // Ref::filter_map(handle_ref, |v| v.downcast_ref()).ok()
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) fn mut_native_handle<'b, T>(
+        self,
+        pool: &'b mut ObjectPool<'a>,
+    ) -> Option<RefMut<'b, &'a mut T>> {
+        match &mut pool.get_mut(self).native_handle {
+            Some(handle) => {
+                let handle_ref = (*handle).as_ref().borrow_mut();
+
+                // RefMut::
+                panic!()
+                // RefMut::filter_map(handle_ref, |v| v.downcast_mut()).ok()
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) fn set_native_handle<'b, T: 'a>(
+        self,
+        pool: &'b mut ObjectPool<'a>,
+        value: Rc<RefCell<dyn Any>>,
+    ) {
+        pool.get_mut(self).native_handle = Some(value)
     }
 
     pub(crate) fn set_prototype(self, pool: &mut ObjectPool<'a>, prototype: ObjectPointer<'a>) {

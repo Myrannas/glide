@@ -1,8 +1,9 @@
+use std::any::Any;
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter, Write};
+use std::fmt::{Formatter, Write};
 use std::hash::{BuildHasher, Hasher};
-
-use colored::Colorize;
+use std::rc::Rc;
 
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 
@@ -12,15 +13,22 @@ use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
 
+// pub(crate) struct  NativeHandle<'a> {
+//     fn downcast<'b, T: 'a>(&'b self) -> Option<&'b T>;
+//     fn downcast_mut<'b, T: 'a>(&'b self) -> Option<&'b mut T>;
+// }
+
 #[derive(Clone)]
 pub struct JsObject<'a> {
     pub(crate) properties: HashMap<JsPrimitiveString, Property<'a>, PropertyHasher>,
+    pub(crate) private_properties: Vec<Value<'a>>,
     pub(crate) indexed_properties: Vec<Value<'a>>,
     pub(crate) name: Option<JsPrimitiveString>,
     pub(crate) prototype: Option<ObjectPointer<'a>>,
     pub(crate) wrapped: Option<Value<'a>>,
     pub(crate) callable: Option<FunctionReference<'a>>,
     pub(crate) construct: Option<FunctionReference<'a>>,
+    pub(crate) native_handle: Option<Rc<RefCell<dyn Any>>>,
 }
 
 impl<'a> Default for Property<'a> {
@@ -124,6 +132,11 @@ impl<'a, 'b> JsObjectBuilder<'a, 'b> {
         self
     }
 
+    pub fn with_private_properties(&mut self, size: usize) -> &mut Self {
+        self.inner.private_properties = Vec::with_capacity(size);
+        self
+    }
+
     pub(crate) fn build(&mut self) -> ObjectPointer<'a> {
         self.pointer
     }
@@ -139,6 +152,8 @@ impl<'a> Default for JsObject<'a> {
             wrapped: None,
             callable: None,
             construct: None,
+            native_handle: None,
+            private_properties: Vec::new(),
         }
     }
 }

@@ -206,9 +206,15 @@ pub enum Token<'a> {
     #[regex(r"[$a-zA-Z_][$a-zA-Z0-9_]*")]
     Id(&'a str),
 
+    #[regex(r"#[$a-zA-Z_][$a-zA-Z0-9_]*")]
+    PrivateId(&'a str),
+
     #[regex(r"'([^'\n\r]|(\\'))*'", string)]
     #[regex(r#""([^"\n\r]|(\\"))*""#, string)]
     String(&'a str),
+
+    #[regex(r"\\/([^\\/]+)\\/", pattern)]
+    Pattern(&'a str),
 
     #[regex(r"`[^`\n]*`", string)]
     TemplateString(&'a str),
@@ -222,7 +228,7 @@ pub enum Token<'a> {
     #[error]
     Error,
 
-    #[regex(r"[ \t\f]+", logos::skip)]
+    #[regex(r"[ \t\f\u{000B}\u{00A0}]+", logos::skip)]
     Whitespace,
 
     #[regex(r"[\u{000A}\u{000D}\u{2028}\u{2029}]+")]
@@ -252,6 +258,11 @@ fn boolean<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Option<bool> {
 
 // Note: callbacks can return `Option` or `Result`
 fn string<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Option<&'a str> {
+    let slice = lex.slice();
+    Some(slice)
+}
+
+fn pattern<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Option<&'a str> {
     let slice = lex.slice();
     Some(slice)
 }

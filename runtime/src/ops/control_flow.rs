@@ -4,7 +4,7 @@ use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::object::Property;
-use crate::{ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
+use crate::{catch, pop, resolve, ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
 use instruction_set::Constant;
 
 fn get_callable<'a>(realm: &mut Realm<'a>, value: Value<'a>) -> JsResult<'a, ObjectPointer<'a>> {

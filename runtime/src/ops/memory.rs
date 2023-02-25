@@ -1,10 +1,10 @@
-use crate::primordials::{get_prototype_property, RuntimeHelpers};
+use crate::primordials::RuntimeHelpers;
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::nan::Value;
 
-use crate::debugging::{DebugWithRealm, X};
-use crate::{InternalError, JsThread, ValueType};
-use instruction_set::{Constant, Environmental};
+use crate::debugging::DebugWithRealm;
+use crate::{catch, pop, InternalError, JsThread, ValueType};
+use instruction_set::{Constant, Environmental, PrivateValue};
 
 pub(crate) fn set(thread: &mut JsThread) {
     let value = pop!(thread);
@@ -175,6 +175,36 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
 
     thread.push_stack(target);
     thread.push_stack(ValueType::StringReference(atom));
+
+    thread.step();
+}
+
+pub(crate) fn get_private(thread: &mut JsThread, PrivateValue(index): &PrivateValue) {
+    let this = thread.current_context().this();
+
+    let value: Value = if let ValueType::Object(ptr) = this.get_type() {
+        thread
+            .realm
+            .get_object(ptr)
+            .private_properties
+            .get(*index)
+            .cloned()
+            .unwrap_or(Value::UNDEFINED)
+    } else {
+        Value::UNDEFINED
+    };
+
+    thread.push_stack(value);
+    thread.step();
+}
+
+pub(crate) fn set_private(thread: &mut JsThread, PrivateValue(index): &PrivateValue) {
+    let this = thread.current_context().this();
+    let top = pop!(thread);
+
+    if let ValueType::Object(ptr) = this.get_type() {
+        thread.realm.get_object_mut(ptr).private_properties[*index] = top;
+    };
 
     thread.step();
 }

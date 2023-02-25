@@ -1,5 +1,5 @@
 use super::builtins::prototype::Prototype;
-use super::builtins::{array, errors, function, number, objects, promise, string};
+use super::builtins::{array, errors, function, number, objects, promise, set, string};
 use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
@@ -233,6 +233,11 @@ impl<'a> Realm<'a> {
     pub fn get_object(&self, pointer: ObjectPointer<'a>) -> &JsObject<'a> {
         self.objects.get(pointer)
     }
+
+    #[must_use]
+    pub fn get_object_mut(&mut self, pointer: ObjectPointer<'a>) -> &mut JsObject<'a> {
+        self.objects.get_mut(pointer)
+    }
 }
 
 impl<'a> Primitives<'a> {
@@ -303,6 +308,14 @@ impl<'a> Primitives<'a> {
         );
 
         let (promise_constructor, ..) = promise::JsPromise::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
+        set::JsSet::bind_thread(
             global_this,
             object_pool,
             strings,

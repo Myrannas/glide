@@ -8,6 +8,7 @@ pub(crate) mod objects;
 pub(crate) mod promise;
 pub(crate) mod prototype;
 pub(crate) mod string;
+pub(crate) mod set;
 
 #[cfg(feature = "eval")]
 pub(crate) mod eval;

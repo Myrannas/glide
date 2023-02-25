@@ -1,4 +1,4 @@
-use crate::{JsThread, Value, ValueType};
+use crate::{catch, pop, JsThread, Value, ValueType};
 
 pub(crate) fn add(thread: &mut JsThread, times: u8) {
     let left: Value = pop!(thread);

@@ -21,3 +21,15 @@ pub fn parse_input(input: &str) -> Result<ParsedModule> {
         Ok(module) => Ok(module),
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::parse_input;
+
+    #[test]
+    fn test_statement() {
+        let str = "message += 'Expected SameValue(«' + assert._toString(actual) + '», «' + assert._toString(expected) + '») to be true';";
+
+        parse_input(str).unwrap();
+    }
+}

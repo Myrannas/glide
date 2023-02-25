@@ -1,4 +1,4 @@
-use crate::JsThread;
+use crate::{pop, JsThread};
 
 pub(crate) fn left_shift(thread: &mut JsThread) {
     let left = pop!(thread).to_i32(&thread.realm);

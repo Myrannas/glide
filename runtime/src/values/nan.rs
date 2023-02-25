@@ -5,11 +5,11 @@ use crate::result::JsResult;
 use crate::string_pool::StringPointer;
 use crate::{ExecutionError, InternalError, JsPrimitiveString, JsThread, Realm};
 use instruction_set::Constant;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 
 #[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Value<'a> {
     inner: u64,
     phantom: PhantomData<ObjectPointer<'a>>,
@@ -342,6 +342,9 @@ impl<'a> Value<'a> {
                 thread
                     .current_context()
                     .write(index as usize, Value::UNDEFINED);
+
+                thread.push_stack(true);
+
                 Ok(())
             }
             ValueType::StringReference(name) => {
@@ -350,6 +353,8 @@ impl<'a> Value<'a> {
                 let base_object = base.to_object(thread)?;
 
                 base_object.delete(&mut thread.realm.objects, name);
+
+                thread.push_stack(true);
 
                 Ok(())
             }
@@ -360,13 +365,14 @@ impl<'a> Value<'a> {
 
                 base_object.delete_indexed(&mut thread.realm.objects, index as usize);
 
+                thread.push_stack(true);
+
                 Ok(())
             }
-            _ => InternalError::new_stackless(format!(
-                "Unable to delete - {}",
-                thread.debug_value(&self)
-            ))
-            .into(),
+            _ => {
+                thread.push_stack(true);
+                Ok(())
+            }
         }
     }
 

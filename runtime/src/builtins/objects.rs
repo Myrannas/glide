@@ -4,7 +4,7 @@ use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
 use crate::{JsObject, JsThread};
-use builtin::{callable, constructor, named, prototype};
+use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsObjectBase<'a, 'b> {
     target: Value<'a>,

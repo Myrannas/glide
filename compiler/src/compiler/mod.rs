@@ -1,5 +1,5 @@
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ClassMember, ConstStatement, Expression, ForStatement,
+    BinaryOperator, BlockStatement, ClassMember, ConstStatement, Expression, Field, ForStatement,
     FunctionStatement, IfStatement, ParsedModule, Reference, ReturnStatement, Statement,
     ThrowStatement, TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
@@ -1031,6 +1031,7 @@ impl<'a, 'c> ChunkBuilder {
                     atoms: vec![class.name.to_owned()],
                     methods: vec![],
                     static_methods: vec![],
+                    private_fields: 0,
                 };
 
                 for member in class.members.into_iter() {
@@ -1072,6 +1073,10 @@ impl<'a, 'c> ChunkBuilder {
                             statements.statements.to_owned(),
                             DEFAULT_OPTIONS,
                         )?),
+
+                        ClassMember::PrivateField(Field { identifier }) => {
+                            panic!("Unsupported private field {}", identifier)
+                        }
                     }
                 }
 

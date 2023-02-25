@@ -102,6 +102,7 @@ pub struct JsClass {
     name: JsPrimitiveString,
     methods: Vec<JsFunction>,
     static_methods: Vec<JsFunction>,
+    private_properties: usize,
 }
 
 #[derive(Copy, Clone)]
@@ -166,6 +167,7 @@ impl JsClass {
         object_builder.with_property(thread.realm.constants.prototype, prototype);
         object_builder.with_name(self.name);
         object_builder.with_prototype(thread.realm.wrappers.function);
+        object_builder.with_private_properties(self.private_properties);
 
         let object = object_builder.build();
 
@@ -292,6 +294,7 @@ impl<'a> JsFunction {
                         .into_iter()
                         .map(|f| JsFunction::load(f, realm))
                         .collect(),
+                    private_properties: f.private_fields,
                 }
             })
             .collect();

@@ -15,7 +15,12 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
     #[varargs]
     fn call(&mut self, args: Vec<Value<'a>>) -> JsResult<'a> {
         let target = args.first().cloned().unwrap_or_default();
-        let args_len = args.len() - 1;
+        let args_with_callable = args.len();
+        let args_len = if args_with_callable > 0 {
+            args_with_callable - 1
+        } else {
+            0
+        };
 
         for arg in args.into_iter().skip(1) {
             self.thread.push_stack(arg);

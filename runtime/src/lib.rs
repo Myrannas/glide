@@ -20,6 +20,7 @@
     clippy::clone_on_copy,
     clippy::trivially_copy_pass_by_ref
 )]
+
 mod builtins;
 mod context;
 mod debugging;

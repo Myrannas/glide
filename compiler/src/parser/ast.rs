@@ -10,6 +10,10 @@ pub(crate) enum Reference<'a> {
         accessor: &'a str,
         null_safe: bool,
     },
+    PrivateAccessor {
+        accessor: &'a str,
+        null_safe: bool,
+    },
     ComputedAccessor {
         expression: Box<Expression<'a>>,
         accessor: Box<Expression<'a>>,
@@ -194,10 +198,16 @@ pub(crate) struct ClassStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub(crate) struct Field<'a> {
+    pub(crate) identifier: &'a str,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum ClassMember<'a> {
     Constructor(FunctionStatement<'a>),
     Function(FunctionStatement<'a>),
     StaticFunction(FunctionStatement<'a>),
+    PrivateField(Field<'a>),
 }
 
 impl<'a> From<Statement<'a>> for BlockStatement<'a> {

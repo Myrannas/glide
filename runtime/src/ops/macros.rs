@@ -1,4 +1,4 @@
-#[macro_use]
+#[macro_export]
 macro_rules! resolve {
     ($value:expr, $frame:ident) => {
         match Value::resolve($value, $frame) {
@@ -11,7 +11,7 @@ macro_rules! resolve {
     };
 }
 
-#[macro_use]
+#[macro_export]
 macro_rules! pop {
     ($thread:ident) => {
         match crate::Value::resolve($thread.pop_stack(), $thread) {
@@ -34,7 +34,7 @@ macro_rules! pop {
     };
 }
 
-#[macro_use]
+#[macro_export]
 macro_rules! catch {
     ($frame: ident, $value:expr) => {
         match $value {

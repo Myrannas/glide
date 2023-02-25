@@ -1,8 +1,7 @@
-#[macro_use]
-mod macros;
 mod bitwise;
 mod comparison;
 mod control_flow;
+mod macros;
 mod math;
 mod memory;
 
@@ -19,7 +18,8 @@ use crate::ops::control_flow::{
 use crate::ops::math::{add, divide, exponential, increment, modulus, multiply, negate, subtract};
 use crate::ops::memory::{
     delete, duplicate, get, get_capture, get_class, get_function, get_local, get_named,
-    load_constant, load_environmental, resolve, set, set_capture, set_local, set_named,
+    get_private, load_constant, load_environmental, resolve, set, set_capture, set_local,
+    set_named, set_private,
 };
 use crate::vm::JsThread;
 use instruction_set::Instruction;
@@ -56,6 +56,7 @@ impl Operand for Instruction {
             Instruction::SetLocal { local } => set_local(thread, *local),
             Instruction::SetCapture { frame, local } => set_capture(thread, *frame, *local),
             Instruction::SetNamed { name } => set_named(thread, *name),
+            Instruction::SetPrivate { index } => set_private(thread, index),
             Instruction::Set => set(thread),
 
             Instruction::GetLocal { local } => get_local(thread, *local),
@@ -64,6 +65,7 @@ impl Operand for Instruction {
             Instruction::GetFunction { function } => get_function(thread, *function),
             Instruction::GetClass { class, extends } => get_class(thread, *class, *extends),
             Instruction::Get => get(thread),
+            Instruction::GetPrivate { index } => get_private(thread, index),
 
             Instruction::Delete => delete(thread),
             Instruction::DeleteNamed { .. } | Instruction::DeleteLocal { .. } => {

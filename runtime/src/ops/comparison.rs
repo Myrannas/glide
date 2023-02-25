@@ -1,6 +1,6 @@
 use crate::debugging::DebugWithRealm;
 use crate::primordials::{get_prototype_property, RuntimeHelpers};
-use crate::{JsThread, Value, ValueType};
+use crate::{catch, pop, JsThread, Value, ValueType};
 
 pub(crate) fn equality<'a>(
     thread: &mut JsThread<'a>,

@@ -31,6 +31,7 @@ pub enum Instruction {
     SetLocal { local: LocalId },
     SetCapture { local: LocalId, frame: Frame },
     SetNamed { name: Atom },
+    SetPrivate { index: PrivateValue },
     Set,
 
     GetLocal { local: LocalId },
@@ -38,6 +39,7 @@ pub enum Instruction {
     GetNamed { name: Atom },
     GetFunction { function: usize },
     GetClass { class: usize, extends: bool },
+    GetPrivate { index: PrivateValue },
     Get,
 
     Delete,
@@ -110,6 +112,13 @@ pub struct Local {
 }
 
 #[derive(Debug)]
+pub struct PrivateField {
+    pub id: usize,
+    pub name: String,
+    pub declared: bool,
+}
+
+#[derive(Debug)]
 pub struct Class {
     pub construct: Option<Function>,
     pub name: Option<Atom>,
@@ -118,6 +127,7 @@ pub struct Class {
 
     pub methods: Vec<Function>,
     pub static_methods: Vec<Function>,
+    pub private_fields: usize,
 }
 
 #[derive(Debug)]
@@ -156,3 +166,6 @@ impl Default for Function {
 pub struct Module {
     pub init: Function,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PrivateValue(pub usize);

@@ -1,9 +1,9 @@
 use crate::result::JsResult;
 
-use crate::debugging::DebugWithRealm;
 use crate::primordials::RuntimeHelpers;
 use crate::values::nan::{Value, ValueType};
-use crate::{InternalError, JsPrimitiveString, JsThread};
+use crate::InternalError;
+use crate::JsThread;
 use builtin::{callable, constructor, getter, named, prototype};
 
 pub(crate) struct JsString<'a, 'b> {
