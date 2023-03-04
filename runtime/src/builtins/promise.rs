@@ -28,7 +28,7 @@ impl<'a, 'b> JsPromise<'a, 'b> {
             .build();
 
         self.target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .call(self.thread, &[resolve.into(), reject.into()])?;
 
         Ok(())

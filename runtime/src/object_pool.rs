@@ -6,6 +6,7 @@ use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
 use crate::{JsObject, JsPrimitiveString, JsThread};
+use better_any::{TidAble, TidExt};
 use std::any::{Any, TypeId};
 use std::borrow::BorrowMut;
 use std::cell::{Ref, RefCell, RefMut};
@@ -73,22 +74,21 @@ impl<'a> ObjectPointer<'a> {
         pool.get_mut(self)
     }
 
-    pub(crate) fn get_native_handle<'b, T>(
+    pub(crate) fn get_native_handle<'b, T: TidAble<'a>>(
         self,
-        pool: &'b mut ObjectPool<'a>,
-    ) -> Option<Ref<'b, &'a mut T>> {
+        pool: &'b ObjectPool<'a>,
+    ) -> Option<Ref<'b, T>> {
         match &pool.get(self).native_handle {
             Some(handle) => {
                 let handle_ref = (*handle).as_ref().borrow();
 
-                panic!()
-                // Ref::filter_map(handle_ref, |v| v.downcast_ref()).ok()
+                Ref::filter_map(handle_ref, |v| v.downcast_ref::<T>()).ok()
             }
             None => None,
         }
     }
 
-    pub(crate) fn mut_native_handle<'b, T>(
+    pub(crate) fn mut_native_handle<'b, T: TidAble<'a>>(
         self,
         pool: &'b mut ObjectPool<'a>,
     ) -> Option<RefMut<'b, &'a mut T>> {
@@ -96,18 +96,17 @@ impl<'a> ObjectPointer<'a> {
             Some(handle) => {
                 let handle_ref = (*handle).as_ref().borrow_mut();
 
-                // RefMut::
-                panic!()
-                // RefMut::filter_map(handle_ref, |v| v.downcast_mut()).ok()
+                RefMut::filter_map(handle_ref, |v| v.downcast_mut::<T>()).ok();
+                None
             }
             None => None,
         }
     }
 
-    pub(crate) fn set_native_handle<'b, T: 'a>(
+    pub(crate) fn set_native_handle<'b, T: TidAble<'a>>(
         self,
         pool: &'b mut ObjectPool<'a>,
-        value: Rc<RefCell<dyn Any>>,
+        value: Rc<RefCell<T>>,
     ) {
         pool.get_mut(self).native_handle = Some(value)
     }

@@ -28,7 +28,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         let object = thread.realm.objects.allocate(JsObject::new());
 
         match target
-            .to_object(thread)?
+            .to_object(&mut thread.realm)?
             .get_property_traverse(&thread.realm.objects, string_key, true)
             .cloned()
         {
@@ -74,7 +74,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         let result = match key.get_type() {
             ValueType::String(str) => self
                 .target
-                .to_object(self.thread)?
+                .to_object(&mut self.thread.realm)?
                 .has(&self.thread.realm.objects, str),
             _ => false,
         };
@@ -87,7 +87,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         let result = match key.get_type() {
             ValueType::String(str) => self
                 .target
-                .to_object(self.thread)?
+                .to_object(&mut self.thread.realm)?
                 .get_property(&self.thread.realm.objects, str)
                 .map_or(false, |property| match property {
                     Property::DataDescriptor { enumerable, .. }

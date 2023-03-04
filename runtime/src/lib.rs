@@ -37,6 +37,7 @@ extern crate ahash;
 extern crate anyhow;
 extern crate builtin;
 extern crate colored;
+extern crate core;
 extern crate instruction_set;
 extern crate rand;
 

@@ -246,6 +246,9 @@ impl<'a, T> Unwrap<'a, T> for JsResult<'a, T> {
             Err(ExecutionError::InternalError(internal_error)) => {
                 panic!("{:?}", internal_error)
             }
+            Err(ExecutionError::TypeError(message)) => {
+                panic!("{:?}", message)
+            }
         }
     }
 

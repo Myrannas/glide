@@ -29,6 +29,7 @@ pub enum ExecutionError<'a> {
     Thrown(Value<'a>, Option<Stack>),
     InternalError(InternalError),
     SyntaxError(SyntaxError),
+    TypeError(String),
 }
 
 #[derive(Debug)]
@@ -119,6 +120,11 @@ impl<'a> ExecutionError<'a> {
 
                 rendered_error
             }
+            ExecutionError::TypeError(err) => {
+                let rendered_error = anyhow::Error::msg(err.to_string());
+
+                rendered_error
+            }
         }
     }
 }
@@ -197,6 +203,11 @@ impl<'a> DebugRepresentation<'a> for ExecutionError<'a> {
                 renderer.string_literal(message)?;
 
                 stack
+            }
+            ExecutionError::TypeError(v) => {
+                renderer.string_literal(v);
+
+                &None
             }
         };
 

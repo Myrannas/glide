@@ -12,7 +12,7 @@ pub(crate) struct JsArguments<'a, 'b> {
 impl<'a, 'b> JsArguments<'a, 'b> {
     #[getter]
     fn length(&mut self) -> JsResult<'a, f64> {
-        let pointer = self.target.to_object(self.thread)?;
+        let pointer = self.target.to_object(&mut self.thread.realm)?;
 
         #[allow(clippy::cast_precision_loss)]
         let length = pointer

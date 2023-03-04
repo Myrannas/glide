@@ -21,5 +21,6 @@ colored = "2.0.0"
 log={ version = "0.4.14" }
 rand = "0.8.3"
 ahash = "0.7.2"
+better_any = "0.2.0"
 
 glide_compiler = { optional = true, path = "../compiler", features=["eval"] }

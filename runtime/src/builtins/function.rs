@@ -28,7 +28,7 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
 
         let callable = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_callable(&self.thread.realm.objects)
             .cloned();
 
@@ -63,7 +63,7 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
 
         let callable = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_callable(&self.thread.realm.objects)
             .cloned();
 

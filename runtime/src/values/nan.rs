@@ -1,11 +1,10 @@
-use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer, Representation, Unwrap};
+use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer, Representation, Unwrap, X};
 use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::string_pool::StringPointer;
 use crate::{ExecutionError, InternalError, JsPrimitiveString, JsThread, Realm};
 use instruction_set::Constant;
-use std::fmt::Debug;
 use std::marker::PhantomData;
 
 #[repr(transparent)]
@@ -13,6 +12,21 @@ use std::marker::PhantomData;
 pub struct Value<'a> {
     inner: u64,
     phantom: PhantomData<ObjectPointer<'a>>,
+}
+
+impl<'a> Value<'a> {
+    pub(crate) fn iter<'b>(
+        &self,
+        realm: &'b Realm<'a>,
+    ) -> JsResult<'a, impl Iterator<Item = &'b Value<'a>>> {
+        if let Ok(obj) = self.as_object(realm) {
+            let o = realm.objects.get(obj);
+
+            Ok(o.indexed_properties.iter())
+        } else {
+            Err(ExecutionError::TypeError("Not iterable".to_string()))
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -272,14 +286,14 @@ impl<'a> Value<'a> {
             ValueType::StringReference(name) => {
                 let base: Value = thread.pop_stack();
                 let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
 
                 base_object.get_value(thread, name)
             }
             ValueType::NumberReference(index) => {
                 let base: Value = thread.pop_stack();
                 let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
 
                 base_object.get_indexed(thread, index as usize)
             }
@@ -307,7 +321,7 @@ impl<'a> Value<'a> {
             ValueType::StringReference(name) => {
                 let base: Value = thread.pop_stack();
                 let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
 
                 let original = base_object.get_value(thread, name)?;
 
@@ -319,7 +333,7 @@ impl<'a> Value<'a> {
             ValueType::NumberReference(index) => {
                 let base: Value = thread.pop_stack();
                 let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
 
                 let original = base_object.get_indexed(thread, index as usize)?;
 
@@ -350,7 +364,7 @@ impl<'a> Value<'a> {
             ValueType::StringReference(name) => {
                 let base: Value = thread.pop_stack();
                 let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
 
                 base_object.delete(&mut thread.realm.objects, name);
 
@@ -361,7 +375,7 @@ impl<'a> Value<'a> {
             ValueType::NumberReference(index) => {
                 let base: Value = thread.pop_stack();
                 let base = base.resolve(thread)?;
-                let base_object = base.to_object(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
 
                 base_object.delete_indexed(&mut thread.realm.objects, index as usize);
 
@@ -419,32 +433,31 @@ impl<'a> Value<'a> {
         Ok(result)
     }
 
-    pub fn to_object(self, thread: &mut JsThread<'a>) -> JsResult<'a, ObjectPointer<'a>> {
+    pub fn to_object(self, realm: &mut Realm<'a>) -> JsResult<'a, ObjectPointer<'a>> {
         let result = match self.get_type() {
-            ValueType::String(str) => thread
-                .realm
-                .wrappers
-                .wrap_string(&mut thread.realm.objects, str),
+            ValueType::String(str) => realm.wrappers.wrap_string(&mut realm.objects, str),
             ValueType::Object(obj) => obj,
-            ValueType::Float => thread
-                .realm
-                .wrappers
-                .wrap_number(&mut thread.realm.objects, self.float()),
-            ValueType::Boolean(f) => thread
-                .realm
-                .wrappers
-                .wrap_boolean(&mut thread.realm.objects, f),
-            value => {
-                return Err(thread
-                    .new_type_error(format!(
-                        "Can't wrap {:?} with object",
-                        thread.debug_value(&self)
-                    ))
-                    .into())
+            ValueType::Float => realm.wrappers.wrap_number(&mut realm.objects, self.float()),
+            ValueType::Boolean(f) => realm.wrappers.wrap_boolean(&mut realm.objects, f),
+            _ => {
+                return Err(ExecutionError::TypeError(format!(
+                    "Can't wrap {:?} with object",
+                    X::from(&self, realm)
+                )))
             }
         };
 
         Ok(result)
+    }
+
+    pub fn as_object(&self, realm: &Realm<'a>) -> JsResult<'a, ObjectPointer<'a>> {
+        match self.get_type() {
+            ValueType::Object(obj) => Ok(obj),
+            _other => Err(ExecutionError::TypeError(format!(
+                "{} is not a function",
+                X::from(self, realm)
+            ))),
+        }
     }
 
     pub(crate) fn to_bool(self, realm: &Realm<'a>) -> bool {

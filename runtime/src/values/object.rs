@@ -1,3 +1,4 @@
+use better_any::Tid;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -28,7 +29,7 @@ pub struct JsObject<'a> {
     pub(crate) wrapped: Option<Value<'a>>,
     pub(crate) callable: Option<FunctionReference<'a>>,
     pub(crate) construct: Option<FunctionReference<'a>>,
-    pub(crate) native_handle: Option<Rc<RefCell<dyn Any>>>,
+    pub(crate) native_handle: Option<Rc<RefCell<dyn Tid<'a>>>>,
 }
 
 impl<'a> Default for Property<'a> {

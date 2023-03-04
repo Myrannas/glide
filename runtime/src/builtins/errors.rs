@@ -15,7 +15,7 @@ impl<'a, 'b> JsError<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, message: Value<'a>) {
         self.target
-            .to_object(self.thread)
+            .to_object(&mut self.thread.realm)
             .expect_value(
                 self.thread.get_realm(),
                 "Constructor must have an object target",
@@ -31,7 +31,7 @@ impl<'a, 'b> JsError<'a, 'b> {
     fn as_string(&mut self) -> JsResult<'a> {
         let message = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_value(self.thread, self.thread.realm.constants.message)?;
 
         Ok(message.to_string(self.thread)?.into())
@@ -49,7 +49,7 @@ impl<'a, 'b> TypeError<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, message: Value<'a>) {
         self.target
-            .to_object(self.thread)
+            .to_object(&mut self.thread.realm)
             .expect_value(
                 self.thread.get_realm(),
                 "Constructor must have an object target",
@@ -73,7 +73,7 @@ impl<'a, 'b> ReferenceError<'a, 'b> {
     #[constructor]
     fn constructor(&mut self, message: Value<'a>) {
         self.target
-            .to_object(self.thread)
+            .to_object(&mut self.thread.realm)
             .expect_value(
                 self.thread.get_realm(),
                 "Constructor must have an object target",

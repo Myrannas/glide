@@ -1,7 +1,7 @@
 use crate::context::JsContext;
 use crate::debugging::{DebugRepresentation, DebugWithRealm, X};
 use crate::ops::Operand;
-use crate::primordials::Realm;
+use crate::primordials::{Realm, RuntimeHelpers};
 use crate::result::{InternalError, JsResult, Stack, StackTraceFrame};
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::nan::Value;
@@ -222,6 +222,11 @@ impl<'a> JsThread<'a> {
         }
 
         let stack: Stack = self.into();
+
+        if let ExecutionError::TypeError(msg) = &error {
+            error = ExecutionError::Thrown(self.new_type_error(msg), None);
+        }
+
         let error = error.fill_stack_trace(stack);
 
         if matches!(&error, ExecutionError::InternalError(_))
@@ -438,10 +443,12 @@ impl<'a> JsThread<'a> {
         format!("{:?}", X::from(value, self.get_realm()))
     }
 
+    #[inline]
     pub fn get_realm_mut(&mut self) -> &mut Realm<'a> {
         &mut self.realm
     }
 
+    #[inline]
     #[must_use]
     pub fn get_realm(&self) -> &Realm<'a> {
         &self.realm

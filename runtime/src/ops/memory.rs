@@ -23,7 +23,7 @@ pub(crate) fn set(thread: &mut JsThread) {
         return thread.throw(type_error);
     }
 
-    let target = catch!(thread, target.to_object(thread));
+    let target = catch!(thread, target.to_object(&mut thread.realm));
 
     match attribute.get_type() {
         ValueType::String(str) => target.set(&mut thread.realm.objects, str, value),
@@ -52,7 +52,7 @@ pub(crate) fn get(thread: &mut JsThread) {
         return thread.throw(type_error);
     }
 
-    let target = catch!(thread, target.to_object(thread));
+    let target = catch!(thread, target.to_object(&mut thread.realm));
 
     let reference: Value = match attribute.get_type() {
         ValueType::Float => ValueType::NumberReference(attribute.float() as u32),
@@ -71,7 +71,7 @@ pub(crate) fn set_named(thread: &mut JsThread, atom: usize) {
 
     // println!("Get named, target {:?}.{}", target, atom);
 
-    let target = catch!(thread, target.to_object(thread));
+    let target = catch!(thread, target.to_object(&mut thread.realm));
 
     let atom = thread.current_function().get_atom(atom);
 
@@ -171,7 +171,7 @@ pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
         return thread.throw(type_error);
     }
 
-    let target = catch!(thread, target.to_object(thread));
+    let target = catch!(thread, target.to_object(&mut thread.realm));
 
     thread.push_stack(target);
     thread.push_stack(ValueType::StringReference(atom));

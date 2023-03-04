@@ -17,7 +17,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn constructor(&mut self, args: Vec<Value<'a>>) {
         if args.len() > 1 {
             self.target
-                .to_object(self.thread)
+                .to_object(&mut self.thread.realm)
                 .expect_value(
                     self.thread.get_realm(),
                     "Constructor must have an object target",
@@ -35,7 +35,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn map(&mut self, function: Value<'a>) -> JsResult<'a> {
         let mut elements = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties()
             .clone();
@@ -56,7 +56,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn for_each(&mut self, function: Value<'a>) -> JsResult<'a, Option<Value<'a>>> {
         let elements = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties()
             .clone();
@@ -71,7 +71,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn pop(&mut self) -> JsResult<'a, Value<'a>> {
         let result = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties()
             .pop()
@@ -83,7 +83,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn shift(&mut self) -> JsResult<'a, Value<'a>> {
         let indexed_properties = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties();
 
@@ -97,7 +97,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn index_of(&mut self, value: Value<'a>) -> JsResult<'a> {
         let indexed_properties = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties();
 
@@ -122,7 +122,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
 
         let indexed_properties = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_mut_object(&mut self.thread.realm.objects)
             .get_mut_indexed_properties();
 
@@ -135,7 +135,7 @@ impl<'a, 'b> JsArray<'a, 'b> {
     fn length(&mut self) -> JsResult<'a, f64> {
         let length = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .get_object(&self.thread.realm.objects)
             .get_indexed_properties()
             .len() as f64;

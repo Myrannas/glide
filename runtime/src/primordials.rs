@@ -1,5 +1,6 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, set, string};
+use crate::builtins::map;
 use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
@@ -316,6 +317,14 @@ impl<'a> Primitives<'a> {
         );
 
         set::JsSet::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
+        map::JsMap::bind_thread(
             global_this,
             object_pool,
             strings,

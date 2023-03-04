@@ -160,7 +160,7 @@ fn run_suite(suite: PathBuf, cost_limit: usize) -> Result<Outcome> {
                 Ok(_) => Err(Error::msg("Expected a Test262Error error")),
                 Err(ExecutionError::Thrown(value, ..)) => {
                     let obj = value
-                        .to_object(&mut thread)
+                        .to_object(&mut thread.get_realm_mut())
                         .unwrap_value(thread.get_realm());
                     let to_string = thread.get_realm_mut().intern_string("toString");
                     let to_string = obj
@@ -263,9 +263,17 @@ fn main() {
                 .long("limit")
                 .default_value("100000"),
         )
+        .arg(
+            Arg::with_name("verbose")
+                .help("Run in verbose mode")
+                .short("v")
+                .long("verbose")
+                .default_value("false"),
+        )
         .get_matches();
 
     let pattern = matches.value_of("pattern");
+    let verbose = matches.value_of("verbose") == Some("true");
 
     ThreadPoolBuilder::new()
         .num_threads(8)
@@ -276,7 +284,7 @@ fn main() {
 
     let mut suites: Vec<PathBuf> = vec![
         // PathBuf::from("./test262/test"),
-        // PathBuf::from("./test262/test/built-ins"),
+        PathBuf::from("./test262/test/built-ins"),
         // PathBuf::from("./test262/test/annexB"),
         // PathBuf::from("./test262/test/intl402"),
         // PathBuf::from("./test262/implementation-contributed"),
@@ -303,7 +311,9 @@ fn main() {
         .map(|suite| {
             let suite_name = suite.to_str().unwrap().to_owned();
 
-            print!("Running suite {:80.80}", suite_name);
+            if verbose {
+                print!("Running suite {:80.80}", suite_name);
+            }
             //
             let mut runtime = Duration::from_micros(0);
             let mut passed = true;
@@ -316,7 +326,9 @@ fn main() {
                         runtime += time;
 
                         // if !is_profiling {
-                        println!("{}", "pass".green());
+                        if verbose {
+                            println!("{}", "pass".green());
+                        }
                         // } else if run % 100 == 99 {
                         //     println!(
                         //         "{}: {} in {:.1}us",
@@ -326,7 +338,9 @@ fn main() {
                         //     );
                         // }
                     } else {
-                        println!("{} (expected Syntax Error)", "pass".green());
+                        if verbose {
+                            println!("{} (expected Syntax Error)", "pass".green());
+                        }
                         // break;
                     }
 
@@ -338,7 +352,9 @@ fn main() {
                     }
                 }
                 Ok(Outcome::Skip) => {
-                    println!("{}", "skip".yellow());
+                    if verbose {
+                        println!("{}", "skip".yellow());
+                    }
                     TestResult {
                         result: SuiteResult::Skip,
                         name: suite_name.clone(),
@@ -347,7 +363,9 @@ fn main() {
                     }
                 }
                 Err(err) => {
-                    println!("{}", "fail".red());
+                    if verbose {
+                        println!("{}", "fail".red());
+                    }
                     TestResult {
                         result: SuiteResult::Failure,
                         name: suite_name.clone(),

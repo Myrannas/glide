@@ -1,8 +1,9 @@
-use crate::primordials::RuntimeHelpers;
+use crate::builtins::{native_target, native_target_mut};
 use crate::result::JsResult;
-use crate::{JsThread, Unwrap, Value};
-use builtin::{constructor, named, prototype};
-use std::cell::RefCell;
+use crate::{ExecutionError, JsThread, Unwrap, Value};
+use better_any::{tid, TidAble};
+use builtin::{constructor, getter, named, prototype};
+use std::cell::{RefCell, RefMut};
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -11,7 +12,8 @@ pub(crate) struct JsSet<'a, 'b> {
     thread: &'b mut JsThread<'a>,
 }
 
-type NativeSet<'a> = HashSet<Value<'a>>;
+struct NativeSet<'a>(HashSet<Value<'a>>);
+tid!(NativeSet<'a>);
 
 #[prototype]
 #[named("Set")]
@@ -19,49 +21,78 @@ impl<'a, 'b> JsSet<'a, 'b> {
     #[constructor]
     fn constructor(&mut self) {
         self.target
-            .to_object(self.thread)
-            .expect_value(
-                self.thread.get_realm(),
-                "Constructor must have object target",
-            )
+            .to_object(&mut self.thread.realm)
+            .expect_value(&self.thread.realm, "Constructor must have object target")
             .set_native_handle::<NativeSet>(
                 &mut self.thread.realm.objects,
-                Rc::new(RefCell::new(NativeSet::new())),
+                Rc::new(RefCell::new(NativeSet(HashSet::new()))),
             )
     }
 
     fn add(&mut self, value: Value<'a>) -> JsResult<'a> {
-        {
-            let mut native_set = self
-                .target
-                .to_object(self.thread)
-                .expect_value(
-                    self.thread.get_realm(),
-                    "Constructor must have object target",
-                )
-                .mut_native_handle::<NativeSet<'a>>(&mut self.thread.realm.objects);
+        native_target_mut::<NativeSet<'a>>(self.target, &mut self.thread.realm)?
+            .0
+            .insert(value);
 
-            if let Some(set) = &mut native_set {
-                set.insert(value);
-                return Ok(Value::UNDEFINED);
-            }
-        }
-
-        Err(self
-            .thread
-            .realm
-            .new_type_error("Object is invalid target")
-            .into())
+        Ok(self.target)
     }
 
     #[named("forEach")]
-    fn for_each(&mut self) {}
+    fn for_each(&mut self, function: Value<'a>) -> JsResult<'a, Option<Value<'a>>> {
+        let items = {
+            let elements = native_target::<NativeSet<'a>>(self.target, &self.thread.realm)?;
+            elements.0.clone()
+        };
 
-    fn clear(&mut self) {}
-    fn has(&mut self) {}
+        for element in &items {
+            function.call(self.thread, &[*element])?;
+        }
+
+        Ok(None)
+    }
+
+    fn clear(&mut self) -> JsResult<'a> {
+        let mut elements = native_target_mut::<NativeSet<'a>>(self.target, &mut self.thread.realm)?;
+
+        elements.0.clear();
+
+        Ok(Value::UNDEFINED)
+    }
+
+    fn has(&mut self, value: Value<'a>) -> JsResult<'a, bool> {
+        Ok(
+            native_target::<NativeSet<'a>>(self.target, &self.thread.realm)?
+                .0
+                .contains(&value),
+        )
+    }
+
     fn keys(&mut self) {}
-    fn delete(&mut self) {}
-    fn size(&mut self) {}
-    fn entries(&mut self) {}
-    fn values(&mut self) {}
+
+    fn delete(&mut self, value: Value<'a>) -> JsResult<'a, bool> {
+        Ok(
+            native_target_mut::<NativeSet<'a>>(self.target, &mut self.thread.realm)?
+                .0
+                .remove(&value),
+        )
+    }
+
+    #[getter]
+    fn size(&mut self) -> JsResult<'a, i32> {
+        Ok(
+            native_target::<NativeSet<'a>>(self.target, &self.thread.realm)?
+                .0
+                .len() as i32,
+        )
+    }
+    fn entries(&mut self) -> JsResult<'a> {
+        native_target::<NativeSet<'a>>(self.target, &self.thread.realm)?;
+
+        Ok(Value::UNDEFINED)
+    }
+    fn values(&mut self) -> JsResult<'a> {
+        native_target::<NativeSet<'a>>(self.target, &self.thread.realm)?;
+
+        Ok(Value::UNDEFINED)
+    }
 }

@@ -18,7 +18,7 @@ impl<'a, 'b> JsString<'a, 'b> {
     fn length(&mut self) -> JsResult<'a, Value<'a>> {
         let unwrapped_result: Value = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .unwrap(&self.thread.realm.objects)
             .into();
 
@@ -55,7 +55,7 @@ impl<'a, 'b> JsString<'a, 'b> {
     ) -> JsResult<'a, Value<'a>> {
         let str = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .unwrap(&self.thread.realm.objects)
             .clone()
             .unwrap_or_default()
@@ -78,7 +78,7 @@ impl<'a, 'b> JsString<'a, 'b> {
     ) -> JsResult<'a, Value<'a>> {
         let str = self
             .target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .unwrap(&self.thread.realm.objects)
             .clone()
             .unwrap_or_default()
@@ -110,7 +110,7 @@ impl<'a, 'b> JsString<'a, 'b> {
             .to_string(self.thread)?;
 
         self.target
-            .to_object(self.thread)?
+            .to_object(&mut self.thread.realm)?
             .wrap(self.thread, Value::from(str));
 
         Ok(())
@@ -217,7 +217,7 @@ impl<'a, 'b> JsString<'a, 'b> {
     fn to_string(&mut self) -> JsResult<'a> {
         let str = self
             .target
-            .to_object(&mut self.thread)?
+            .to_object(&mut self.thread.realm)?
             .unwrap(&self.thread.realm.objects);
 
         if let Some(str) = str {

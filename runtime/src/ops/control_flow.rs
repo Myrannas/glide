@@ -34,9 +34,12 @@ pub(crate) fn call(thread: &mut JsThread, args: usize) {
         ValueType::StringReference(_) | ValueType::NumberReference(_) => {
             let last = *(thread.stack.last().unwrap());
 
-            catch!(thread, last.to_object(thread))
+            catch!(thread, last.to_object(&mut thread.realm))
         }
-        _ => catch!(thread, resolve!(fn_value, thread).to_object(thread)),
+        _ => catch!(
+            thread,
+            resolve!(fn_value, thread).to_object(&mut thread.realm)
+        ),
     };
 
     let fn_object = resolve!(fn_value, thread);
