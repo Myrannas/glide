@@ -199,6 +199,7 @@ impl<'a> JsThread<'a> {
     }
 
     pub(crate) fn jump(&mut self, instruction_index: usize) {
+        #[cfg(feature = "cost_limits")]
         if let Some(limit) = self.cost_limit {
             if limit > 0 {
                 self.cost_limit = Some(limit - 1)
@@ -347,6 +348,7 @@ impl<'a> JsThread<'a> {
             return self.throw(InternalError::new_stackless("Stack overflow"));
         }
 
+        #[cfg(feature = "cost_limits")]
         if let Some(limit) = self.cost_limit {
             if limit > 0 {
                 self.cost_limit = Some(limit - 1)

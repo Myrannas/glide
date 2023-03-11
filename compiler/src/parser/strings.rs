@@ -67,36 +67,32 @@ pub(crate) fn parse_string(input: &str) -> Result<String, Error> {
     //     str.push(char)
     // }
 
-    if input.contains(ESCAPE) {
-        let mut output = String::with_capacity(input.len());
-        let mut iter = input.chars().peekable();
+    let mut output = String::with_capacity(input.len());
+    let mut iter = input.chars().peekable();
 
-        while let Some(next) = iter.next() {
-            output.push(match next {
-                ESCAPE => {
-                    let next = iter.next();
+    while let Some(next) = iter.next() {
+        output.push(match next {
+            ESCAPE => {
+                let next = iter.next();
 
-                    match next {
-                        Some('n') => '\n',
-                        Some('r') => '\r',
-                        Some('t') => '\t',
-                        Some('v') => '\u{000B}',
-                        Some('b') => '\u{0008}',
-                        Some('f') => '\u{000C}',
-                        Some('0') => '\u{0000}',
-                        Some(UNICODE) => parse_unicode(&mut iter)?,
-                        Some(other) => other,
-                        _ => '\\',
-                    }
+                match next {
+                    Some('n') => '\n',
+                    Some('r') => '\r',
+                    Some('t') => '\t',
+                    Some('v') => '\u{000B}',
+                    Some('b') => '\u{0008}',
+                    Some('f') => '\u{000C}',
+                    Some('0') => '\u{0000}',
+                    Some(UNICODE) => parse_unicode(&mut iter)?,
+                    Some(other) => other,
+                    _ => '\\',
                 }
-                other => other,
-            })
-        }
-
-        Ok(output)
-    } else {
-        Ok(input.to_owned())
+            }
+            other => other,
+        })
     }
+
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -122,5 +118,12 @@ mod test {
         let input = "With \\u2764";
 
         assert_eq!("With ❤", parse_string(input).unwrap())
+    }
+
+    #[test]
+    fn test_parse_with_invalid_sequence() {
+        let input = "With \u{0004} test";
+
+        assert_eq!(parse_string(input).is_err(), true)
     }
 }

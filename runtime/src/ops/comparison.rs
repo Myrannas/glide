@@ -1,6 +1,6 @@
 use crate::debugging::DebugWithRealm;
 use crate::primordials::{get_prototype_property, RuntimeHelpers};
-use crate::{catch, pop, JsThread, Value, ValueType};
+use crate::{catch, dv, pop, JsThread, Value, ValueType};
 
 pub(crate) fn equality<'a>(
     thread: &mut JsThread<'a>,
@@ -161,7 +161,7 @@ pub(crate) fn in_operator(thread: &mut JsThread) {
 }
 
 pub(crate) fn greater_than(thread: &mut JsThread) {
-    numeric_comparison_op(thread, |l, r| l > r, |l, r| l >= r)
+    numeric_comparison_op(thread, |l, r| l > r, |l, r| l > r)
 }
 
 pub(crate) fn greater_than_equal(thread: &mut JsThread) {

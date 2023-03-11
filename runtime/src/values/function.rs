@@ -40,6 +40,7 @@ impl<'a> PartialEq for CustomFunctionReference<'a> {
 pub struct BuiltIn<'a> {
     pub op: BuiltinFn<'a>,
     pub context: Option<Value<'a>>,
+    pub name: Option<JsPrimitiveString>,
 }
 
 impl<'a> PartialEq for BuiltIn<'a> {
@@ -180,7 +181,7 @@ impl JsClass {
                 }),
             );
 
-            prototype.set(&mut thread.realm.objects, method.name(), function.into());
+            prototype.set(thread, method.name(), function.into())?;
         }
 
         for method in &self.static_methods {
@@ -192,7 +193,7 @@ impl JsClass {
                 }),
             );
 
-            object.set(&mut thread.realm.objects, method.name(), function.into());
+            object.set(thread, method.name(), function.into())?;
         }
 
         Ok(object.into())

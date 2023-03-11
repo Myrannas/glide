@@ -10,7 +10,7 @@ pub(crate) fn make_arguments<'a>(
         .wrappers
         .wrap_arguments(
             &mut thread.realm.objects,
-            arguments.into_iter().map(From::from).collect(),
+            arguments.into_iter().map(From::from).rev().collect(),
         )
         .into()
 }

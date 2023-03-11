@@ -7,8 +7,6 @@ use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
 use crate::{JsObject, JsPrimitiveString, JsThread};
 use better_any::{TidAble, TidExt};
-use std::any::{Any, TypeId};
-use std::borrow::BorrowMut;
 use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -245,20 +243,63 @@ impl<'a> ObjectPointer<'a> {
         object.properties.contains_key(&key)
     }
 
-    pub fn set(self, objects: &mut ObjectPool<'a>, key: JsPrimitiveString, value: Value<'a>) {
-        let object = objects.get_mut(self);
+    pub fn set(
+        self,
+        thread: &mut JsThread<'a>,
+        key: JsPrimitiveString,
+        value: Value<'a>,
+    ) -> JsResult<'a, ()> {
+        let setter = {
+            let object = thread.realm.objects.get_mut(self);
 
-        if let Some(Property::DataDescriptor {
-            writable: false, ..
-        }) = object.properties.get(&key)
-        {
-            return;
+            match object.properties.get_mut(&key) {
+                Some(Property::DataDescriptor {
+                    writable: false, ..
+                }) => {
+                    return Ok(());
+                }
+                Some(Property::DataDescriptor { value: v, .. }) => {
+                    *v = value;
+                    return Ok(());
+                }
+                Some(Property::AccessorDescriptor {
+                    setter: Some(_), ..
+                }) => true,
+                None => return Ok(object.set(key, value)),
+                _ => false,
+            }
+        };
+
+        if setter {
+            let object = thread.realm.objects.get(self);
+
+            if let Some(Property::AccessorDescriptor {
+                setter: Some(func), ..
+            }) = object.properties.get(&key)
+            {
+                thread.call_from_native(Value::from(self), func.clone(), 1, false)?;
+            }
         }
-
-        object.set(key, value)
+        Ok(())
     }
 
-    pub fn set_indexed(self, thread: &mut JsThread<'a>, key: usize, value: Value<'a>) {
+    pub fn set_ignore_setters(
+        self,
+        objects: &mut ObjectPool<'a>,
+        key: JsPrimitiveString,
+        value: Value<'a>,
+    ) {
+        let object = objects.get_mut(self);
+
+        object.set(key, value);
+    }
+
+    pub fn set_indexed(
+        self,
+        thread: &mut JsThread<'a>,
+        key: usize,
+        value: Value<'a>,
+    ) -> JsResult<'a, ()> {
         let object = thread.realm.objects.get_mut(self);
 
         if key < 10000 {
@@ -276,15 +317,12 @@ impl<'a> ObjectPointer<'a> {
                     }
                 }
 
-                return;
+                return Ok(());
             }
         }
 
-        self.set(
-            &mut thread.realm.objects,
-            thread.realm.strings.intern(key.to_string()),
-            value,
-        )
+        let key = thread.realm.strings.intern(key.to_string());
+        self.set(thread, key, value)
     }
 
     pub fn define_value_property(

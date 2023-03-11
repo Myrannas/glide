@@ -12,7 +12,7 @@ use crate::ops::comparison::{
     strict_equal_to, type_of,
 };
 use crate::ops::control_flow::{
-    call, call_new, catch, compare_jump, drop_catch, jump, return_constant, return_value,
+    call, call_new, catch, compare_jump, debug, drop_catch, jump, return_constant, return_value,
     throw_value,
 };
 use crate::ops::math::{add, divide, exponential, increment, modulus, multiply, negate, subtract};
@@ -90,12 +90,13 @@ impl Operand for Instruction {
             Instruction::RightShift => right_shift(thread),
             Instruction::LeftShift => left_shift(thread),
             Instruction::InstanceOf => instance_of(thread),
-            Instruction::Increment { by } => increment(thread, *by),
+            Instruction::Increment { by, pre } => increment(thread, *by, *pre),
             Instruction::Catch { chunk } => catch(thread, *chunk),
             Instruction::DropCatch { chunk } => drop_catch(thread, *chunk),
             Instruction::Duplicate => duplicate(thread),
             Instruction::Resolve => resolve(thread),
             Instruction::In => in_operator(thread),
+            Instruction::Debug { entire_stack } => debug(thread, *entire_stack),
         }
     }
 }

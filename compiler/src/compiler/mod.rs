@@ -1,9 +1,14 @@
+use crate::parser::ast::Reference::{Accessor, Id};
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ClassMember, ConstStatement, Expression, Field, ForStatement,
-    FunctionStatement, IfStatement, ParsedModule, Reference, ReturnStatement, Statement,
-    ThrowStatement, TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
+    BinaryOperator, BlockStatement, ClassMember, ConstStatement, Expression, Field,
+    FunctionStatement, IfStatement, ParsedModule, Reference, ReturnStatement, ThrowStatement,
+    TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
 };
-
+use crate::parser::parse_input_as;
+use crate::parser::statements::decl_statement::DeclStatement;
+use crate::parser::statements::for_statement::ForStatement;
+use crate::parser::statements::statement::Statement;
+use crate::parser::ParseContext;
 use crate::result::{CompilerError, InternalError, Result, SyntaxError};
 use instruction_set::Constant::Undefined;
 use instruction_set::Environmental::GlobalThis;
@@ -12,7 +17,6 @@ use instruction_set::{
     Chunk, Class, Constant, Environmental, Function, Instruction, Local, LocalInit, Module,
 };
 use log::debug;
-use std::process::id;
 
 macro_rules! internal_error {
     ($format: literal, $($y:expr),+) => {
@@ -340,6 +344,11 @@ impl UnaryOperator {
             UnaryOperator::Sub => Neg,
             UnaryOperator::Add => todo!("Not implemented"),
             UnaryOperator::Delete => Delete,
+            UnaryOperator::PrefixInc => Increment { by: 1.0, pre: true },
+            UnaryOperator::PrefixDec => Increment {
+                by: -1.0,
+                pre: true,
+            },
         }
     }
 }
@@ -519,10 +528,16 @@ impl<'a, 'c> ChunkBuilder {
             }
             Expression::Inc { reference, .. } => self
                 .compile_expression(Expression::Reference(reference))?
-                .append(Increment { by: 1.0 }),
+                .append(Increment {
+                    by: 1.0,
+                    pre: false,
+                }),
             Expression::Dec { reference, .. } => self
                 .compile_expression(Expression::Reference(reference))?
-                .append(Increment { by: -1.0 }),
+                .append(Increment {
+                    by: -1.0,
+                    pre: false,
+                }),
             Expression::Null => self.append(LoadConstant {
                 constant: Constant::Null,
             }),
@@ -846,10 +861,10 @@ impl<'a, 'c> ChunkBuilder {
                     next = next.append(Jump { to: block_index });
                 }
 
-                let next_break_stack = &break_stack.child(next_index, condition_index);
+                let next_break_stack = &break_stack.child(next_index, operation_index);
                 next = next
                     .switch_to(block_index)
-                    .compile_block(block, operation_index, next_break_stack, |c| c)?
+                    .compile_block(*block, operation_index, next_break_stack, |c| c)?
                     .append(Jump {
                         to: operation_index,
                     })
@@ -864,43 +879,37 @@ impl<'a, 'c> ChunkBuilder {
                 })
                 .switch_to(next_index)
             }
-            Statement::For(ForStatement::ForIn { .. }) => {
-                self
-                // todo: Make this work
-            }
-            Statement::Function(FunctionStatement {
+            Statement::For(ForStatement::ForIn {
+                allocate,
                 identifier,
-                arguments,
-                statements: BlockStatement { statements },
+                expression,
+                block,
             }) => {
-                let local = self.allocate_local(identifier, false);
-                let function = self.frame.functions.allocate(compile_function(
-                    identifier,
-                    self.frame.locals.child(),
-                    arguments,
-                    statements,
-                    DEFAULT_OPTIONS,
-                )?);
+                let input_str = format!("for (var {0}__iterator = true, {0}__iterator_i = 0, {0}; {0}__iterator_i < {0}__iterator.length; {0}__iterator_i ++) {{ {0} = {0}__iterator[{0}__iterator_i]; }}", identifier);
+                let mut for_statement: ForStatement =
+                    parse_input_as(&input_str, ParseContext::TOP).unwrap();
 
-                let mut next = self;
+                if let ForStatement::For { block: b, vars, .. } = &mut for_statement {
+                    if let Statement::Block(statement) = b.as_mut() {
+                        statement.statements.push(DeclStatement::Statement(*block));
+                    }
 
-                if !next.frame.locals.set_init_function(local, function) {
-                    next = next
-                        .append(GetFunction { function })
-                        .append(SetLocal { local });
-                }
+                    vars.as_mut().unwrap().declarations[0].expression = Some(Expression::Call {
+                        expression: Box::new(Expression::Reference(Accessor {
+                            expression: Box::new(Expression::Reference(Id("Object"))),
+                            null_safe: false,
+                            accessor: "keys",
+                        })),
+                        parameters: vec![expression],
+                    });
+                };
 
-                if !next.options.module {
-                    let name = next.allocate_atom(identifier);
-                    next = next
-                        .append(LoadEnvironmental {
-                            environmental: GlobalThis,
-                        })
-                        .append(GetLocal { local })
-                        .append(SetNamed { name });
-                }
+                self.compile_statement(Statement::For(for_statement), None, break_stack)?
+                    .0
 
-                next
+                // self.switch_to(next_index)
+                // self
+                // todo: Make this work
             }
             Statement::Expression(expression) => self.compile_expression(expression)?,
             Statement::If(IfStatement {
@@ -923,7 +932,7 @@ impl<'a, 'c> ChunkBuilder {
                 });
 
                 next = next.switch_to(if_index).compile_block(
-                    true_block,
+                    *true_block,
                     next_index,
                     break_stack,
                     |c| c,
@@ -931,7 +940,7 @@ impl<'a, 'c> ChunkBuilder {
 
                 if let Some(else_block) = false_block {
                     next = next.switch_to(else_index).compile_block(
-                        else_block,
+                        *else_block,
                         next_index,
                         break_stack,
                         |c| c,
@@ -960,7 +969,7 @@ impl<'a, 'c> ChunkBuilder {
                     if_false: next_index,
                 })
                 .switch_to(block_index)
-                .compile_block(loop_block, condition_index, next_break_stack, |c| c)?
+                .compile_block(*loop_block, condition_index, next_break_stack, |c| c)?
                 .switch_to(next_index)
             }
             Statement::Try(TryStatement {
@@ -1024,7 +1033,19 @@ impl<'a, 'c> ChunkBuilder {
             Statement::Continue => self.append(Jump {
                 to: break_stack.get_continue()?,
             }),
-            Statement::Class(class) => {
+        };
+
+        Ok((chunk, false))
+    }
+
+    fn compile_decl_statement<'b>(
+        mut self,
+        input: DeclStatement<'a>,
+        next_block: Option<usize>,
+        break_stack: &'b BreakStack,
+    ) -> Result<(Self, bool)> {
+        let (chunk, finalised) = match input {
+            DeclStatement::Class(class) => {
                 let mut class_declaration = Class {
                     construct: None,
                     name: Some(0),
@@ -1093,13 +1114,53 @@ impl<'a, 'c> ChunkBuilder {
                     false
                 };
 
-                next.append(GetClass {
-                    class: class_id,
-                    extends,
-                })
-                .append(SetLocal { local: identifier })
+                let n = next
+                    .append(GetClass {
+                        class: class_id,
+                        extends,
+                    })
+                    .append(SetLocal { local: identifier });
+
+                (n, false)
             }
-            Statement::Const(ConstStatement { declarations }) => {
+            DeclStatement::Function(FunctionStatement {
+                identifier,
+                arguments,
+                statements: BlockStatement { statements },
+            }) => {
+                let local = self.allocate_local(identifier, false);
+                let function = self.frame.functions.allocate(compile_function(
+                    identifier,
+                    self.frame.locals.child(),
+                    arguments,
+                    statements,
+                    DEFAULT_OPTIONS,
+                )?);
+
+                let mut next = self;
+
+                if !next.frame.locals.set_init_function(local, function) {
+                    next = next
+                        .append(GetFunction { function })
+                        .append(SetLocal { local });
+                }
+
+                if !next.options.module {
+                    let name = next.allocate_atom(identifier);
+                    next = next
+                        .append(LoadEnvironmental {
+                            environmental: GlobalThis,
+                        })
+                        .append(GetLocal { local })
+                        .append(SetNamed { name });
+                }
+
+                (next, false)
+            }
+            DeclStatement::Statement(statement) => {
+                self.compile_statement(statement, next_block, break_stack)?
+            }
+            DeclStatement::Const(ConstStatement { declarations }) => {
                 let mut next = self;
 
                 for VarDeclaration {
@@ -1132,11 +1193,11 @@ impl<'a, 'c> ChunkBuilder {
                     }
                 }
 
-                next
+                (next, false)
             }
         };
 
-        Ok((chunk, false))
+        Ok((chunk, finalised))
     }
 
     fn compile_block<'b, B: Into<BlockStatement<'a>>>(
@@ -1149,7 +1210,7 @@ impl<'a, 'c> ChunkBuilder {
         let mut next = self;
         for statement in statements.into().statements.into_iter() {
             let (next_builder, finalised) =
-                next.compile_statement(statement, Some(next_block), break_stack)?;
+                next.compile_decl_statement(statement, Some(next_block), break_stack)?;
 
             next = next_builder;
 
@@ -1176,7 +1237,7 @@ fn compile_function<'a>(
     name: &'a str,
     parent: LocalAllocator,
     arguments: Vec<&'a str>,
-    statements: Vec<Statement<'a>>,
+    statements: Vec<DeclStatement<'a>>,
     options: CompilerOptions,
 ) -> Result<Function> {
     let mut frame = Frame {
@@ -1196,7 +1257,7 @@ fn compile_function<'a>(
     let mut chunk = frame.new_chunk(options);
     for statement in statements.into_iter() {
         chunk = chunk
-            .compile_statement(statement, None, &BreakStack::new())?
+            .compile_decl_statement(statement, None, &BreakStack::new())?
             .0;
     }
 
@@ -1263,14 +1324,17 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
         .child(),
     };
 
-    let return_value = matches!(input.block.last(), Some(Statement::Expression(_)));
+    let return_value = matches!(
+        input.block.last(),
+        Some(DeclStatement::Statement(Statement::Expression(_)))
+    );
 
     frame.locals.allocate_identifier("arguments", false);
 
     let mut chunk = frame.new_chunk(CompilerOptions { module: true });
     for statement in input.block.into_iter() {
         chunk = chunk
-            .compile_statement(statement, None, &BreakStack::new())?
+            .compile_decl_statement(statement, None, &BreakStack::new())?
             .0;
     }
 

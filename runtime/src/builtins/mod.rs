@@ -4,6 +4,7 @@ use std::cell::{Ref, RefMut};
 
 pub(crate) mod arguments;
 pub(crate) mod array;
+pub(crate) mod console;
 pub(crate) mod errors;
 pub(crate) mod function;
 pub(crate) mod map;

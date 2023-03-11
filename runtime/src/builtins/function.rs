@@ -1,7 +1,8 @@
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
+use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::nan::{Value, ValueType};
-use crate::{InternalError, JsThread};
+use crate::{ExecutionError, InternalError, JsThread};
 use builtin::{named, prototype, varargs};
 
 pub(crate) struct JsFunctionObject<'a, 'b> {
@@ -76,5 +77,35 @@ impl<'a, 'b> JsFunctionObject<'a, 'b> {
         }
 
         InternalError::new_stackless("Can't use Function.call on a non-function").into()
+    }
+
+    #[named("toString")]
+    fn to_string(&mut self) -> JsResult<'a> {
+        if let Some(function) = self
+            .target
+            .to_object(&mut self.thread.realm)?
+            .get_callable(&self.thread.realm.objects)
+        {
+            let name = match function {
+                FunctionReference::BuiltIn(builtin) => builtin.name,
+                FunctionReference::Custom(CustomFunctionReference { function, .. }) => {
+                    Some(function.name())
+                }
+            };
+
+            let name =
+                name.unwrap_or_else(|| self.thread.realm.strings.intern_native("(anonymous)"));
+
+            Ok(self
+                .thread
+                .realm
+                .strings
+                .intern(format!("[Function: {}]", name))
+                .into())
+        } else {
+            Err(ExecutionError::TypeError(
+                "Function.prototype.toString requires that 'this' be a Function".to_string(),
+            ))
+        }
     }
 }

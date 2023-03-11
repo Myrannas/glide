@@ -78,7 +78,7 @@ pub(crate) fn negate(thread: &mut JsThread) {
     thread.step();
 }
 
-pub(crate) fn increment(thread: &mut JsThread, by: f64) {
+pub(crate) fn increment(thread: &mut JsThread, by: f64, pre: bool) {
     // Reference ->
     let target: Value = thread.pop_stack();
 
@@ -86,8 +86,15 @@ pub(crate) fn increment(thread: &mut JsThread, by: f64) {
         thread,
         target.update_reference(thread, |value, thread| {
             let as_number = value.to_number(&thread.realm);
-            thread.push_stack(as_number);
-            Ok(Value::from(as_number + by))
+            let updated = as_number + by;
+
+            if !pre {
+                thread.push_stack(as_number);
+            } else {
+                thread.push_stack(updated);
+            }
+
+            Ok(Value::from(updated))
         })
     );
 

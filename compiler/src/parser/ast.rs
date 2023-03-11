@@ -1,4 +1,6 @@
 use crate::compiler::BucketEq;
+use crate::parser::statements::decl_statement::DeclStatement;
+use crate::parser::statements::statement::Statement;
 use instruction_set::Constant;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -53,6 +55,8 @@ pub enum UnaryOperator {
     Sub,
     Add,
     Delete,
+    PrefixInc,
+    PrefixDec,
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -187,7 +191,7 @@ pub(crate) struct ThrowStatement<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct BlockStatement<'a> {
-    pub(crate) statements: Vec<Statement<'a>>,
+    pub(crate) statements: Vec<DeclStatement<'a>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -210,57 +214,23 @@ pub(crate) enum ClassMember<'a> {
     PrivateField(Field<'a>),
 }
 
-impl<'a> From<Statement<'a>> for BlockStatement<'a> {
-    fn from(statement: Statement<'a>) -> Self {
+impl<'a> From<DeclStatement<'a>> for BlockStatement<'a> {
+    fn from(statement: DeclStatement<'a>) -> Self {
         BlockStatement {
             statements: vec![statement],
         }
     }
 }
 
-impl<'a> From<Box<Statement<'a>>> for BlockStatement<'a> {
-    fn from(statement: Box<Statement<'a>>) -> Self {
+impl<'a> From<Box<DeclStatement<'a>>> for BlockStatement<'a> {
+    fn from(statement: Box<DeclStatement<'a>>) -> Self {
         BlockStatement {
             statements: vec![*statement],
         }
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub(crate) enum ForStatement<'a> {
-    For {
-        expression: Option<Expression<'a>>,
-        vars: Option<VarStatement<'a>>,
-        condition: Option<Expression<'a>>,
-        operation: Option<Expression<'a>>,
-        block: Box<Statement<'a>>,
-    },
-    ForIn {
-        identifier: &'a str,
-        expression: Expression<'a>,
-        block: BlockStatement<'a>,
-    },
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub(crate) enum Statement<'a> {
-    Block(BlockStatement<'a>),
-    Function(FunctionStatement<'a>),
-    If(IfStatement<'a>),
-    Return(ReturnStatement<'a>),
-    Class(ClassStatement<'a>),
-    While(WhileStatement<'a>),
-    Var(VarStatement<'a>),
-    Const(ConstStatement<'a>),
-    Expression(Expression<'a>),
-    Try(TryStatement<'a>),
-    For(ForStatement<'a>),
-    Break,
-    Continue,
-    ThrowStatement(ThrowStatement<'a>),
-}
-
 #[derive(Debug, PartialEq)]
 pub struct ParsedModule<'a> {
-    pub(crate) block: Vec<Statement<'a>>,
+    pub(crate) block: Vec<DeclStatement<'a>>,
 }

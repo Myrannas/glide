@@ -148,6 +148,14 @@ pub trait DebugRepresentation<'a> {
     // }
 }
 
+#[macro_export]
+macro_rules! dv {
+    ($thread:expr, $value: expr) => {{
+        dbg!(crate::debugging::X::from(&$value, &$thread.realm));
+        $value
+    }};
+}
+
 pub(crate) struct X<'a, 'b, 'c> {
     value: &'c dyn DebugRepresentation<'a>,
     realm: &'b Realm<'a>,
@@ -234,7 +242,7 @@ pub trait Unwrap<'a, T> {
 }
 
 impl<'a, T> Unwrap<'a, T> for JsResult<'a, T> {
-    fn expect_value(self, realm: &Realm<'a>, message: &str) -> T {
+    fn expect_value(self, realm: &Realm<'a>, _message: &str) -> T {
         match self {
             Ok(result) => result,
             Err(ExecutionError::Thrown(value, _)) => {

@@ -1,5 +1,6 @@
+use crate::result::JsResult;
 use crate::values::nan::Value;
-use crate::JsThread;
+use crate::{ExecutionError, JsThread, ValueType};
 use builtin::{named, prototype};
 
 #[allow(dead_code)]
@@ -31,5 +32,21 @@ impl<'a, 'b> JsNumber<'a, 'b> {
         let absolute_value = value.float().abs() as u64;
 
         absolute_value < ((2_u64 << 53) - 1)
+    }
+
+    #[named("toString")]
+    fn to_string(&mut self) -> JsResult<'a> {
+        match self.target.get_type() {
+            ValueType::Float => Ok(ValueType::String(
+                self.thread
+                    .realm
+                    .strings
+                    .intern(format!("{}", self.target.float())),
+            )
+            .into()),
+            _ => Err(ExecutionError::TypeError(
+                "Number.prototype.toString requires that 'this' be a Number".to_string(),
+            )),
+        }
     }
 }

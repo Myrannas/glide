@@ -26,8 +26,11 @@ pub(crate) fn set(thread: &mut JsThread) {
     let target = catch!(thread, target.to_object(&mut thread.realm));
 
     match attribute.get_type() {
-        ValueType::String(str) => target.set(&mut thread.realm.objects, str, value),
-        ValueType::Float => target.set_indexed(thread, attribute.float() as usize, value),
+        ValueType::String(str) => catch!(thread, target.set(thread, str, value)),
+        ValueType::Float => catch!(
+            thread,
+            target.set_indexed(thread, attribute.float() as usize, value)
+        ),
         _ => thread.throw(InternalError::new_stackless(format!(
             "Cannot set attribute: {}",
             thread.debug_value(&attribute)
@@ -77,7 +80,7 @@ pub(crate) fn set_named(thread: &mut JsThread, atom: usize) {
 
     // println!("Set named, target {:?}.{} = {:?}", target, atom, value);
 
-    target.set(&mut thread.realm.objects, atom, value);
+    catch!(thread, target.set(thread, atom, value));
 
     thread.step();
 }

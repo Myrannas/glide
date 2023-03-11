@@ -50,7 +50,7 @@ pub(crate) trait Prototype<'a> {
             name,
             Value::from(constructor_object),
             true,
-            true,
+            false,
             false,
         );
 
@@ -90,7 +90,7 @@ pub(crate) trait Prototype<'a> {
             name,
             Value::from(constructor_object),
             true,
-            true,
+            false,
             false,
         );
 

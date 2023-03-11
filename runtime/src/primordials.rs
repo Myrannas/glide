@@ -1,6 +1,6 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, set, string};
-use crate::builtins::map;
+use crate::builtins::{console, map};
 use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
@@ -21,6 +21,7 @@ impl<'a> Helpers<'a> for JsObject<'a> {
             Some(FunctionReference::BuiltIn(BuiltIn {
                 context: Some(value.into()),
                 op: |_, _thread, _, context| Ok(Some(context.unwrap_or_default())),
+                name: Some(key),
             })),
             None,
             true,
@@ -194,11 +195,19 @@ impl<'a> Realm<'a> {
                     BuiltIn {
                         context: None,
                         op: super::builtins::eval::eval,
+                        name: Some(eval_string),
                     },
                 )
                 .into();
 
-            global_this.set(&mut object_pool, eval_string, value);
+            global_this.define_value_property(
+                &mut object_pool,
+                eval_string,
+                value,
+                false,
+                false,
+                false,
+            );
         }
         global_this.define_value_property(
             &mut object_pool,
@@ -208,8 +217,22 @@ impl<'a> Realm<'a> {
             false,
             false,
         );
-        global_this.set(&mut object_pool, constants.nan, Value::NAN);
-        global_this.set(&mut object_pool, constants.infinity, f64::INFINITY.into());
+        global_this.define_value_property(
+            &mut object_pool,
+            constants.nan,
+            Value::NAN,
+            false,
+            false,
+            false,
+        );
+        global_this.define_value_property(
+            &mut object_pool,
+            constants.infinity,
+            f64::INFINITY.into(),
+            false,
+            false,
+            false,
+        );
 
         Realm {
             global_this,
@@ -285,20 +308,24 @@ impl<'a> Primitives<'a> {
             function_prototype_base,
         );
 
-        number_constructor.set(object_pool, constants.nan, Value::NAN);
-        number_constructor.set(
+        number_constructor.set_ignore_setters(object_pool, constants.nan, Value::NAN);
+        number_constructor.set_ignore_setters(
             object_pool,
             constants.negative_infinity,
             f64::NEG_INFINITY.into(),
         );
-        number_constructor.set(
+        number_constructor.set_ignore_setters(
             object_pool,
             constants.positive_infinity,
             f64::INFINITY.into(),
         );
-        number_constructor.set(object_pool, constants.min_value, f64::MIN_POSITIVE.into());
-        number_constructor.set(object_pool, constants.max_value, f64::MAX.into());
-        number_constructor.set(object_pool, constants.epsilon, f64::EPSILON.into());
+        number_constructor.set_ignore_setters(
+            object_pool,
+            constants.min_value,
+            f64::MIN_POSITIVE.into(),
+        );
+        number_constructor.set_ignore_setters(object_pool, constants.max_value, f64::MAX.into());
+        number_constructor.set_ignore_setters(object_pool, constants.epsilon, f64::EPSILON.into());
 
         let (_, array_prototype) = array::JsArray::bind_thread(
             global_this,
@@ -332,6 +359,14 @@ impl<'a> Primitives<'a> {
             function_prototype_base,
         );
 
+        console::JsConsole::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
         let name = strings.intern_native("name");
 
         let primitives = Primitives {
@@ -353,7 +388,14 @@ impl<'a> Primitives<'a> {
             })
             .unwrap();
 
-        global_this.set(object_pool, constants.parse_int, parse_int);
+        global_this.define_value_property(
+            object_pool,
+            constants.parse_int,
+            parse_int,
+            false,
+            false,
+            false,
+        );
 
         primitives
     }

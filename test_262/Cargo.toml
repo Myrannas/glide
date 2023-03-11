@@ -9,9 +9,10 @@ glide_compiler = { path = "../compiler", features=["eval"] }
 glide_runtime = { path = "../runtime", features=["eval", "debugging"] }
 anyhow = "1.0.38"
 colored = "2.0.0"
-log = { version = "0.4", features = ["max_level_trace"] }
+log = { version = "0.4", features = ["max_level_trace", "release_max_level_warn"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 serde_json = "1.0.64"
 clap = "2.33.3"
 rayon = "1.5.1"
+env_logger = "0.10.0"

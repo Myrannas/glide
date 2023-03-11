@@ -4,7 +4,7 @@ use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::object::Property;
-use crate::{catch, pop, resolve, ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
+use crate::{catch, dv, pop, resolve, ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
 use instruction_set::Constant;
 
 fn get_callable<'a>(realm: &mut Realm<'a>, value: Value<'a>) -> JsResult<'a, ObjectPointer<'a>> {
@@ -182,4 +182,18 @@ pub(crate) fn throw_value(thread: &mut JsThread) {
     let value = pop!(thread);
 
     thread.throw(value)
+}
+
+pub(crate) fn debug(thread: &mut JsThread, entire_stack: bool) {
+    if !entire_stack {
+        if let Some(value) = thread.stack.last() {
+            dv!(thread, *value);
+            thread.step();
+        }
+    } else {
+        for value in thread.stack.clone() {
+            dv!(thread, value);
+        }
+        thread.step();
+    }
 }

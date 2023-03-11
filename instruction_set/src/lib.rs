@@ -45,6 +45,7 @@ pub enum Instruction {
     Delete,
     DeleteNamed { name: Atom },
     DeleteLocal { local: LocalId },
+    Debug { entire_stack: bool },
 
     StrictEqualTo,
     NotStrictEqualTo,
@@ -65,7 +66,7 @@ pub enum Instruction {
     LeftShift,
     InstanceOf,
     Exponential,
-    Increment { by: f64 },
+    Increment { by: f64, pre: bool },
     Catch { chunk: ChunkId },
     DropCatch { chunk: ChunkId },
     Duplicate,

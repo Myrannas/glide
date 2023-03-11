@@ -14,3 +14,6 @@ logos = "0.12.1"
 instruction_set = { path = "../instruction_set" }
 anyhow = "1.0.38"
 itertools="0.10.5"
+
+[dev-dependencies]
+assert_matches = "1.5.0"

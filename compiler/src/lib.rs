@@ -9,6 +9,9 @@ extern crate anyhow;
 extern crate instruction_set;
 extern crate log;
 
+#[cfg(test)]
+extern crate assert_matches;
+
 pub use compiler::{compile, CompilerOptions};
 pub use instruction_set::Module;
 pub use parser::{parse_input, ParsedModule};

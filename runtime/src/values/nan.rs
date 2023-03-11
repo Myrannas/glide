@@ -159,6 +159,10 @@ impl<'a> Value<'a> {
         inner: 0_u64,
         phantom: PhantomData,
     };
+    pub const MINUS_ZERO: Self = Value {
+        inner: 9223372036854775808_u64,
+        phantom: PhantomData,
+    };
 
     #[must_use]
     pub fn get_type(self) -> ValueType<'a> {
@@ -327,7 +331,7 @@ impl<'a> Value<'a> {
 
                 let updated_value = with_value(original, thread)?;
 
-                base_object.set(&mut thread.realm.objects, name, updated_value);
+                base_object.set(thread, name, updated_value)?;
                 Ok(updated_value)
             }
             ValueType::NumberReference(index) => {
@@ -339,7 +343,7 @@ impl<'a> Value<'a> {
 
                 let updated_value = with_value(original, thread)?;
 
-                base_object.set_indexed(thread, index as usize, updated_value);
+                base_object.set_indexed(thread, index as usize, updated_value)?;
                 Ok(updated_value)
             }
             _ => InternalError::new_stackless(format!(
@@ -524,14 +528,26 @@ impl<'a> Value<'a> {
     pub fn call(self, thread: &mut JsThread<'a>, args: &[Value<'a>]) -> JsResult<'a, Value<'a>> {
         match self.get_type() {
             ValueType::Object(obj) => obj.call(thread, args),
-            other => Err(thread
+            _ => Err(thread
                 .new_type_error(format!("{} is not a function", thread.debug_value(&self)))
                 .into()),
         }
     }
 
     pub(crate) fn strict_eq(self, other: Self) -> bool {
-        self.inner == other.inner && self.inner != Self::NAN.inner
+        let left = if self.inner == Self::MINUS_ZERO.inner {
+            Self::ZERO.inner
+        } else {
+            self.inner
+        };
+
+        let right = if other.inner == Self::MINUS_ZERO.inner {
+            Self::ZERO.inner
+        } else {
+            other.inner
+        };
+
+        left == right && self.inner != Self::NAN.inner
     }
 
     pub(crate) fn non_strict_eq(self, other: Self, frame: &mut JsThread<'a>) -> bool {

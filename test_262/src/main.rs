@@ -4,6 +4,7 @@ mod tree;
 extern crate anyhow;
 extern crate clap;
 extern crate colored;
+extern crate env_logger;
 extern crate glide_compiler;
 extern crate serde;
 extern crate serde_json;
@@ -37,6 +38,7 @@ fn bootstrap_harness<'a>() -> Realm<'a> {
         "./test262/harness/sta.js",
         "./test262/harness/assert.js",
         "./test262/harness/propertyHelper.js",
+        // "./empty.js",
     ] {
         let sta = read_to_string(file).unwrap();
         let sta_module = parse_input(&sta).unwrap();
@@ -230,6 +232,8 @@ struct TestResult {
 }
 
 fn main() {
+    env_logger::init();
+
     let matches = App::new("test_262")
         .arg(
             Arg::with_name("pattern")
@@ -268,12 +272,18 @@ fn main() {
                 .help("Run in verbose mode")
                 .short("v")
                 .long("verbose")
-                .default_value("false"),
+        )
+        .arg(
+            Arg::with_name("summary")
+                .help("Show summary")
+                .short("s")
+                .long("summary")
         )
         .get_matches();
 
     let pattern = matches.value_of("pattern");
-    let verbose = matches.value_of("verbose") == Some("true");
+    let verbose = matches.is_present("verbose");
+    let summary = matches.is_present("summary");
 
     ThreadPoolBuilder::new()
         .num_threads(8)
@@ -425,36 +435,40 @@ fn main() {
         })
         .collect();
 
-    previous.reduce(
-        |_depth, _key, leaf| {
-            if leaf.result == SuiteResult::Success {
-                (1, 1)
-            } else {
-                (0, 1)
-            }
-        },
-        |depth, key, branch| {
-            let mut total = 0;
-            let mut total_success = 0;
+    if summary {
+        previous.reduce(
+            |_depth, _key, leaf| {
+                if leaf.result == SuiteResult::Success {
+                    (1, 1)
+                } else if leaf.result == SuiteResult::Skip {
+                    (0, 0)
+                } else {
+                    (0, 1)
+                }
+            },
+            |depth, key, branch| {
+                let mut total = 0;
+                let mut total_success = 0;
 
-            for (success, count) in branch {
-                total += count;
-                total_success += success;
-            }
+                for (success, count) in branch {
+                    total += count;
+                    total_success += success;
+                }
 
-            println!(
-                "{}{:<30}{} {:>5}/{:>5}    {:3.3}%",
-                "  ".repeat(depth),
-                key,
-                "  ".repeat(15 - depth),
-                total_success,
-                total,
-                (total_success as f64) / (total as f64) * 100.0
-            );
+                println!(
+                    "{}{:<30}{} {:>5}/{:>5}    {:3.3}%",
+                    "  ".repeat(depth),
+                    key,
+                    "  ".repeat(15 - depth),
+                    total_success,
+                    total,
+                    (total_success as f64) / (total as f64) * 100.0
+                );
 
-            (total_success, total)
-        },
-    );
+                (total_success, total)
+            },
+        );
+    }
 
     if commit {
         write(

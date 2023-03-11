@@ -20,11 +20,7 @@ impl<'a, 'b> JsError<'a, 'b> {
                 self.thread.get_realm(),
                 "Constructor must have an object target",
             )
-            .set(
-                &mut self.thread.realm.objects,
-                self.thread.realm.constants.message,
-                message,
-            );
+            .set(self.thread, self.thread.realm.constants.message, message);
     }
 
     #[named("toString")]
@@ -54,11 +50,7 @@ impl<'a, 'b> TypeError<'a, 'b> {
                 self.thread.get_realm(),
                 "Constructor must have an object target",
             )
-            .set(
-                &mut self.thread.realm.objects,
-                self.thread.realm.constants.message,
-                message,
-            );
+            .set(self.thread, self.thread.realm.constants.message, message);
     }
 }
 
@@ -78,10 +70,6 @@ impl<'a, 'b> ReferenceError<'a, 'b> {
                 self.thread.get_realm(),
                 "Constructor must have an object target",
             )
-            .set(
-                &mut self.thread.realm.objects,
-                self.thread.realm.constants.message,
-                message,
-            );
+            .set(self.thread, self.thread.realm.constants.message, message);
     }
 }

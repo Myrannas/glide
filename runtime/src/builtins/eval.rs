@@ -38,6 +38,7 @@ pub(crate) fn eval<'a>(
                     return Err(err.into());
                 }
             };
+
             let current_function = frame.current_function();
             let locals = current_function.locals();
             let function = match compile_eval(locals.to_vec(), code) {

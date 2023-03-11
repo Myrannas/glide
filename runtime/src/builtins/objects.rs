@@ -1,9 +1,9 @@
-use crate::debugging::DebugWithRealm;
+use crate::debugging::X;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::Property;
-use crate::{JsObject, JsThread};
+use crate::{dv, JsObject, JsThread};
 use builtin::{constructor, named, prototype};
 
 pub(crate) struct JsObjectBase<'a, 'b> {
@@ -69,6 +69,26 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         Ok(object.into())
     }
 
+    #[named("keys")]
+    fn keys(thread: &mut JsThread<'a>, key: Value<'a>) -> JsResult<'a> {
+        let value = key.as_object(&thread.realm)?;
+
+        let keys = thread
+            .realm
+            .get_object(value)
+            .properties
+            .iter()
+            .filter(|(_, r)| r.is_enumerable())
+            .map(|(l, _)| Value::from(*l))
+            .collect();
+
+        Ok(thread
+            .realm
+            .wrappers
+            .wrap_array(&mut thread.realm.objects, keys)
+            .into())
+    }
+
     #[named("hasOwnProperty")]
     fn has_own_property(&mut self, key: Value<'a>) -> JsResult<'a, bool> {
         let result = match key.get_type() {
@@ -129,7 +149,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         let value: Value = descriptor.get_value(self.thread, constants.value)?;
 
         let enumerable = match descriptor.get_value(self.thread, constants.enumerable)? {
-            Value::UNDEFINED => true,
+            Value::UNDEFINED => false,
             other => other.to_bool(&self.thread.realm),
         };
         let writable = match descriptor.get_value(self.thread, constants.writable)? {
@@ -153,5 +173,10 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         );
 
         Ok(Value::UNDEFINED)
+    }
+
+    #[named("toString")]
+    fn to_string(&mut self) -> JsResult<'a> {
+        Ok(ValueType::String(self.thread.realm.strings.intern_native("[object Object]")).into())
     }
 }

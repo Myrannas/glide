@@ -6,7 +6,7 @@ use std::fmt::{Formatter, Write};
 use std::hash::{BuildHasher, Hasher};
 use std::rc::Rc;
 
-use crate::debugging::{DebugRepresentation, Renderer, Representation};
+use crate::debugging::{DebugRepresentation, Renderer, Representation, X};
 
 use super::string::JsPrimitiveString;
 use crate::object_pool::{ObjectPointer, ObjectPool};
@@ -314,6 +314,13 @@ impl<'a> Property<'a> {
             writable: true,
         }
     }
+
+    pub fn is_enumerable(&self) -> bool {
+        match self {
+            Property::DataDescriptor { enumerable, .. } => *enumerable,
+            Property::AccessorDescriptor { enumerable, .. } => *enumerable,
+        }
+    }
 }
 
 impl<'a> DebugRepresentation<'a> for JsObject<'a> {
@@ -374,6 +381,10 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
             //     renderer.render(&prototype)?;
             //     renderer.formatter.write_str("], ")?;
             // }
+        }
+
+        if self.indexed_properties.len() > 0 {
+            renderer.render(&self.indexed_properties)?;
         }
 
         Ok(())

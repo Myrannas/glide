@@ -17,6 +17,7 @@ impl<'a, 'b> JsPromise<'a, 'b> {
             .with_callable(BuiltIn {
                 context: None,
                 op: |_, _, _, _| Ok(None),
+                name: None,
             })
             .build();
 
@@ -24,6 +25,7 @@ impl<'a, 'b> JsPromise<'a, 'b> {
             .with_callable(BuiltIn {
                 context: None,
                 op: |_, _, _, _| Ok(None),
+                name: None,
             })
             .build();
 

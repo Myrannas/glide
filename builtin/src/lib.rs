@@ -84,7 +84,8 @@ impl ToTokens for Constructor {
                     #call_type;
 
                     Ok(None)
-                }
+                },
+                name: Some(strings.intern_native("#method_name"))
             }.into();
 
             constructor_object.set_construct(pool, constructor.clone());
@@ -122,7 +123,8 @@ impl ToTokens for StaticMethod {
                 op: |args, thread, receiver, context| {
                     #setup
                     #call
-                }
+                },
+                name: Some(strings.intern_native("#method_name"))
             }).with_prototype(function_prototype).build();
 
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
@@ -162,7 +164,8 @@ impl ToTokens for Method {
                 op: |args, thread, receiver, context| {
                     #setup
                     #call
-                }
+                },
+                name: Some(strings.intern_native("#method_name"))
             }).with_prototype(function_prototype).build();
 
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
@@ -200,7 +203,8 @@ impl ToTokens for Getter {
                     context: None,
                     op: |args, thread, receiver, context| {
                         #call
-                    }
+                    },
+                    name: Some(strings.intern_native("#method_name"))
                 }.into()),
                 None,
                 false,
@@ -315,7 +319,8 @@ impl ToTokens for Callable {
                     op: |args, thread, receiver, context| {
                         #setup
                         #call
-                    }
+                    },
+                    name: Some(strings.intern_native("#method_name"))
                 });
         };
 
