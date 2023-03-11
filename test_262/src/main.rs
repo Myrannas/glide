@@ -91,7 +91,11 @@ enum Outcome {
     Skip,
 }
 
-fn run_suite(suite: PathBuf, cost_limit: usize) -> Result<Outcome> {
+fn run_suite(
+    suite: PathBuf,
+    cost_limit: usize,
+    supported_features: &HashSet<String>,
+) -> Result<Outcome> {
     let Suite { module, details } = Suite::parse(suite)?;
 
     // let harness = AssertUnwindSafe(harness);
@@ -108,10 +112,8 @@ fn run_suite(suite: PathBuf, cost_limit: usize) -> Result<Outcome> {
     // println!("{:#?}", global);
     //
 
-    let supported_features = vec![].into_iter().collect::<HashSet<_>>();
-
     if let Some(features) = details.features.clone() {
-        let unsupported_features = features.difference(&supported_features);
+        let unsupported_features = features.difference(supported_features);
 
         if unsupported_features.count() > 0 {
             return Ok(Outcome::Skip);
@@ -120,8 +122,12 @@ fn run_suite(suite: PathBuf, cost_limit: usize) -> Result<Outcome> {
 
     if let Some(flags) = &details.flags {
         // panic!("{:?}", details);
+        let supported_flags = vec!["generated".to_string(), "onlyStrict".to_string()]
+            .into_iter()
+            .collect();
+        let diff = flags.difference(&supported_flags);
 
-        if flags.len() > 1 || !flags.contains("generated") {
+        if diff.count() > 0 {
             return Ok(Outcome::Skip);
         }
     }
@@ -316,6 +322,7 @@ fn main() {
     let success_time = Duration::from_micros(0);
     let is_profiling = matches.is_present("profile");
     let runs = if is_profiling { 500 } else { 1 };
+    let supported_features: HashSet<String> = vec![].into_iter().collect();
     let results: Vec<TestResult> = suites
         .par_iter()
         .map(|suite| {
@@ -330,6 +337,7 @@ fn main() {
             match run_suite(
                 suite.clone(),
                 matches.value_of("limit").unwrap().parse().unwrap(),
+                &supported_features,
             ) {
                 Ok(Outcome::Pass(time)) => {
                     if time != Duration::from_micros(0) {

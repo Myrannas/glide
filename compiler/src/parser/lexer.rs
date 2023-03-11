@@ -44,8 +44,20 @@ pub enum Token<'a> {
     #[token("+=")]
     AddAssign,
 
+    #[token("-=")]
+    SubAssign,
+
     #[token("*=")]
     MulAssign,
+
+    #[token("/=")]
+    DivAssign,
+
+    #[token("%=")]
+    ModAssign,
+
+    #[token("^=")]
+    ExpAssign,
 
     #[token("<=")]
     LessThanEqual,

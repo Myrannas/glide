@@ -737,6 +737,22 @@ fn parse_ternary<'a>(
     }
 }
 
+fn as_op_assign<'a>(
+    input: &mut LexerImpl<'a>,
+    reference: Reference<'a>,
+    context: ParseContext,
+    operator: BinaryOperator,
+) -> Result<'a, Expression<'a>> {
+    Ok(Expression::Assign {
+        assign_to: reference.clone(),
+        expression: Box::new(Expression::BinaryExpression {
+            left: Box::new(Expression::Reference(reference)),
+            right: Box::new(parse_expression(input, context)?),
+            operator,
+        }),
+    })
+}
+
 fn parse_assignment<'a>(
     input: &mut LexerImpl<'a>,
     context: ParseContext,
@@ -795,25 +811,27 @@ fn parse_assignment<'a>(
             }
             Some((Token::AddAssign, ..)) => {
                 input.next();
-                Ok(Expression::Assign {
-                    assign_to: reference.clone(),
-                    expression: Box::new(Expression::BinaryExpression {
-                        left: Box::new(Expression::Reference(reference)),
-                        right: Box::new(parse_expression(input, context)?),
-                        operator: BinaryOperator::Add,
-                    }),
-                })
+                as_op_assign(input, reference, context, BinaryOperator::Add)
+            }
+            Some((Token::SubAssign, ..)) => {
+                input.next();
+                as_op_assign(input, reference, context, BinaryOperator::Sub)
             }
             Some((Token::MulAssign, ..)) => {
                 input.next();
-                Ok(Expression::Assign {
-                    assign_to: reference.clone(),
-                    expression: Box::new(Expression::BinaryExpression {
-                        left: Box::new(Expression::Reference(reference)),
-                        right: Box::new(parse_expression(input, context)?),
-                        operator: BinaryOperator::Mul,
-                    }),
-                })
+                as_op_assign(input, reference, context, BinaryOperator::Mul)
+            }
+            Some((Token::DivAssign, ..)) => {
+                input.next();
+                as_op_assign(input, reference, context, BinaryOperator::Div)
+            }
+            Some((Token::ModAssign, ..)) => {
+                input.next();
+                as_op_assign(input, reference, context, BinaryOperator::Mod)
+            }
+            Some((Token::ExpAssign, ..)) => {
+                input.next();
+                as_op_assign(input, reference, context, BinaryOperator::Exponential)
             }
             _ => Ok(Expression::Reference(reference)),
         },
