@@ -1,11 +1,11 @@
 use crate::debugging::{DebugRepresentation, Renderer};
 use crate::pool::{Pool, PoolPointer};
-use crate::primordials::RuntimeHelpers;
+use crate::primordials::{Errors, RuntimeHelpers};
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
-use crate::values::object::Property;
-use crate::{JsObject, JsPrimitiveString, JsThread};
+use crate::values::object::{JsObjectState, Property};
+use crate::{ExecutionError, JsObject, JsPrimitiveString, JsThread};
 use better_any::{TidAble, TidExt};
 use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
@@ -251,22 +251,34 @@ impl<'a> ObjectPointer<'a> {
     ) -> JsResult<'a, ()> {
         let setter = {
             let object = thread.realm.objects.get_mut(self);
+            let state = object.state;
 
             match object.properties.get_mut(&key) {
                 Some(Property::DataDescriptor {
-                    writable: false, ..
+                    value: v,
+                    writable: true,
+                    ..
                 }) => {
-                    return Ok(());
-                }
-                Some(Property::DataDescriptor { value: v, .. }) => {
                     *v = value;
                     return Ok(());
                 }
                 Some(Property::AccessorDescriptor {
                     setter: Some(_), ..
                 }) => true,
-                None => return Ok(object.set(key, value)),
-                _ => false,
+                None => {
+                    return if matches!(state, JsObjectState::Extensible) {
+                        Ok(object.set(key, value))
+                    } else {
+                        Err(ExecutionError::TypeError(
+                            "Cannot add new properties".to_string(),
+                        ))
+                    }
+                }
+                _ => {
+                    return Err(ExecutionError::TypeError(
+                        "Property not writable".to_string(),
+                    ))
+                }
             }
         };
 
@@ -333,10 +345,16 @@ impl<'a> ObjectPointer<'a> {
         writable: bool,
         enumerable: bool,
         configurable: bool,
-    ) {
+    ) -> JsResult<'a, ()> {
         let object = pool.get_mut(self);
 
-        object.define_value_property(key, value, writable, enumerable, configurable)
+        if matches!(object.state, JsObjectState::Extensible) {
+            Ok(object.define_value_property(key, value, writable, enumerable, configurable))
+        } else {
+            Err(ExecutionError::TypeError(
+                "Cannot define property as object is not extensible".to_string(),
+            ))
+        }
     }
 
     pub fn define_property(
@@ -347,10 +365,16 @@ impl<'a> ObjectPointer<'a> {
         setter: Option<FunctionReference<'a>>,
         enumerable: bool,
         configurable: bool,
-    ) {
+    ) -> JsResult<'a, ()> {
         let object = pool.get_mut(self);
 
-        object.define_property(key, getter, setter, enumerable, configurable)
+        if matches!(object.state, JsObjectState::Extensible) {
+            Ok(object.define_property(key, getter, setter, enumerable, configurable))
+        } else {
+            Err(ExecutionError::TypeError(
+                "Cannot define property as object is not extensible".to_string(),
+            ))
+        }
     }
 
     pub fn unwrap(self, pool: &ObjectPool<'a>) -> Option<Value<'a>> {

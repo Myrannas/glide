@@ -2,7 +2,7 @@ use crate::debugging::X;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
-use crate::values::object::Property;
+use crate::values::object::{JsObjectState, Property};
 use crate::{dv, JsObject, JsThread};
 use builtin::{constructor, named, prototype};
 
@@ -178,5 +178,88 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
     #[named("toString")]
     fn to_string(&mut self) -> JsResult<'a> {
         Ok(ValueType::String(self.thread.realm.strings.intern_native("[object Object]")).into())
+    }
+
+    fn freeze(&mut self, obj: Value<'a>) -> JsResult<'a> {
+        let object = if let ValueType::Object(obj) = obj.get_type() {
+            obj
+        } else {
+            return Err(self
+                .thread
+                .new_type_error("Object.seal called on non-object")
+                .into());
+        };
+
+        let js_object = self.thread.realm.objects.get_mut(object);
+
+        for (_, property) in &mut js_object.properties {
+            property.set_writable(false);
+        }
+
+        self.seal(obj)
+    }
+
+    fn seal(&mut self, obj: Value<'a>) -> JsResult<'a> {
+        let object = if let ValueType::Object(obj) = obj.get_type() {
+            obj
+        } else {
+            return Err(self
+                .thread
+                .new_type_error("Object.seal called on non-object")
+                .into());
+        };
+
+        let js_object = self.thread.realm.objects.get_mut(object);
+
+        for (_, property) in &mut js_object.properties {
+            property.set_configurable(false);
+        }
+
+        self.prevent_extensibility(obj)
+    }
+
+    #[named("preventExtensibility")]
+    fn prevent_extensibility(&mut self, obj: Value<'a>) -> JsResult<'a> {
+        let object = if let ValueType::Object(obj) = obj.get_type() {
+            obj
+        } else {
+            return Err(self
+                .thread
+                .new_type_error("Object.preventExtensibility called on non-object")
+                .into());
+        };
+
+        let js_object = self.thread.realm.objects.get_mut(object);
+
+        js_object.state = JsObjectState::NotExtensible;
+
+        Ok(Value::UNDEFINED)
+    }
+
+    #[named("isSealed")]
+    fn is_sealed(&mut self, obj: Value<'a>) -> JsResult<'a, bool> {
+        let object = if let ValueType::Object(obj) = obj.get_type() {
+            obj
+        } else {
+            return Err(self
+                .thread
+                .new_type_error("Object.is_sealed called on non-object")
+                .into());
+        };
+
+        let js_object = self.thread.realm.objects.get(object);
+
+        let matches: bool = matches!(js_object.state, JsObjectState::NotExtensible);
+        Ok(matches)
+    }
+
+    #[named("isFrozen")]
+    fn is_frozen(&mut self, obj: Value<'a>) -> JsResult<'a, bool> {
+        self.is_sealed(obj)
+    }
+
+    #[named("isExtensible")]
+    fn is_extensible(&mut self, obj: Value<'a>) -> JsResult<'a, bool> {
+        self.is_sealed(obj).map(|v| !v)
     }
 }

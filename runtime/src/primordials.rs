@@ -308,24 +308,54 @@ impl<'a> Primitives<'a> {
             function_prototype_base,
         );
 
-        number_constructor.set_ignore_setters(object_pool, constants.nan, Value::NAN);
-        number_constructor.set_ignore_setters(
+        number_constructor.define_value_property(
+            object_pool,
+            constants.nan,
+            Value::NAN,
+            false,
+            false,
+            false,
+        );
+        number_constructor.define_value_property(
             object_pool,
             constants.negative_infinity,
             f64::NEG_INFINITY.into(),
+            false,
+            false,
+            false,
         );
-        number_constructor.set_ignore_setters(
+        number_constructor.define_value_property(
             object_pool,
             constants.positive_infinity,
             f64::INFINITY.into(),
+            false,
+            false,
+            false,
         );
-        number_constructor.set_ignore_setters(
+        number_constructor.define_value_property(
             object_pool,
             constants.min_value,
             f64::MIN_POSITIVE.into(),
+            false,
+            false,
+            false,
         );
-        number_constructor.set_ignore_setters(object_pool, constants.max_value, f64::MAX.into());
-        number_constructor.set_ignore_setters(object_pool, constants.epsilon, f64::EPSILON.into());
+        number_constructor.define_value_property(
+            object_pool,
+            constants.max_value,
+            f64::MAX.into(),
+            false,
+            false,
+            false,
+        );
+        number_constructor.define_value_property(
+            object_pool,
+            constants.epsilon,
+            f64::EPSILON.into(),
+            false,
+            false,
+            false,
+        );
 
         let (_, array_prototype) = array::JsArray::bind_thread(
             global_this,

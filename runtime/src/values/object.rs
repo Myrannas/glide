@@ -19,6 +19,12 @@ use crate::values::nan::Value;
 //     fn downcast_mut<'b, T: 'a>(&'b self) -> Option<&'b mut T>;
 // }
 
+#[derive(Clone, Copy)]
+pub(crate) enum JsObjectState {
+    Extensible,
+    NotExtensible,
+}
+
 #[derive(Clone)]
 pub struct JsObject<'a> {
     pub(crate) properties: HashMap<JsPrimitiveString, Property<'a>, PropertyHasher>,
@@ -30,6 +36,7 @@ pub struct JsObject<'a> {
     pub(crate) callable: Option<FunctionReference<'a>>,
     pub(crate) construct: Option<FunctionReference<'a>>,
     pub(crate) native_handle: Option<Rc<RefCell<dyn Tid<'a>>>>,
+    pub(crate) state: JsObjectState,
 }
 
 impl<'a> Default for Property<'a> {
@@ -155,6 +162,7 @@ impl<'a> Default for JsObject<'a> {
             construct: None,
             native_handle: None,
             private_properties: Vec::new(),
+            state: JsObjectState::Extensible,
         }
     }
 }
@@ -319,6 +327,24 @@ impl<'a> Property<'a> {
         match self {
             Property::DataDescriptor { enumerable, .. } => *enumerable,
             Property::AccessorDescriptor { enumerable, .. } => *enumerable,
+        }
+    }
+
+    pub(crate) fn set_configurable(&mut self, to: bool) {
+        match self {
+            Property::DataDescriptor { configurable, .. } => {
+                *configurable = to;
+            }
+            Property::AccessorDescriptor { configurable, .. } => *configurable = to,
+        }
+    }
+
+    pub(crate) fn set_writable(&mut self, to: bool) {
+        match self {
+            Property::DataDescriptor { writable, .. } => {
+                *writable = to;
+            }
+            _ => {}
         }
     }
 }
