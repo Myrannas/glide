@@ -322,7 +322,7 @@ fn main() {
     let success_time = Duration::from_micros(0);
     let is_profiling = matches.is_present("profile");
     let runs = if is_profiling { 500 } else { 1 };
-    let supported_features: HashSet<String> = vec![].into_iter().collect();
+    let supported_features: HashSet<String> = vec!["Symbol".to_string()].into_iter().collect();
     let results: Vec<TestResult> = suites
         .par_iter()
         .map(|suite| {

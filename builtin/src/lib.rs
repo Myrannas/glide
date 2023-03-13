@@ -118,16 +118,16 @@ impl ToTokens for StaticMethod {
         });
 
         let output = quote! {
+            let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
             let method = crate::JsObject::builder(pool).with_callable(crate::BuiltIn {
                 context: None,
                 op: |args, thread, receiver, context| {
                     #setup
                     #call
                 },
-                name: Some(strings.intern_native("#method_name"))
+                name: Some(name)
             }).with_prototype(function_prototype).build();
 
-            let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
             method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
             method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true);
             constructor_object.define_value_property(pool, name, Value::from(method), true, false, true);
@@ -159,16 +159,15 @@ impl ToTokens for Method {
         });
 
         let output = quote! {
+            let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
             let method = crate::JsObject::builder(pool).with_callable(crate::BuiltIn {
                 context: None,
                 op: |args, thread, receiver, context| {
                     #setup
                     #call
                 },
-                name: Some(strings.intern_native("#method_name"))
+                name: Some(name)
             }).with_prototype(function_prototype).build();
-
-            let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
             method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true);
             method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
             prototype.define_value_property(pool, name, Value::from(method), true, false, true);
@@ -196,15 +195,16 @@ impl ToTokens for Getter {
         });
 
         let output = quote! {
+            let name = strings.intern_native(#method_name_string);
             prototype.define_property(
                 pool,
-                strings.intern_native(#method_name_string),
+                name,
                 Some(crate::BuiltIn {
                     context: None,
                     op: |args, thread, receiver, context| {
                         #call
                     },
-                    name: Some(strings.intern_native("#method_name"))
+                    name: Some(name)
                 }.into()),
                 None,
                 false,
@@ -328,12 +328,43 @@ impl ToTokens for Callable {
     }
 }
 
+struct Constant {
+    js_name: String,
+    type_name: syn::Ident,
+    method_name: syn::Ident,
+}
+
+impl ToTokens for Constant {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        let type_name = &self.type_name;
+        let method_name = &self.method_name;
+        let js_name = &self.js_name;
+
+        let output = quote! {
+            // Constant #js_name
+            let value = <#type_name>::#method_name(pool, strings, symbols);
+            let name = #js_name;
+            constructor_object.define_value_property(
+                pool,
+                strings.intern_native(name),
+                value,
+                false,
+                false,
+                false
+            );
+        };
+
+        output.to_tokens(tokens);
+    }
+}
+
 enum Item {
     Constructor(Constructor),
     StaticMethod(StaticMethod),
     Method(Method),
     Getter(Getter),
     Callable(Callable),
+    Constant(Constant),
 }
 
 impl ToTokens for Item {
@@ -344,6 +375,7 @@ impl ToTokens for Item {
             Item::StaticMethod(constructor) => constructor.to_tokens(tokens),
             Item::Getter(constructor) => constructor.to_tokens(tokens),
             Item::Callable(constructor) => constructor.to_tokens(tokens),
+            Item::Constant(constant) => constant.to_tokens(tokens),
         }
     }
 }
@@ -370,6 +402,11 @@ pub fn varargs(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn constructor(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn constant(_attr: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
@@ -430,6 +467,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             let mut is_callable = false;
             let mut is_varargs = false;
             let mut is_constructor = false;
+            let mut is_constant = false;
             let mut args = Vec::new();
             for input in inputs.iter() {
                 match input {
@@ -463,6 +501,8 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                         is_varargs = true;
                     } else if path == "constructor" {
                         is_constructor = true;
+                    } else if path == "constant" {
+                        is_constant = true;
                     }
                 }
             }
@@ -495,7 +535,13 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 BindingReturnType::None
             };
 
-            if is_constructor {
+            if is_constant {
+                methods.push(Item::Constant(Constant {
+                    type_name: type_name.clone(),
+                    js_name: identifier,
+                    method_name: ident.clone(),
+                }))
+            } else if is_constructor {
                 if !uses_self {
                     return TokenStream::from(quote! {
                         compile_error!("Must reference self in a constructor");
@@ -578,9 +624,10 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             fn bind<'c>(
                 pool: &mut crate::object_pool::ObjectPool<'a>,
                 strings: &mut crate::string_pool::StringPool,
+                symbols: &mut crate::values::symbols::SymbolRegistry<'a>,
                 constructor_object: crate::object_pool::ObjectPointer<'a>,
                 prototype: crate::object_pool::ObjectPointer<'a>,
-                function_prototype: crate::object_pool::ObjectPointer<'a>
+                function_prototype: crate::object_pool::ObjectPointer<'a>,
             ) -> crate::JsPrimitiveString {
                 #(#methods)*
 

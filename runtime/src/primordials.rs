@@ -1,6 +1,6 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, set, string};
-use crate::builtins::{console, map};
+use crate::builtins::{console, map, symbol};
 use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
@@ -8,6 +8,7 @@ use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
 use crate::values::object::{JsObject, Property};
 use crate::values::string::JsPrimitiveString;
+use crate::values::symbols::SymbolRegistry;
 use crate::{BuiltIn, JsThread, ValueType};
 
 trait Helpers<'a> {
@@ -64,6 +65,7 @@ pub struct Realm<'a> {
     pub(crate) objects: ObjectPool<'a>,
     pub(crate) strings: StringPool,
     pub(crate) constants: Constants,
+    pub(crate) symbols: SymbolRegistry<'a>,
 }
 
 #[derive(Clone, Copy)]
@@ -71,13 +73,9 @@ pub struct Constants {
     pub r#true: StringPointer,
     pub r#false: StringPointer,
     pub undefined: StringPointer,
+    pub symbol: StringPointer,
     pub nan: StringPointer,
     pub infinity: StringPointer,
-    pub negative_infinity: StringPointer,
-    pub positive_infinity: StringPointer,
-    pub min_value: StringPointer,
-    pub max_value: StringPointer,
-    pub epsilon: StringPointer,
     pub null: StringPointer,
     pub to_string: StringPointer,
     pub prototype: StringPointer,
@@ -124,12 +122,8 @@ impl Constants {
             object: string_pool.intern_native("object"),
             function: string_pool.intern_native("function"),
             message: string_pool.intern_native("message"),
+            symbol: string_pool.intern_native("symbol"),
             infinity: string_pool.intern_native("Infinity"),
-            negative_infinity: string_pool.intern_native("NEGATIVE_INFINITY"),
-            positive_infinity: string_pool.intern_native("POSITIVE_INFINITY"),
-            min_value: string_pool.intern_native("MIN_VALUE"),
-            max_value: string_pool.intern_native("MAX_VALUE"),
-            epsilon: string_pool.intern_native("EPSILON"),
         }
     }
 }
@@ -164,21 +158,29 @@ impl<'a> Realm<'a> {
         let global_this = object_pool.allocate(JsObject::new());
         let mut string_pool = StringPool::new();
         let constants = Constants::new(&mut string_pool);
+        let mut symbols = SymbolRegistry::new();
 
-        let primitives =
-            Primitives::init(global_this, &mut object_pool, &mut string_pool, &constants);
+        let primitives = Primitives::init(
+            global_this,
+            &mut object_pool,
+            &mut string_pool,
+            &constants,
+            &mut symbols,
+        );
         let errors = Errors::init(
             global_this,
             primitives.object,
             primitives.function,
             &mut object_pool,
             &mut string_pool,
+            &mut symbols,
         );
 
         super::builtins::math::JsMath::bind_thread(
             global_this,
             &mut object_pool,
             &mut string_pool,
+            &mut symbols,
             primitives.object,
             primitives.function,
         );
@@ -241,6 +243,7 @@ impl<'a> Realm<'a> {
             objects: object_pool,
             strings: string_pool,
             constants,
+            symbols,
         }
     }
 
@@ -270,6 +273,7 @@ impl<'a> Primitives<'a> {
         object_pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
         constants: &Constants,
+        symbols: &mut SymbolRegistry<'a>,
     ) -> Primitives<'a> {
         let function_prototype_base = JsObject::builder(object_pool).build();
         let object_prototype_base = JsObject::builder(object_pool).build();
@@ -278,6 +282,7 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -288,6 +293,7 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             function_prototype_base,
             function_prototype_base,
         );
@@ -296,6 +302,16 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
+        let (symbol_contructor, _) = symbol::JsSymbol::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -304,63 +320,16 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
-        );
-
-        number_constructor.define_value_property(
-            object_pool,
-            constants.nan,
-            Value::NAN,
-            false,
-            false,
-            false,
-        );
-        number_constructor.define_value_property(
-            object_pool,
-            constants.negative_infinity,
-            f64::NEG_INFINITY.into(),
-            false,
-            false,
-            false,
-        );
-        number_constructor.define_value_property(
-            object_pool,
-            constants.positive_infinity,
-            f64::INFINITY.into(),
-            false,
-            false,
-            false,
-        );
-        number_constructor.define_value_property(
-            object_pool,
-            constants.min_value,
-            f64::MIN_POSITIVE.into(),
-            false,
-            false,
-            false,
-        );
-        number_constructor.define_value_property(
-            object_pool,
-            constants.max_value,
-            f64::MAX.into(),
-            false,
-            false,
-            false,
-        );
-        number_constructor.define_value_property(
-            object_pool,
-            constants.epsilon,
-            f64::EPSILON.into(),
-            false,
-            false,
-            false,
         );
 
         let (_, array_prototype) = array::JsArray::bind_thread(
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -369,6 +338,7 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -377,6 +347,7 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -385,6 +356,7 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -393,6 +365,7 @@ impl<'a> Primitives<'a> {
             global_this,
             object_pool,
             strings,
+            symbols,
             object_prototype_base,
             function_prototype_base,
         );
@@ -623,11 +596,13 @@ impl<'a> Errors<'a> {
         function_prototype: ObjectPointer<'a>,
         pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
     ) -> Errors<'a> {
         let (.., error_prototype) = errors::JsError::bind_thread(
             global_this,
             pool,
             strings,
+            symbols,
             object_prototype,
             function_prototype,
         );
@@ -640,6 +615,7 @@ impl<'a> Errors<'a> {
             global_this,
             pool,
             strings,
+            symbols,
             error_prototype,
             function_prototype,
         );
@@ -647,6 +623,7 @@ impl<'a> Errors<'a> {
             global_this,
             pool,
             strings,
+            symbols,
             error_prototype,
             function_prototype,
         );

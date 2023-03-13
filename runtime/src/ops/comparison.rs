@@ -108,6 +108,7 @@ pub(crate) fn type_of(thread: &mut JsThread) {
         ValueType::String(..) => constants.string,
         ValueType::Float => constants.number,
         ValueType::Undefined => constants.undefined,
+        ValueType::Symbol(_) => constants.symbol,
         _ => unreachable!("Unexpected runtime value for typeof"),
     };
 
@@ -131,8 +132,8 @@ fn numeric_comparison_op(
             thread.push_stack(result)
         }
         _ => thread.push_stack(num_op(
-            left.to_number(&thread.realm),
-            right.to_number(&thread.realm),
+            catch!(thread, left.to_number(&thread.realm)),
+            catch!(thread, right.to_number(&thread.realm)),
         )),
     }
 

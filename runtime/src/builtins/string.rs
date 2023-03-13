@@ -41,7 +41,7 @@ impl<'a, 'b> JsString<'a, 'b> {
 
     #[named("charAt")]
     fn char_at(&mut self, index: Option<Value<'a>>) -> JsResult<'a, Value<'a>> {
-        let start_at: f64 = index.unwrap_or(Value::ZERO).to_number(&self.thread.realm);
+        let start_at: f64 = index.unwrap_or(Value::ZERO).to_number(&self.thread.realm)?;
         let end_at = (start_at + 1.0).into();
         let start_at = start_at.into();
 
@@ -61,8 +61,10 @@ impl<'a, 'b> JsString<'a, 'b> {
             .unwrap_or_default()
             .to_string(self.thread)?;
 
-        let start_at = start_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm);
-        let end_at = end_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm);
+        let start_at = start_at
+            .unwrap_or(Value::ZERO)
+            .to_usize(&self.thread.realm)?;
+        let end_at = end_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm)?;
 
         let str = self.thread.realm.strings.get(str).as_ref();
 
@@ -84,8 +86,10 @@ impl<'a, 'b> JsString<'a, 'b> {
             .unwrap_or_default()
             .to_string(self.thread)?;
 
-        let start_at = start_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm);
-        let end_at = end_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm);
+        let start_at = start_at
+            .unwrap_or(Value::ZERO)
+            .to_usize(&self.thread.realm)?;
+        let end_at = end_at.unwrap_or(Value::ZERO).to_usize(&self.thread.realm)?;
 
         let str = self.thread.realm.strings.get(str).as_ref();
 

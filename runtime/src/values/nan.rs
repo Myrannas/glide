@@ -40,6 +40,7 @@ pub enum ValueType<'a> {
     Local(u32),
     StringReference(JsPrimitiveString),
     NumberReference(u32),
+    Symbol(u32),
 }
 
 const DOWNSHIFT: u64 = 47;
@@ -53,6 +54,7 @@ const BOOLEAN_FALSE_TAG: u64 = FLOAT_NAN_TAG + 6;
 const LOCAL_TAG: u64 = FLOAT_NAN_TAG + 7;
 const STRING_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 8;
 const NUMBER_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 9;
+const SYMBOL_TAG: u64 = FLOAT_NAN_TAG + 10;
 
 impl<'a> From<ValueType<'a>> for Value<'a> {
     fn from(value: ValueType<'a>) -> Self {
@@ -102,6 +104,10 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
             }
             ValueType::NumberReference(number_reference) => Value {
                 inner: (NUMBER_REFERENCE_TAG << DOWNSHIFT) + u64::from(number_reference),
+                phantom: PhantomData,
+            },
+            ValueType::Symbol(id) => Value {
+                inner: (SYMBOL_TAG << DOWNSHIFT) + u64::from(id),
                 phantom: PhantomData,
             },
             ValueType::Float => panic!("Unreachable"),
@@ -180,6 +186,7 @@ impl<'a> Value<'a> {
                 ValueType::StringReference(StringPointer::new(self.inner as u32))
             }
             NUMBER_REFERENCE_TAG => ValueType::NumberReference(self.inner as u32),
+            SYMBOL_TAG => ValueType::Symbol(self.inner as u32),
             _ => ValueType::Float,
         }
     }
@@ -265,6 +272,14 @@ impl<'a, 'b> DebugRepresentation<'a> for Value<'a> {
                 render.internal_key("key")?;
                 render.string_literal(render.realm.strings.get(reference).as_ref())?;
                 render.end_internal()?;
+                Ok(())
+            }
+            (.., ValueType::Symbol(id)) => {
+                render.literal("Symbol(")?;
+                if let Some(name) = render.realm.symbols.get_name(id) {
+                    render.string_literal(render.realm.strings.get(name).as_ref())?;
+                }
+                render.literal(")")?;
                 Ok(())
             }
             (Representation::Debug, ValueType::Local(local)) => {
@@ -431,6 +446,19 @@ impl<'a> Value<'a> {
                     .new_type_error("Cannot convert object to primitive value")
                     .into());
             }
+            ValueType::Symbol(symbol) => {
+                if let Some(name) = thread.realm.symbols.get_name(symbol) {
+                    let symbol_name = thread.realm.strings.intern(format!(
+                        "Symbol({})",
+                        thread.realm.strings.get(name).as_ref()
+                    ));
+                    return Ok(symbol_name);
+                } else {
+                    return Err(ExecutionError::InternalError(InternalError::new_stackless(
+                        "Unable to locate name for symbol",
+                    )));
+                }
+            }
             _ => todo!("Unsupported types {:?}", thread.debug_value(&self)),
         };
 
@@ -476,33 +504,36 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub(crate) fn to_number(self, realm: &Realm) -> f64 {
+    pub(crate) fn to_number(self, realm: &Realm) -> JsResult<'a, f64> {
         match self.get_type() {
-            ValueType::Undefined | ValueType::Object(..) => f64::NAN,
-            ValueType::Null | ValueType::Boolean(false) => 0.0,
-            ValueType::Boolean(true) => 1.0,
-            ValueType::Float => self.float(),
+            ValueType::Undefined | ValueType::Object(..) => Ok(f64::NAN),
+            ValueType::Null | ValueType::Boolean(false) => Ok(0.0),
+            ValueType::Boolean(true) => Ok(1.0),
+            ValueType::Float => Ok(self.float()),
             ValueType::StringReference(..) | ValueType::NumberReference(..) => {
                 todo!("References are not supported")
             }
-            ValueType::String(value) => realm
+            ValueType::String(value) => Ok(realm
                 .strings
                 .get(value)
                 .as_ref()
                 .parse()
-                .unwrap_or(f64::NAN),
+                .unwrap_or(f64::NAN)),
+            ValueType::Symbol(_) => Err(ExecutionError::TypeError(
+                "Can't convert a Symbol value to a number".to_owned(),
+            )),
             ValueType::Local(..) => panic!("Can't convert a local runtime value to a number"),
         }
     }
 
-    pub(crate) fn to_usize(self, realm: &Realm) -> usize {
-        let value: f64 = self.to_number(realm);
+    pub(crate) fn to_usize(self, realm: &Realm) -> JsResult<'a, usize> {
+        let value: f64 = self.to_number(realm)?;
 
-        value.trunc() as usize
+        Ok(value.trunc() as usize)
     }
 
-    pub(crate) fn to_u32(self, realm: &Realm) -> u32 {
-        let input: f64 = self.to_number(realm);
+    pub(crate) fn to_u32(self, realm: &Realm) -> JsResult<'a, u32> {
+        let input: f64 = self.to_number(realm)?;
 
         let f_val = match input {
             f if f.is_nan() => 0.0,
@@ -510,11 +541,11 @@ impl<'a> Value<'a> {
             input => input,
         };
 
-        f_val.abs() as u32
+        Ok(f_val.abs() as u32)
     }
 
-    pub(crate) fn to_i32(self, realm: &Realm) -> i32 {
-        let input: f64 = self.to_number(realm);
+    pub(crate) fn to_i32(self, realm: &Realm) -> JsResult<'a, i32> {
+        let input: f64 = self.to_number(realm)?;
 
         let f_val = match input {
             f if f.is_nan() => 0.0,
@@ -522,7 +553,7 @@ impl<'a> Value<'a> {
             input => input,
         };
 
-        f_val as i32
+        Ok(f_val as i32)
     }
 
     pub fn call(self, thread: &mut JsThread<'a>, args: &[Value<'a>]) -> JsResult<'a, Value<'a>> {

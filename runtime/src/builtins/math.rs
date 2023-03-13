@@ -1,4 +1,5 @@
 use crate::debugging::DebugWithRealm;
+use crate::result::JsResult;
 use crate::values::nan::Value;
 use crate::JsThread;
 use builtin::{named, prototype, varargs};
@@ -15,203 +16,203 @@ impl<'a, 'b> JsMath {
         Self {}
     }
 
-    fn floor(thread: &mut JsThread<'a>, value1: Value<'a>) -> Value<'a> {
-        let number: f64 = value1.to_number(&thread.realm);
+    fn floor(thread: &mut JsThread<'a>, value1: Value<'a>) -> JsResult<'a> {
+        let number: f64 = value1.to_number(&thread.realm)?;
 
-        Value::from(number.floor())
+        Ok(Value::from(number.floor()))
     }
 
-    fn ceil(thread: &mut JsThread<'a>, value1: Value<'a>) -> Value<'a> {
-        let number: f64 = value1.to_number(&thread.realm);
+    fn ceil(thread: &mut JsThread<'a>, value1: Value<'a>) -> JsResult<'a> {
+        let number: f64 = value1.to_number(&thread.realm)?;
 
-        Value::from(number.ceil())
+        Ok(Value::from(number.ceil()))
     }
 
-    fn pow(thread: &mut JsThread<'a>, value1: Value<'a>, value2: Value<'a>) -> Value<'a> {
-        let number: f64 = value1.to_number(&thread.realm);
-        let number2: f64 = value2.to_number(&thread.realm);
+    fn pow(thread: &mut JsThread<'a>, value1: Value<'a>, value2: Value<'a>) -> JsResult<'a> {
+        let number: f64 = value1.to_number(&thread.realm)?;
+        let number2: f64 = value2.to_number(&thread.realm)?;
 
         let result: Value = number.powf(number2).into();
 
-        result
+        Ok(result)
     }
 
-    fn round(thread: &mut JsThread<'a>, value1: Value<'a>) -> Value<'a> {
-        let number: f64 = value1.to_number(&thread.realm);
+    fn round(thread: &mut JsThread<'a>, value1: Value<'a>) -> JsResult<'a> {
+        let number: f64 = value1.to_number(&thread.realm)?;
 
-        Value::from(number.round())
+        Ok(Value::from(number.round()))
     }
 
-    fn trunc(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn trunc(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.trunc().into()
+        Ok(result.trunc().into())
     }
 
     fn random(_: &mut JsThread<'a>) -> f64 {
         random()
     }
 
-    fn sin(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn sin(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.sin().into()
+        Ok(result.sin().into())
     }
 
-    fn cos(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn cos(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.cos().into()
+        Ok(result.cos().into())
     }
 
-    fn tan(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn tan(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.tan().into()
+        Ok(result.tan().into())
     }
 
-    fn sinh(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn sinh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.sinh().into()
+        Ok(result.sinh().into())
     }
 
-    fn cosh(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn cosh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.cosh().into()
+        Ok(result.cosh().into())
     }
 
-    fn tanh(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn tanh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.tanh().into()
+        Ok(result.tanh().into())
     }
 
-    fn sqrt(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn sqrt(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.sqrt().into()
+        Ok(result.sqrt().into())
     }
 
-    fn sign(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn sign(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.signum().into()
+        Ok(result.signum().into())
     }
 
-    fn log2(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn log2(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.log2().into()
+        Ok(result.log2().into())
     }
 
-    fn log10(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn log10(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.log10().into()
+        Ok(result.log10().into())
     }
 
-    fn log(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn log(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.ln().into()
+        Ok(result.ln().into())
     }
 
-    fn log1p(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn log1p(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.ln_1p().into()
+        Ok(result.ln_1p().into())
     }
 
-    fn expm1(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn expm1(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.exp_m1().into()
+        Ok(result.exp_m1().into())
     }
 
-    fn exp(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn exp(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.exp().into()
+        Ok(result.exp().into())
     }
 
-    fn cbrt(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn cbrt(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.cbrt().into()
+        Ok(result.cbrt().into())
     }
 
-    fn atanh(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn atanh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.atanh().into()
+        Ok(result.atanh().into())
     }
 
-    fn atan2(thread: &mut JsThread<'a>, value: Value<'a>, other: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
-        let other = other.to_number(&thread.realm);
+    fn atan2(thread: &mut JsThread<'a>, value: Value<'a>, other: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
+        let other = other.to_number(&thread.realm)?;
 
-        result.atan2(other).into()
+        Ok(result.atan2(other).into())
     }
 
-    fn acosh(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn acosh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.acosh().into()
+        Ok(result.acosh().into())
     }
 
-    fn atan(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn atan(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.atan().into()
+        Ok(result.atan().into())
     }
 
-    fn asin(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn asin(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.asin().into()
+        Ok(result.asin().into())
     }
 
-    fn acos(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn acos(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.acos().into()
+        Ok(result.acos().into())
     }
 
-    fn abs(thread: &mut JsThread<'a>, value: Value<'a>) -> Value<'a> {
-        let result = value.to_number(&thread.realm);
+    fn abs(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
 
-        result.abs().into()
+        Ok(result.abs().into())
     }
 
     #[varargs]
-    fn min(thread: &mut JsThread<'a>, args: Vec<Value<'a>>) -> Value<'a> {
+    fn min(thread: &mut JsThread<'a>, args: Vec<Value<'a>>) -> JsResult<'a> {
         let mut min = f64::INFINITY;
 
         for value in &args {
-            let value = value.to_number(&thread.realm);
+            let value = value.to_number(&thread.realm)?;
 
             if value < min {
                 min = value;
             }
         }
 
-        min.into()
+        Ok(min.into())
     }
 
     #[varargs]
-    fn max(thread: &mut JsThread<'a>, args: Vec<Value<'a>>) -> Value<'a> {
+    fn max(thread: &mut JsThread<'a>, args: Vec<Value<'a>>) -> JsResult<'a> {
         let mut min = f64::NEG_INFINITY;
 
         for value in &args {
-            let value = value.to_number(&thread.realm);
+            let value = value.to_number(&thread.realm)?;
 
             if value > min {
                 min = value;
             }
         }
 
-        min.into()
+        Ok(min.into())
     }
 }

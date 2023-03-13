@@ -239,6 +239,7 @@ impl<'a> WhitespaceTrackingLexer<'a> {
     pub(crate) fn expect_id(&mut self) -> Result<'a, &'a str> {
         match self.next() {
             Some((Token::Id(id), ..)) => Ok(id),
+            Some((Token::For, ..)) => Ok("for"),
             other => self.expected(&[Token::Id("")], other.unwrap_or((Token::EndOfFile, 0..0))),
         }
     }

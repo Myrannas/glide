@@ -110,6 +110,7 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
         if let ValueType::Object(object) = value.get_type() {
             target.set_prototype(object);
         }
+    } else {
     }
 
     target.set(thread.realm.constants.constructor, resolved_value);

@@ -18,6 +18,7 @@ pub(crate) mod string;
 
 #[cfg(feature = "eval")]
 pub(crate) mod eval;
+pub(crate) mod symbol;
 
 #[inline]
 pub(crate) fn native_target<'a, 'b, T: TidAble<'a>>(

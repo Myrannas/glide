@@ -1,5 +1,6 @@
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::StringPool;
+use crate::values::symbols::SymbolRegistry;
 use crate::Value;
 use crate::{JsObject, JsPrimitiveString};
 
@@ -7,6 +8,7 @@ pub(crate) trait Prototype<'a> {
     fn bind<'b>(
         pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
         object: ObjectPointer<'a>,
         prototype: ObjectPointer<'a>,
         function_prototype: ObjectPointer<'a>,
@@ -16,6 +18,7 @@ pub(crate) trait Prototype<'a> {
         global_this: ObjectPointer<'a>,
         pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
         object_prototype: ObjectPointer<'a>,
         function_prototype: ObjectPointer<'a>,
     ) -> (ObjectPointer<'a>, ObjectPointer<'a>) {
@@ -40,6 +43,7 @@ pub(crate) trait Prototype<'a> {
         let name = Self::bind(
             pool,
             strings,
+            symbols,
             constructor_object,
             prototype,
             function_prototype,
@@ -61,6 +65,7 @@ pub(crate) trait Prototype<'a> {
         global_this: ObjectPointer<'a>,
         pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
         prototype: ObjectPointer<'a>,
         function_prototype: ObjectPointer<'a>,
     ) -> (ObjectPointer<'a>, ObjectPointer<'a>) {
@@ -80,6 +85,7 @@ pub(crate) trait Prototype<'a> {
         let name = Self::bind(
             pool,
             strings,
+            symbols,
             constructor_object,
             prototype,
             function_prototype,

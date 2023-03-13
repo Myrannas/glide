@@ -19,13 +19,13 @@ pub(crate) fn add(thread: &mut JsThread, times: u8) {
         let pointer = thread.realm.strings.intern(string);
         thread.push_stack(pointer);
     } else {
-        let l_val: f64 = left.to_number(&thread.realm);
+        let l_val: f64 = catch!(thread, left.to_number(&thread.realm));
 
         let mut value = l_val;
         for _ in 0..times {
             let right: Value = pop!(thread);
 
-            let r_val = right.to_number(&thread.realm);
+            let r_val = catch!(thread, right.to_number(&thread.realm));
 
             value += r_val;
         }
@@ -38,10 +38,10 @@ pub(crate) fn add(thread: &mut JsThread, times: u8) {
 
 pub(crate) fn numeric_op(thread: &mut JsThread, function: impl FnOnce(f64, f64) -> f64) {
     let l_prim: Value = pop!(thread);
-    let l_prim = l_prim.to_number(&thread.realm);
+    let l_prim = catch!(thread, l_prim.to_number(&thread.realm));
 
     let r_prim: Value = pop!(thread);
-    let r_prim = r_prim.to_number(&thread.realm);
+    let r_prim = catch!(thread, r_prim.to_number(&thread.realm));
 
     let result = function(l_prim, r_prim);
 
@@ -72,7 +72,7 @@ pub(crate) fn exponential(thread: &mut JsThread) {
 
 pub(crate) fn negate(thread: &mut JsThread) {
     let l_prim: Value = pop!(thread);
-    let l_prim = l_prim.to_number(&thread.realm);
+    let l_prim = catch!(thread, l_prim.to_number(&thread.realm));
 
     thread.push_stack(-l_prim);
     thread.step();
@@ -85,7 +85,7 @@ pub(crate) fn increment(thread: &mut JsThread, by: f64, pre: bool) {
     catch!(
         thread,
         target.update_reference(thread, |value, thread| {
-            let as_number = value.to_number(&thread.realm);
+            let as_number = value.to_number(&thread.realm)?;
             let updated = as_number + by;
 
             if !pre {

@@ -262,4 +262,23 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
     fn is_extensible(&mut self, obj: Value<'a>) -> JsResult<'a, bool> {
         self.is_sealed(obj).map(|v| !v)
     }
+
+    #[named("isPrototypeOf")]
+    fn is_prototype_of(&mut self, obj: Value<'a>) -> JsResult<'a, bool> {
+        let object = if let ValueType::Object(obj) = obj.get_type() {
+            obj
+        } else {
+            return Err(self
+                .thread
+                .new_type_error("Object.isPrototypeOf called on non-object")
+                .into());
+        };
+        let target = self.target.as_object(&self.thread.realm)?;
+
+        if let Some(prototype) = object.get_prototype(self.thread) {
+            Ok(prototype == target)
+        } else {
+            Ok(false)
+        }
+    }
 }
