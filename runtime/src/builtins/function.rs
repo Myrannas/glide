@@ -3,7 +3,7 @@ use crate::result::JsResult;
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::nan::{Value, ValueType};
 use crate::{ExecutionError, InternalError, JsThread};
-use builtin::{named, prototype, varargs};
+use builtin::{constructor, named, prototype, varargs};
 
 pub(crate) struct JsFunctionObject<'a, 'b> {
     target: Value<'a>,
@@ -13,6 +13,9 @@ pub(crate) struct JsFunctionObject<'a, 'b> {
 #[prototype]
 #[named("Function")]
 impl<'a, 'b> JsFunctionObject<'a, 'b> {
+    #[constructor]
+    fn constructor(&mut self) {}
+
     #[varargs]
     fn call(&mut self, args: Vec<Value<'a>>) -> JsResult<'a> {
         let target = args.first().cloned().unwrap_or_default();

@@ -4,7 +4,7 @@ use crate::string_pool::StringPool;
 use crate::values::nan::Value;
 use crate::values::symbols::SymbolRegistry;
 use crate::{ExecutionError, JsThread, ValueType};
-use builtin::{constant, named, prototype};
+use builtin::{constant, constructor, named, prototype};
 
 #[allow(dead_code)]
 pub(crate) struct JsNumber<'a, 'b> {
@@ -15,6 +15,9 @@ pub(crate) struct JsNumber<'a, 'b> {
 #[prototype]
 #[named("Number")]
 impl<'a, 'b> JsNumber<'a, 'b> {
+    #[constructor]
+    fn constructor(&mut self) {}
+
     #[named("parseInt")]
     fn parse_int(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a, f64> {
         value.to_number(&thread.realm)

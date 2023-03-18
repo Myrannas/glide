@@ -1,6 +1,7 @@
-use crate::parser::ast::{ClassStatement, ConstStatement, FunctionStatement};
+use crate::parser::ast::{ConstStatement, FunctionStatement};
 use crate::parser::hand_parser::{Error, LexerImpl, Parse, ParseContext};
 use crate::parser::lexer::Token;
+use crate::parser::statements::class_statement::ClassStatement;
 use crate::parser::statements::statement::Statement;
 
 #[derive(Debug, PartialEq, Clone)]

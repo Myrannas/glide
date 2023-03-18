@@ -1,6 +1,6 @@
 use crate::parser::ast::{
-    BlockStatement, ClassStatement, ConstStatement, Expression, FunctionStatement, IfStatement,
-    ReturnStatement, ThrowStatement, TryStatement, VarStatement, WhileStatement,
+    BlockStatement, Expression, IfStatement, ReturnStatement, ThrowStatement, TryStatement,
+    VarStatement, WhileStatement,
 };
 use crate::parser::hand_parser::{parse_expression, Error, LexerImpl, Parse};
 use crate::parser::hand_parser::{ParseContext, Result};

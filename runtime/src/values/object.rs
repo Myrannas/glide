@@ -3,7 +3,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Formatter, Write};
-use std::hash::{BuildHasher, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use crate::debugging::{DebugRepresentation, Renderer, Representation, X};
@@ -13,6 +13,7 @@ use crate::object_pool::{ObjectPointer, ObjectPool};
 
 use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
+use crate::values::symbols::JsSymbol;
 
 // pub(crate) struct  NativeHandle<'a> {
 //     fn downcast<'b, T: 'a>(&'b self) -> Option<&'b T>;
@@ -25,16 +26,55 @@ pub(crate) enum JsObjectState {
     NotExtensible,
 }
 
+impl Hash for PropertyKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            PropertyKey::String(str) => {
+                let str_id: u32 = (*str).into();
+                state.write_u64(str_id as u64)
+            }
+            PropertyKey::Symbol(symbol) => {
+                let sym_id: u64 = (*symbol).into();
+                state.write_u64((1 << 32) | sym_id)
+            }
+        };
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum PropertyKey {
+    String(JsPrimitiveString),
+    Symbol(JsSymbol),
+}
+
+impl From<JsPrimitiveString> for PropertyKey {
+    fn from(value: JsPrimitiveString) -> Self {
+        PropertyKey::String(value)
+    }
+}
+
+impl From<JsSymbol> for PropertyKey {
+    fn from(value: JsSymbol) -> PropertyKey {
+        PropertyKey::Symbol(value)
+    }
+}
+
+#[derive(Clone)]
+pub enum Constructor<'a> {
+    Default,
+    Function(FunctionReference<'a>),
+}
+
 #[derive(Clone)]
 pub struct JsObject<'a> {
-    pub(crate) properties: HashMap<JsPrimitiveString, Property<'a>, PropertyHasher>,
+    pub(crate) properties: HashMap<PropertyKey, Property<'a>, PropertyHasher>,
     pub(crate) private_properties: Vec<Value<'a>>,
     pub(crate) indexed_properties: Vec<Value<'a>>,
     pub(crate) name: Option<JsPrimitiveString>,
     pub(crate) prototype: Option<ObjectPointer<'a>>,
     pub(crate) wrapped: Option<Value<'a>>,
     pub(crate) callable: Option<FunctionReference<'a>>,
-    pub(crate) construct: Option<FunctionReference<'a>>,
+    pub(crate) construct: Option<Constructor<'a>>,
     pub(crate) native_handle: Option<Rc<RefCell<dyn Tid<'a>>>>,
     pub(crate) state: JsObjectState,
 }
@@ -107,7 +147,17 @@ impl<'a, 'b> JsObjectBuilder<'a, 'b> {
     }
 
     pub fn with_construct(&mut self, function: impl Into<FunctionReference<'a>>) -> &mut Self {
-        self.inner.construct = Some(function.into());
+        self.inner.construct = Some(Constructor::Function(function.into()));
+        self
+    }
+
+    pub fn with_default_construct(&mut self) -> &mut Self {
+        self.inner.construct = Some(Constructor::Default);
+        self
+    }
+
+    pub fn with_existing_construct(&mut self, function: Constructor<'a>) -> &mut Self {
+        self.inner.construct = Some(function);
         self
     }
 
@@ -209,7 +259,7 @@ impl<'a> JsObject<'a> {
     }
 
     pub fn set_construct(&mut self, value: impl Into<FunctionReference<'a>>) {
-        self.construct = Some(value.into());
+        self.construct = Some(Constructor::Function(value.into()));
     }
 
     pub fn set_wrapped_value(&mut self, value: Value<'a>) {
@@ -242,26 +292,26 @@ impl<'a> JsObject<'a> {
         self.prototype
     }
 
-    pub fn set(&mut self, key: JsPrimitiveString, value: impl Into<Value<'a>>) {
+    pub fn set(&mut self, key: impl Into<PropertyKey>, value: impl Into<Value<'a>>) {
         let value = value.into();
 
         if value.is_local() {
             panic!("Can't write internal values to an object")
         }
 
-        self.properties.insert(key, Property::value(value));
+        self.properties.insert(key.into(), Property::value(value));
     }
 
     pub(crate) fn define_property(
         &mut self,
-        key: JsPrimitiveString,
+        key: impl Into<PropertyKey>,
         getter: Option<FunctionReference<'a>>,
         setter: Option<FunctionReference<'a>>,
         enumerable: bool,
         configurable: bool,
     ) {
         self.properties.insert(
-            key,
+            key.into(),
             Property::AccessorDescriptor {
                 getter,
                 setter,
@@ -273,14 +323,14 @@ impl<'a> JsObject<'a> {
 
     pub(crate) fn define_value_property(
         &mut self,
-        key: JsPrimitiveString,
+        key: impl Into<PropertyKey>,
         value: Value<'a>,
         writable: bool,
         enumerable: bool,
         configurable: bool,
     ) {
         self.properties.insert(
-            key,
+            key.into(),
             Property::DataDescriptor {
                 value,
                 writable,
@@ -327,6 +377,13 @@ impl<'a> Property<'a> {
         match self {
             Property::DataDescriptor { enumerable, .. } => *enumerable,
             Property::AccessorDescriptor { enumerable, .. } => *enumerable,
+        }
+    }
+
+    pub fn is_configurable(&self) -> bool {
+        match self {
+            Property::DataDescriptor { configurable, .. } => *configurable,
+            Property::AccessorDescriptor { configurable, .. } => *configurable,
         }
     }
 
@@ -391,8 +448,22 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
                     renderer.formatter.write_str(", ")?;
                 }
 
-                let key = renderer.realm.strings.get(*k);
-                renderer.formatter.write_str(key.as_ref())?;
+                match k {
+                    PropertyKey::String(s) => {
+                        let key = renderer.realm.strings.get(*s);
+                        renderer.formatter.write_str(key.as_ref())?;
+                    }
+                    PropertyKey::Symbol(symbol) => {
+                        if let Some(str) = renderer
+                            .realm
+                            .symbols
+                            .get_name(*symbol)
+                            .map(|s| renderer.realm.strings.get(s))
+                        {
+                            renderer.formatter.write_str(str.as_ref())?;
+                        }
+                    }
+                }
                 renderer.formatter.write_str(": ")?;
                 match v {
                     Property::DataDescriptor { value, .. } => Value::render(value, renderer)?,
@@ -419,7 +490,7 @@ impl<'a> DebugRepresentation<'a> for JsObject<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::values::object::{Property, PropertyHasher};
+    use crate::values::object::{Property, PropertyHasher, PropertyKey};
     use crate::{JsPrimitiveString, Value};
     use std::collections::HashMap;
 
@@ -431,5 +502,11 @@ mod tests {
         );
 
         println!("{}", std::mem::size_of::<Value>());
+    }
+
+    #[test]
+    fn test_size_of_map_key() {
+        println!("{}", std::mem::size_of::<PropertyKey>());
+        println!("{}", std::mem::size_of::<JsPrimitiveString>());
     }
 }

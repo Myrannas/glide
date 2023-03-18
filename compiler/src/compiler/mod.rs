@@ -1,10 +1,17 @@
+mod binary_operator;
+mod expression;
+mod locals;
+mod unary_operator;
+
+use crate::compiler::locals::{LocalAllocator, Resolution};
 use crate::parser::ast::Reference::{Accessor, Id};
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ClassMember, ConstStatement, Expression, Field,
-    FunctionStatement, IfStatement, ParsedModule, Reference, ReturnStatement, ThrowStatement,
-    TryStatement, UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
+    BlockStatement, ConstStatement, Expression, Field, FunctionStatement, IfStatement,
+    ParsedModule, ReturnStatement, ThrowStatement, TryStatement, UnaryOperator, VarDeclaration,
+    VarStatement, WhileStatement,
 };
 use crate::parser::parse_input_as;
+use crate::parser::statements::class_statement::ClassMember;
 use crate::parser::statements::decl_statement::DeclStatement;
 use crate::parser::statements::for_statement::ForStatement;
 use crate::parser::statements::statement::Statement;
@@ -15,9 +22,12 @@ use instruction_set::Environmental::GlobalThis;
 use instruction_set::Instruction::*;
 use instruction_set::{
     Chunk, Class, Constant, Environmental, Function, Instruction, Local, LocalInit, Module,
+    Property,
 };
 use log::debug;
+use std::ops::Index;
 
+#[macro_export]
 macro_rules! internal_error {
     ($format: literal, $($y:expr),+) => {
         return Err(CompilerError::InternalError(InternalError::new(format!(
@@ -37,12 +47,12 @@ macro_rules! syntax_error {
 }
 
 #[derive(Debug)]
-struct Frame {
-    chunks: Vec<Chunk>,
-    functions: Vec<Function>,
-    classes: Vec<Class>,
-    atoms: Vec<String>,
-    locals: LocalAllocator,
+pub(crate) struct Frame {
+    pub(crate) chunks: Vec<Chunk>,
+    pub(crate) functions: Vec<Function>,
+    pub(crate) classes: Vec<Class>,
+    pub(crate) atoms: Vec<String>,
+    pub(crate) locals: LocalAllocator,
 }
 
 pub trait Bucket<T> {
@@ -100,6 +110,10 @@ struct ChunkBuilder {
 }
 
 impl<'b> ChunkBuilder {
+    fn compile(self, node: impl Compile) -> Result<Self> {
+        node.compile(self)
+    }
+
     fn append(mut self, instr: Instruction) -> Self {
         self.frame.chunks[self.chunk_index].push(instr);
 
@@ -128,145 +142,6 @@ impl<'b> ChunkBuilder {
             chunk_index,
             options: self.options,
         }
-    }
-}
-
-enum Resolution {
-    Resolved { local: usize },
-    Capture { frame: usize, local: usize },
-    Unresolved,
-}
-
-#[derive(Debug)]
-struct LocalAllocator {
-    locals: Vec<Local>,
-    init: Vec<Option<LocalInit>>,
-    current_id: usize,
-}
-
-impl LocalAllocator {
-    fn resolve_identifier(&self, id: &str) -> Resolution {
-        let result = self
-            .locals
-            .iter()
-            .rev()
-            .find(|Local { name, .. }| name == id);
-
-        match result {
-            Some(Local {
-                local, frame: 0, ..
-            }) => Resolution::Resolved { local: *local },
-            Some(Local { local, frame, .. }) => Resolution::Capture {
-                local: *local,
-                frame: *frame,
-            },
-            None => Resolution::Unresolved,
-        }
-    }
-
-    fn allocate_identifier(&mut self, id: impl Into<String>, argument: bool) -> usize {
-        let local = self.current_id;
-        self.current_id += 1;
-
-        self.locals.push(Local {
-            name: id.into(),
-            local,
-            frame: 0,
-            argument,
-        });
-
-        self.init.push(None);
-
-        local
-    }
-
-    fn new_root() -> Self {
-        LocalAllocator {
-            current_id: 0,
-            locals: vec![],
-            init: vec![],
-        }
-    }
-
-    fn child(&self) -> Self {
-        let locals: Vec<Local> = self
-            .locals
-            .iter()
-            .map(
-                |Local {
-                     name,
-                     local,
-                     frame,
-                     argument,
-                 }| Local {
-                    name: name.to_owned(),
-                    local: *local,
-                    frame: frame + 1,
-                    argument: *argument,
-                },
-            )
-            .collect();
-
-        LocalAllocator {
-            locals,
-            current_id: 0,
-            init: vec![],
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.locals
-            .iter()
-            .filter(|Local { frame, .. }| *frame == 0)
-            .count()
-    }
-
-    fn args_len(&self) -> usize {
-        self.locals
-            .iter()
-            .filter(
-                |Local {
-                     frame, argument, ..
-                 }| *frame == 0 && *argument,
-            )
-            .count()
-    }
-
-    fn set_init_value(
-        &mut self,
-        local: usize,
-        expression: &Expression,
-        atoms: &mut Vec<String>,
-    ) -> bool {
-        let constant = if let Some(constant) = expression.to_constant(atoms) {
-            constant
-        } else {
-            return false;
-        };
-
-        if self.init.get(local).unwrap_or(&None).is_none() {
-            self.init[local] = Some(LocalInit::Constant(constant));
-
-            true
-        } else {
-            false
-        }
-    }
-
-    fn set_init_function(&mut self, local: usize, function_id: usize) -> bool {
-        if self.init.get(local).is_none() {
-            self.init[local] = Some(LocalInit::Function(function_id));
-            true
-        } else {
-            false
-        }
-    }
-
-    fn get_init(&self) -> Vec<LocalInit> {
-        self.init
-            .iter()
-            .map(|v| v.clone().unwrap_or_default())
-            .collect()
     }
 }
 
@@ -307,51 +182,6 @@ impl LocalAllocator {
 //         }))
 //     }
 // }
-
-impl BinaryOperator {
-    fn to_op(&self) -> Instruction {
-        match self {
-            BinaryOperator::Add => Add { times: 1 },
-            BinaryOperator::Sub => Subtract,
-            BinaryOperator::Mul => Multiply,
-            BinaryOperator::Div => Divide,
-            BinaryOperator::Mod => Modulo,
-            BinaryOperator::GreaterThan => GreaterThan,
-            BinaryOperator::GreaterThanEqual => GreaterThanEqual,
-            BinaryOperator::LessThan => LessThan,
-            BinaryOperator::LessThanEqual => LessThanEqual,
-            BinaryOperator::NotEqualTo => NotEqualTo,
-            BinaryOperator::EqualTo => EqualTo,
-            BinaryOperator::StrictEqualTo => StrictEqualTo,
-            BinaryOperator::NotStrictEqualTo => NotStrictEqualTo,
-            BinaryOperator::LeftShift => LeftShift,
-            BinaryOperator::RightShift => RightShift,
-            BinaryOperator::RightShiftUnsigned => RightShiftUnsigned,
-            BinaryOperator::InstanceOf => InstanceOf,
-            BinaryOperator::In => In,
-            BinaryOperator::Exponential => Exponential,
-            BinaryOperator::LogicalOr => panic!("Lor is handled separately"),
-            BinaryOperator::LogicalAnd => panic!("Land is handled separately"),
-        }
-    }
-}
-
-impl UnaryOperator {
-    fn to_op(&self) -> Instruction {
-        match self {
-            UnaryOperator::TypeOf => TypeOf,
-            UnaryOperator::LogicalNot => LogicalNot,
-            UnaryOperator::Sub => Neg,
-            UnaryOperator::Add => todo!("Not implemented"),
-            UnaryOperator::Delete => Delete,
-            UnaryOperator::PrefixInc => Increment { by: 1.0, pre: true },
-            UnaryOperator::PrefixDec => Increment {
-                by: -1.0,
-                pre: true,
-            },
-        }
-    }
-}
 
 enum BreakStack {
     Root,
@@ -445,6 +275,19 @@ impl BreakStack {
     }
 }
 
+trait Compile {
+    fn compile(self, builder: ChunkBuilder) -> Result<ChunkBuilder>;
+}
+
+impl<T: Compile> Compile for Option<T> {
+    fn compile(self, builder: ChunkBuilder) -> Result<ChunkBuilder> {
+        match self {
+            Some(t) => t.compile(builder),
+            None => Ok(builder),
+        }
+    }
+}
+
 impl<'a, 'c> ChunkBuilder {
     #[inline]
     fn resolve_identifier(&self, id: &str) -> Resolution {
@@ -461,313 +304,6 @@ impl<'a, 'c> ChunkBuilder {
         self.frame.atoms.get_or_allocate(atom.into())
     }
 
-    fn compile_expression(mut self, input: Expression<'a>) -> Result<Self> {
-        let chunk = match input {
-            Expression::BinaryExpression {
-                left,
-                right,
-                operator: BinaryOperator::LogicalOr,
-            } => {
-                let right_index = self.allocate_chunk();
-                let next_index = self.allocate_chunk();
-
-                self.compile_expression(*left)?
-                    .append(LogicalOr {
-                        left: next_index,
-                        right: right_index,
-                    })
-                    .switch_to(right_index)
-                    .compile_expression(*right)?
-                    .append(Jump { to: next_index })
-                    .switch_to(next_index)
-            }
-            Expression::BinaryExpression {
-                left,
-                right,
-                operator: BinaryOperator::LogicalAnd,
-            } => {
-                let right_index = self.allocate_chunk();
-                let next_index = self.allocate_chunk();
-
-                self.compile_expression(*left)?
-                    .append(LogicalAnd {
-                        left: next_index,
-                        right: right_index,
-                    })
-                    .switch_to(right_index)
-                    .compile_expression(*right)?
-                    .append(Jump { to: next_index })
-                    .switch_to(next_index)
-            }
-            Expression::BinaryExpression {
-                left,
-                right,
-                operator,
-            } => self
-                .compile_expression(*right)?
-                .compile_expression(*left)?
-                .append(operator.to_op()),
-            Expression::UnaryExpression {
-                operator: UnaryOperator::Add,
-                value,
-            } => self.compile_expression(*value)?,
-            Expression::UnaryExpression { value, operator } => {
-                self.compile_expression(*value)?.append(operator.to_op())
-            }
-            Expression::Float(value) => self.append(LoadConstant {
-                constant: Constant::Float(value),
-            }),
-            Expression::Boolean(value) => self.append(LoadConstant {
-                constant: Constant::Boolean(value),
-            }),
-            Expression::String(value) => {
-                let constant = self.frame.atoms.allocate(value);
-                self.append(LoadConstant {
-                    constant: Constant::Atom(constant),
-                })
-            }
-            Expression::Inc { reference, .. } => self
-                .compile_expression(Expression::Reference(reference))?
-                .append(Increment {
-                    by: 1.0,
-                    pre: false,
-                }),
-            Expression::Dec { reference, .. } => self
-                .compile_expression(Expression::Reference(reference))?
-                .append(Increment {
-                    by: -1.0,
-                    pre: false,
-                }),
-            Expression::Null => self.append(LoadConstant {
-                constant: Constant::Null,
-            }),
-            Expression::Assign {
-                assign_to: Reference::Id(id),
-                expression,
-            } => {
-                let mut next = self.compile_expression(*expression)?;
-
-                match next.resolve_identifier(id) {
-                    Resolution::Resolved { local } => next.append(SetLocal { local }),
-                    Resolution::Capture { frame, local } => {
-                        next.append(SetCapture { local, frame })
-                    }
-                    Resolution::Unresolved => {
-                        let name = next.allocate_atom(id);
-                        next.append(LoadEnvironmental {
-                            environmental: GlobalThis,
-                        })
-                        .append(SetNamed { name })
-                    }
-                }
-            }
-            Expression::Assign {
-                assign_to:
-                    Reference::Accessor {
-                        accessor,
-                        expression: target,
-                        ..
-                    },
-                expression,
-            } => {
-                let name = self.allocate_atom(accessor);
-                self.compile_expression(*target)?
-                    .compile_expression(*expression)?
-                    .append(SetNamed { name })
-            }
-            Expression::Assign {
-                assign_to:
-                    Reference::ComputedAccessor {
-                        accessor,
-                        expression: target,
-                        ..
-                    },
-                expression,
-            } => self
-                .compile_expression(*target)?
-                .compile_expression(*accessor)?
-                .compile_expression(*expression)?
-                .append(Set),
-            Expression::Call {
-                expression,
-                parameters,
-            } => {
-                let args_count = parameters.len();
-
-                parameters
-                    .into_iter()
-                    .try_fold(self, |next, expression| {
-                        next.compile_expression(expression)
-                            .map(|n| n.append(Resolve))
-                    })?
-                    .compile_expression(*expression)?
-                    .append(Call { args_count })
-            }
-
-            Expression::NewWithArgs { target, parameters } => {
-                // TODO ME
-
-                let args_count = parameters.len();
-
-                parameters
-                    .into_iter()
-                    .try_fold(self, |next, expression| {
-                        next.compile_expression(expression)
-                            .map(|n| n.append(Resolve))
-                    })?
-                    .compile_expression(*target)?
-                    .append(CallNew { args_count })
-            }
-            Expression::ObjectLiteral { attributes } => {
-                let next = self.append(LoadEnvironmental {
-                    environmental: Environmental::NewObject,
-                });
-
-                attributes
-                    .into_iter()
-                    .try_fold(next, |mut builder, (attr, expression)| {
-                        let attr_id = builder.frame.atoms.allocate(attr);
-
-                        builder
-                            .append(Duplicate)
-                            .compile_expression(expression)
-                            .map(|builder| builder.append(SetNamed { name: attr_id }))
-                    })?
-            }
-            Expression::ArrayLiteral { attributes } => {
-                let mut next = self;
-
-                let attribute_count = attributes.len();
-                next = attributes
-                    .into_iter()
-                    .try_fold(next, |builder, expression| {
-                        builder.compile_expression(expression)
-                    })?;
-
-                let name = next.allocate_atom("Array");
-
-                next.append(LoadEnvironmental {
-                    environmental: GlobalThis,
-                })
-                .append(GetNamed { name })
-                .append(CallNew {
-                    args_count: attribute_count,
-                })
-            }
-            Expression::ConditionalOperator {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                let mut next = self;
-
-                let if_true_chunk = next.allocate_chunk();
-                let if_false_chunk = next.allocate_chunk();
-                let next_chunk = next.allocate_chunk();
-
-                next.compile_expression(*condition)?
-                    .append(CompareJump {
-                        if_true: if_true_chunk,
-                        if_false: if_false_chunk,
-                    })
-                    .switch_to(if_true_chunk)
-                    .compile_expression(*if_true)?
-                    .append(Jump { to: next_chunk })
-                    .switch_to(if_false_chunk)
-                    .compile_expression(*if_false)?
-                    .append(Jump { to: next_chunk })
-                    .switch_to(next_chunk)
-            }
-            Expression::Reference(Reference::This) => self.append(LoadEnvironmental {
-                environmental: Environmental::This,
-            }),
-            Expression::Reference(Reference::Id(id)) => match self.resolve_identifier(id) {
-                Resolution::Resolved { local } => self.append(GetLocal { local }),
-                Resolution::Capture {
-                    local,
-                    frame: capture_frame,
-                } => self.append(GetCapture {
-                    frame: capture_frame,
-                    local,
-                }),
-                Resolution::Unresolved => {
-                    let name = self.allocate_atom(id);
-                    self.append(LoadEnvironmental {
-                        environmental: GlobalThis,
-                    })
-                    .append(GetNamed { name })
-                }
-            },
-            Expression::Reference(Reference::Accessor {
-                expression,
-                accessor,
-                null_safe,
-            }) => {
-                let mut next = self.compile_expression(*expression)?;
-
-                if null_safe {
-                    todo!("No support for null safe get")
-                } else {
-                    let name = next.allocate_atom(accessor);
-
-                    next.append(GetNamed { name })
-                }
-            }
-            Expression::Reference(Reference::ComputedAccessor {
-                expression,
-                accessor,
-                null_safe,
-            }) => {
-                let next = self
-                    .compile_expression(*expression)?
-                    .compile_expression(*accessor)?;
-
-                if null_safe {
-                    todo!("No support for null safe get")
-                } else {
-                    next.append(Get)
-                }
-            }
-            Expression::Function {
-                name: identifier,
-                statements: BlockStatement { statements },
-                arguments,
-            } => {
-                let identifier = identifier.unwrap_or("(anonymous)");
-                let function = self.frame.functions.allocate(compile_function(
-                    identifier,
-                    self.frame.locals.child(),
-                    arguments,
-                    statements,
-                    DEFAULT_OPTIONS,
-                )?);
-
-                let mut next = self.append(GetFunction { function });
-
-                next
-            }
-            Expression::Undefined => self.append(LoadConstant {
-                constant: Constant::Undefined,
-            }),
-            Expression::Add { expressions } => {
-                let mut next = self;
-
-                let times = expressions.len() as u8 - 1;
-
-                for expression in expressions.into_iter().rev() {
-                    next = next.compile_expression(expression)?;
-                }
-
-                next.append(Instruction::Add { times })
-            }
-            node => {
-                internal_error!("Unexpected expression {:?}", node);
-            }
-        };
-
-        Ok(chunk)
-    }
-
     fn compile_statement<'b>(
         mut self,
         input: Statement<'a>,
@@ -777,7 +313,7 @@ impl<'a, 'c> ChunkBuilder {
         let chunk = match input {
             Statement::Return(ReturnStatement { expression }) => {
                 if let Some(expression) = expression {
-                    self.compile_expression(expression)?.append(Return)
+                    self.compile(expression)?.append(Return)
                 } else {
                     self.append(ReturnConstant {
                         constant: Constant::Undefined,
@@ -800,9 +336,7 @@ impl<'a, 'c> ChunkBuilder {
                             &expression,
                             &mut next.frame.atoms,
                         ) {
-                            next = next
-                                .compile_expression(expression)?
-                                .append(SetLocal { local });
+                            next = next.compile(expression)?.append(SetLocal { local });
                         }
 
                         if !next.options.module {
@@ -843,7 +377,7 @@ impl<'a, 'c> ChunkBuilder {
                         next = next_builder
                     }
                 } else if let Some(expression) = expression {
-                    next = next.compile_expression(expression)?;
+                    next = next.compile(expression)?;
                 }
 
                 next = next
@@ -853,7 +387,7 @@ impl<'a, 'c> ChunkBuilder {
                     .switch_to(condition_index);
 
                 if let Some(condition) = condition {
-                    next = next.compile_expression(condition)?.append(CompareJump {
+                    next = next.compile(condition)?.append(CompareJump {
                         if_true: block_index,
                         if_false: next_index,
                     });
@@ -871,7 +405,7 @@ impl<'a, 'c> ChunkBuilder {
                     .switch_to(operation_index);
 
                 if let Some(operation) = operation {
-                    next = next.compile_expression(operation)?
+                    next = next.compile(operation)?
                 }
 
                 next.append(Jump {
@@ -911,7 +445,7 @@ impl<'a, 'c> ChunkBuilder {
                 // self
                 // todo: Make this work
             }
-            Statement::Expression(expression) => self.compile_expression(expression)?,
+            Statement::Expression(expression) => self.compile(expression)?,
             Statement::If(IfStatement {
                 condition,
                 true_block,
@@ -926,7 +460,7 @@ impl<'a, 'c> ChunkBuilder {
                     next_index
                 };
 
-                let mut next = self.compile_expression(condition)?.append(CompareJump {
+                let mut next = self.compile(condition)?.append(CompareJump {
                     if_true: if_index,
                     if_false: else_index,
                 });
@@ -963,7 +497,7 @@ impl<'a, 'c> ChunkBuilder {
                     to: condition_index,
                 })
                 .switch_to(condition_index)
-                .compile_expression(condition)?
+                .compile(condition)?
                 .append(CompareJump {
                     if_true: block_index,
                     if_false: next_index,
@@ -1022,7 +556,7 @@ impl<'a, 'c> ChunkBuilder {
                 next.switch_to(next_index)
             }
             Statement::ThrowStatement(ThrowStatement { expression }) => {
-                self.compile_expression(expression)?.append(ThrowValue)
+                self.compile(expression)?.append(ThrowValue)
             }
             Statement::Block(block) => {
                 self.compile_block(block, next_block.unwrap_or(usize::MAX), break_stack, |c| c)?
@@ -1053,6 +587,8 @@ impl<'a, 'c> ChunkBuilder {
                     methods: vec![],
                     static_methods: vec![],
                     private_fields: 0,
+                    properties: vec![],
+                    static_properties: vec![],
                 };
 
                 for member in class.members.into_iter() {
@@ -1071,23 +607,15 @@ impl<'a, 'c> ChunkBuilder {
                             )?)
                         }
 
-                        ClassMember::StaticFunction(FunctionStatement {
-                            statements,
-                            identifier,
-                            arguments,
-                        }) => class_declaration.static_methods.push(compile_function(
-                            identifier,
-                            self.frame.locals.child(),
-                            arguments.to_owned(),
-                            statements.statements.to_owned(),
-                            DEFAULT_OPTIONS,
-                        )?),
-
-                        ClassMember::Function(FunctionStatement {
-                            statements,
-                            identifier,
-                            arguments,
-                        }) => class_declaration.methods.push(compile_function(
+                        ClassMember::Function {
+                            function:
+                                FunctionStatement {
+                                    statements,
+                                    identifier,
+                                    arguments,
+                                },
+                            is_static: false,
+                        } => class_declaration.methods.push(compile_function(
                             identifier,
                             self.frame.locals.child(),
                             arguments.to_owned(),
@@ -1095,8 +623,89 @@ impl<'a, 'c> ChunkBuilder {
                             DEFAULT_OPTIONS,
                         )?),
 
-                        ClassMember::PrivateField(Field { identifier }) => {
-                            panic!("Unsupported private field {}", identifier)
+                        ClassMember::Function {
+                            function:
+                                FunctionStatement {
+                                    statements,
+                                    identifier,
+                                    arguments,
+                                },
+                            is_static: true,
+                        } => class_declaration.static_methods.push(compile_function(
+                            identifier,
+                            self.frame.locals.child(),
+                            arguments.to_owned(),
+                            statements.statements.to_owned(),
+                            DEFAULT_OPTIONS,
+                        )?),
+
+                        ClassMember::PrivateField {
+                            field: Field { identifier },
+                            ..
+                        } => {}
+
+                        ClassMember::Getter {
+                            function,
+                            is_static,
+                        } => {
+                            let declarations = if is_static {
+                                &mut class_declaration.static_properties
+                            } else {
+                                &mut class_declaration.properties
+                            };
+
+                            let compiled_function = compile_function(
+                                function.identifier,
+                                self.frame.locals.child(),
+                                function.arguments.to_owned(),
+                                function.statements.statements.to_owned(),
+                                DEFAULT_OPTIONS,
+                            )?;
+
+                            if let Some(existing) = declarations
+                                .iter_mut()
+                                .find(|v| v.name == function.identifier)
+                            {
+                                existing.getter = Some(compiled_function);
+                            } else {
+                                declarations.push(Property {
+                                    name: function.identifier.to_owned(),
+                                    getter: Some(compiled_function),
+                                    setter: None,
+                                })
+                            }
+                        }
+
+                        ClassMember::Setter {
+                            function,
+                            is_static,
+                        } => {
+                            let declarations = if is_static {
+                                &mut class_declaration.static_properties
+                            } else {
+                                &mut class_declaration.properties
+                            };
+
+                            let compiled_function = compile_function(
+                                function.identifier,
+                                self.frame.locals.child(),
+                                function.arguments.to_owned(),
+                                function.statements.statements.to_owned(),
+                                DEFAULT_OPTIONS,
+                            )?;
+
+                            if let Some(existing) = declarations
+                                .iter_mut()
+                                .find(|v| v.name == function.identifier)
+                            {
+                                existing.setter = Some(compiled_function);
+                            } else {
+                                declarations.push(Property {
+                                    name: function.identifier.to_owned(),
+                                    setter: Some(compiled_function),
+                                    getter: None,
+                                })
+                            }
                         }
                     }
                 }
@@ -1108,7 +717,7 @@ impl<'a, 'c> ChunkBuilder {
                 let mut next = self;
 
                 let extends = if let Some(extends) = class.extends {
-                    next = next.compile_expression(extends)?;
+                    next = next.compile(extends)?;
                     true
                 } else {
                     false
@@ -1176,9 +785,7 @@ impl<'a, 'c> ChunkBuilder {
                             &expression,
                             &mut next.frame.atoms,
                         ) {
-                            next = next
-                                .compile_expression(expression)?
-                                .append(SetLocal { local });
+                            next = next.compile(expression)?.append(SetLocal { local });
                         }
 
                         if !next.options.module {

@@ -4,7 +4,7 @@ use crate::primordials::{Errors, RuntimeHelpers};
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
-use crate::values::object::{JsObjectState, Property};
+use crate::values::object::{Constructor, JsObjectState, Property, PropertyKey};
 use crate::{ExecutionError, JsObject, JsPrimitiveString, JsThread};
 use better_any::{TidAble, TidExt};
 use std::cell::{Ref, RefCell, RefMut};
@@ -132,7 +132,7 @@ impl<'a> ObjectPointer<'a> {
     pub fn get_value(
         self,
         thread: &mut JsThread<'a>,
-        key: JsPrimitiveString,
+        key: impl Into<PropertyKey>,
     ) -> JsResult<'a, Value<'a>> {
         let property = self.get_property(&thread.realm.objects, key);
 
@@ -186,14 +186,15 @@ impl<'a> ObjectPointer<'a> {
         let obj = self.get_mut_object(pool);
 
         for (k, v) in values {
-            obj.properties.insert(*k, Property::value(*v));
+            obj.properties
+                .insert(PropertyKey::String(*k), Property::value(*v));
         }
     }
 
     pub(crate) fn get_property<'b>(
         self,
         pool: &'b ObjectPool<'a>,
-        key: JsPrimitiveString,
+        key: impl Into<PropertyKey>,
     ) -> Option<&'b Property<'a>> {
         self.get_property_traverse(pool, key, false)
     }
@@ -201,15 +202,15 @@ impl<'a> ObjectPointer<'a> {
     pub(crate) fn get_property_traverse<'b>(
         self,
         pool: &'b ObjectPool<'a>,
-        key: JsPrimitiveString,
+        key: impl Into<PropertyKey>,
         own_properties_only: bool,
     ) -> Option<&'b Property<'a>> {
         let mut current = self;
+        let property_key = key.into();
 
         loop {
             let object = pool.get(current);
-
-            if let Some(obj_property) = object.properties.get(&key) {
+            if let Some(obj_property) = object.properties.get(&property_key) {
                 return Some(obj_property);
             }
 
@@ -225,10 +226,27 @@ impl<'a> ObjectPointer<'a> {
         }
     }
 
-    pub(crate) fn delete(self, pool: &mut ObjectPool<'a>, key: JsPrimitiveString) {
+    pub(crate) fn delete(
+        self,
+        pool: &mut ObjectPool<'a>,
+        key: impl Into<PropertyKey>,
+    ) -> JsResult<'a, bool> {
         let current = pool.get_mut(self);
 
-        current.properties.remove(&key);
+        let property_key = key.into();
+        if let Some(existing) = current.properties.get(&property_key) {
+            if existing.is_configurable() {
+                current.properties.remove(&property_key);
+
+                Ok(true)
+            } else {
+                Err(ExecutionError::TypeError(
+                    "Property is not configurable".to_string(),
+                ))
+            }
+        } else {
+            Ok(true)
+        }
     }
 
     pub(crate) fn delete_indexed(self, pool: &mut ObjectPool<'a>, key: usize) {
@@ -237,23 +255,25 @@ impl<'a> ObjectPointer<'a> {
         current.indexed_properties.remove(key);
     }
 
-    pub fn has(self, objects: &ObjectPool<'a>, key: JsPrimitiveString) -> bool {
+    pub fn has(self, objects: &ObjectPool<'a>, key: impl Into<PropertyKey>) -> bool {
         let object = objects.get(self);
 
-        object.properties.contains_key(&key)
+        object.properties.contains_key(&key.into())
     }
 
     pub fn set(
         self,
         thread: &mut JsThread<'a>,
-        key: JsPrimitiveString,
+        key: impl Into<PropertyKey>,
         value: Value<'a>,
     ) -> JsResult<'a, ()> {
+        let property_key = key.into();
+
         let setter = {
             let object = thread.realm.objects.get_mut(self);
             let state = object.state;
 
-            match object.properties.get_mut(&key) {
+            match object.properties.get_mut(&property_key) {
                 Some(Property::DataDescriptor {
                     value: v,
                     writable: true,
@@ -267,7 +287,7 @@ impl<'a> ObjectPointer<'a> {
                 }) => true,
                 None => {
                     return if matches!(state, JsObjectState::Extensible) {
-                        Ok(object.set(key, value))
+                        Ok(object.set(property_key, value))
                     } else {
                         Err(ExecutionError::TypeError(
                             "Cannot add new properties".to_string(),
@@ -287,7 +307,7 @@ impl<'a> ObjectPointer<'a> {
 
             if let Some(Property::AccessorDescriptor {
                 setter: Some(func), ..
-            }) = object.properties.get(&key)
+            }) = object.properties.get(&property_key)
             {
                 thread.call_from_native(Value::from(self), func.clone(), 1, false)?;
             }
@@ -411,7 +431,7 @@ impl<'a> ObjectPointer<'a> {
         pool.get(self).name
     }
 
-    pub fn get_construct<'b>(self, pool: &'b ObjectPool<'a>) -> Option<&'b FunctionReference<'a>> {
+    pub fn get_construct<'b>(self, pool: &'b ObjectPool<'a>) -> Option<&'b Constructor<'a>> {
         let object = pool.get(self);
 
         object.construct.as_ref()

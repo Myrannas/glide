@@ -129,6 +129,8 @@ pub struct Class {
     pub methods: Vec<Function>,
     pub static_methods: Vec<Function>,
     pub private_fields: usize,
+    pub properties: Vec<Property>,
+    pub static_properties: Vec<Property>,
 }
 
 #[derive(Debug)]
@@ -144,6 +146,13 @@ pub struct Function {
 
     pub local_size: usize,
     pub locals: Vec<Local>,
+}
+
+#[derive(Debug)]
+pub struct Property {
+    pub name: String,
+    pub getter: Option<Function>,
+    pub setter: Option<Function>,
 }
 
 impl Default for Function {

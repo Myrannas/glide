@@ -41,6 +41,9 @@ extern crate core;
 extern crate instruction_set;
 extern crate rand;
 
+#[cfg(feature = "runtime_time")]
+extern crate chrono;
+
 pub use debugging::Unwrap;
 pub use primordials::Realm;
 pub use result::{ExecutionError, InternalError, SyntaxError};

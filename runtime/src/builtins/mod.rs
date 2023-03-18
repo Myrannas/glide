@@ -16,8 +16,12 @@ pub(crate) mod prototype;
 pub(crate) mod set;
 pub(crate) mod string;
 
+pub(crate) mod boolean;
+#[cfg(feature = "runtime_time")]
+pub(crate) mod date;
 #[cfg(feature = "eval")]
 pub(crate) mod eval;
+pub(crate) mod regexp;
 pub(crate) mod symbol;
 
 #[inline]

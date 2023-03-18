@@ -2,7 +2,7 @@ use crate::debugging::X;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
-use crate::values::object::{JsObjectState, Property};
+use crate::values::object::{JsObjectState, Property, PropertyKey};
 use crate::{dv, JsObject, JsThread};
 use builtin::{constructor, named, prototype};
 
@@ -51,13 +51,30 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
             Some(Property::AccessorDescriptor {
                 enumerable,
                 configurable,
-                ..
+                getter,
+                setter,
             }) => {
+                let getter: Value<'a> = getter
+                    .map(|g| {
+                        ValueType::Object(thread.realm.new_function_no_prototype(string_key, g))
+                            .into()
+                    })
+                    .unwrap_or_default();
+
+                let setter: Value<'a> = setter
+                    .map(|s| {
+                        ValueType::Object(thread.realm.new_function_no_prototype(string_key, s))
+                            .into()
+                    })
+                    .unwrap_or_default();
+
                 object.extend(
                     &mut thread.realm.objects,
                     &[
                         (thread.realm.constants.enumerable, enumerable.into()),
                         (thread.realm.constants.configurable, configurable.into()),
+                        (thread.realm.constants.get, getter),
+                        (thread.realm.constants.set, setter),
                     ],
                 );
                 // object.set("get");
@@ -79,7 +96,10 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
             .properties
             .iter()
             .filter(|(_, r)| r.is_enumerable())
-            .map(|(l, _)| Value::from(*l))
+            .filter_map(|(l, _)| match l {
+                PropertyKey::String(str) => Some(Value::from(*str)),
+                PropertyKey::Symbol(_) => None,
+            })
             .collect();
 
         Ok(thread

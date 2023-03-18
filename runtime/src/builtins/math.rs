@@ -1,9 +1,12 @@
-use crate::debugging::DebugWithRealm;
+use crate::object_pool::ObjectPool;
 use crate::result::JsResult;
+use crate::string_pool::StringPool;
 use crate::values::nan::Value;
+use crate::values::symbols::SymbolRegistry;
 use crate::JsThread;
-use builtin::{named, prototype, varargs};
+use builtin::{constant, named, prototype, varargs};
 use rand::prelude::*;
+use std::f64::consts::{E, PI};
 
 // #[allow(dead_code)]
 pub(crate) struct JsMath {}
@@ -143,6 +146,12 @@ impl<'a, 'b> JsMath {
         Ok(result.cbrt().into())
     }
 
+    fn asinh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)?;
+
+        Ok(result.asinh().into())
+    }
+
     fn atanh(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
         let result = value.to_number(&thread.realm)?;
 
@@ -186,6 +195,34 @@ impl<'a, 'b> JsMath {
         Ok(result.abs().into())
     }
 
+    fn fround(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_number(&thread.realm)? as f32;
+
+        Ok((result as f64).into())
+    }
+
+    fn imul(thread: &mut JsThread<'a>, value_a: Value<'a>, value_b: Value<'a>) -> JsResult<'a> {
+        let a = value_a.to_i32(&thread.realm)?;
+        let b = value_b.to_i32(&thread.realm)?;
+
+        let result = a * b;
+
+        Ok((result as f64).into())
+    }
+
+    #[varargs]
+    fn hypot(thread: &mut JsThread<'a>, args: Vec<Value<'a>>) -> JsResult<'a> {
+        let mut acc = f64::INFINITY;
+
+        for value in &args {
+            let value = value.to_number(&thread.realm)?;
+
+            acc += value * value;
+        }
+
+        Ok(acc.sqrt().into())
+    }
+
     #[varargs]
     fn min(thread: &mut JsThread<'a>, args: Vec<Value<'a>>) -> JsResult<'a> {
         let mut min = f64::INFINITY;
@@ -214,5 +251,91 @@ impl<'a, 'b> JsMath {
         }
 
         Ok(min.into())
+    }
+
+    fn clz32(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a> {
+        let result = value.to_u32(&thread.realm)?;
+
+        Ok((result.leading_zeros() as i32).into())
+    }
+
+    #[constant]
+    #[named("E")]
+    fn e(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        E.into()
+    }
+
+    #[constant]
+    #[named("PI")]
+    fn pi(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        PI.into()
+    }
+
+    #[constant]
+    #[named("LN10")]
+    fn ln10(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        10f64.ln().into()
+    }
+
+    #[constant]
+    #[named("LN2")]
+    fn ln2(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        2f64.ln().into()
+    }
+
+    #[constant]
+    #[named("LOG10E")]
+    fn log10e(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        E.log10().into()
+    }
+
+    #[constant]
+    #[named("LOG2E")]
+    fn log2e(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        E.log2().into()
+    }
+
+    #[constant]
+    #[named("SQRT1_2")]
+    fn sqrt1_2(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        (0.5f64).sqrt().into()
+    }
+
+    #[constant]
+    #[named("SQRT2")]
+    fn sqrt2(
+        pool: &mut ObjectPool<'a>,
+        strings: &mut StringPool,
+        symbols: &mut SymbolRegistry<'a>,
+    ) -> Value<'a> {
+        2f64.sqrt().into()
     }
 }

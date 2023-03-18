@@ -1,13 +1,12 @@
 use super::ast::{Expression, Reference};
 use crate::parser::ast::{
-    BinaryOperator, BlockStatement, ClassMember, ClassStatement, ConstStatement, Field,
-    FunctionStatement, IfStatement, ParsedModule, ReturnStatement, ThrowStatement, TryStatement,
-    UnaryOperator, VarDeclaration, VarStatement, WhileStatement,
+    BinaryOperator, BlockStatement, ConstStatement, FunctionStatement, IfStatement, ParsedModule,
+    ReturnStatement, ThrowStatement, TryStatement, UnaryOperator, VarDeclaration, VarStatement,
+    WhileStatement,
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
 use crate::parser::statements::decl_statement::DeclStatement;
-use crate::parser::statements::for_statement::ForStatement;
 use crate::parser::statements::statement::Statement;
 use crate::parser::strings::parse_string;
 use logos::{Source, Span, SpannedIter};
@@ -238,8 +237,7 @@ impl<'a> WhitespaceTrackingLexer<'a> {
     #[inline]
     pub(crate) fn expect_id(&mut self) -> Result<'a, &'a str> {
         match self.next() {
-            Some((Token::Id(id), ..)) => Ok(id),
-            Some((Token::For, ..)) => Ok("for"),
+            Some((token, ..)) if token.is_identifier() => Ok(token.identifier().unwrap()),
             other => self.expected(&[Token::Id("")], other.unwrap_or((Token::EndOfFile, 0..0))),
         }
     }
@@ -285,19 +283,20 @@ fn parse_object_literal<'a>(
     let mut attributes = Vec::new();
 
     while !input.consume_if(Token::CloseBrace) {
-        match input.next() {
-            Some((Token::Id(id), ..)) => {
+        match input.lookahead() {
+            Some((Token::Float(value), ..)) => {
+                input.next();
+                input.expect(Token::Colon)?;
+                let expression = parse_expression(input, context)?;
+                attributes.push((value.to_string(), expression))
+            }
+            Some(_) => {
+                let id = input.expect_id()?;
                 input.expect(Token::Colon)?;
                 let expression = parse_expression(input, context)?;
 
                 attributes.push((id.to_owned(), expression))
             }
-            Some((Token::Float(value), ..)) => {
-                input.expect(Token::Colon)?;
-                let expression = parse_expression(input, context)?;
-                attributes.push((value.to_string(), expression))
-            }
-            Some(other) => input.expected(&[Token::Id("")], other)?,
             _ => panic!("None!"),
         }
 
@@ -367,6 +366,9 @@ fn parse_value<'a>(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'
                 statements,
             })
         }
+        Some((token, ..)) if token.is_identifier() => Ok(Expression::Reference(Reference::Id(
+            token.identifier().unwrap(),
+        ))),
         Some(other) => input.expected(
             &[
                 Token::Id(""),
@@ -957,7 +959,7 @@ impl<'a> Parse<'a> for ConstStatement<'a> {
     }
 }
 
-fn parse_args_list<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Vec<&'a str>> {
+pub(crate) fn parse_args_list<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Vec<&'a str>> {
     input.expect(Token::OpenParen)?;
 
     let mut arguments = Vec::new();
@@ -1039,85 +1041,6 @@ impl<'a> Parse<'a> for TryStatement<'a> {
             catch_binding,
             catch_block,
             finally_block,
-        })
-    }
-}
-
-impl<'a> Parse<'a> for ClassStatement<'a> {
-    fn parse(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'a, Self> {
-        input.expect(Token::Class)?;
-
-        let name = input.expect_id()?;
-
-        let extends = if input.consume_if(Token::Extends) {
-            Some(Expression::parse(input, context)?)
-        } else {
-            None
-        };
-
-        input.expect(Token::OpenBrace)?;
-
-        let mut members = Vec::new();
-        let mut private_members = Vec::new();
-        while !input.consume_if(Token::CloseBrace) {
-            // let is_static = input.consume_if(Token::Static);
-            //
-            // let is_getter = if matches!(input.lookahead(), Some((Token::Id("get"), ..))) {
-            //     input.next();
-            //     true
-            // } else {
-            //     false
-            // };
-            //
-            // let is_setter = if matches!(input.lookahead(), Some((Token::Id("set"), ..))) {
-            //     input.next();
-            //     true
-            // } else {
-            //     false
-            // };
-
-            match input.lookahead() {
-                Some((Token::Id(identifier), ..)) => {
-                    input.next();
-
-                    let arguments = parse_args_list(input)?;
-                    let statements = BlockStatement::parse(input, context)?;
-
-                    members.push(ClassMember::Function(FunctionStatement {
-                        identifier,
-                        arguments,
-                        statements,
-                    }))
-                }
-                Some((Token::PrivateId(identifier), ..)) => {
-                    input.next();
-
-                    private_members.push(ClassMember::PrivateField(Field { identifier }))
-                }
-                Some((Token::Static, ..)) => {
-                    input.next();
-
-                    let identifier = input.expect_id()?;
-                    let arguments = parse_args_list(input)?;
-                    let statements = BlockStatement::parse(input, context)?;
-
-                    members.push(ClassMember::StaticFunction(FunctionStatement {
-                        identifier,
-                        arguments,
-                        statements,
-                    }))
-                }
-                Some(token) => return input.expected(&[Token::Id("constructor")], token),
-                _ => panic!(":("),
-            }
-
-            input.consume_if(Token::Semicolon);
-        }
-
-        Ok(ClassStatement {
-            name,
-            extends,
-            members,
         })
     }
 }

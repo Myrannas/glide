@@ -460,6 +460,11 @@ impl<'a> JsThread<'a> {
     pub fn finalize(self) -> Realm<'a> {
         self.realm
     }
+
+    pub(crate) fn call_noop(&mut self, args: usize) {
+        let start_len = self.stack.len() - args;
+        self.stack.truncate(start_len);
+    }
 }
 
 struct DebuggableInstruction<'a, 'b> {

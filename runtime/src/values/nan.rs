@@ -3,6 +3,7 @@ use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::string_pool::StringPointer;
+use crate::values::symbols::JsSymbol;
 use crate::{ExecutionError, InternalError, JsPrimitiveString, JsThread, Realm};
 use instruction_set::Constant;
 use std::marker::PhantomData;
@@ -40,7 +41,8 @@ pub enum ValueType<'a> {
     Local(u32),
     StringReference(JsPrimitiveString),
     NumberReference(u32),
-    Symbol(u32),
+    SymbolReference(JsSymbol),
+    Symbol(JsSymbol),
 }
 
 const DOWNSHIFT: u64 = 47;
@@ -54,7 +56,8 @@ const BOOLEAN_FALSE_TAG: u64 = FLOAT_NAN_TAG + 6;
 const LOCAL_TAG: u64 = FLOAT_NAN_TAG + 7;
 const STRING_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 8;
 const NUMBER_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 9;
-const SYMBOL_TAG: u64 = FLOAT_NAN_TAG + 10;
+const SYMBOL_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 10;
+const SYMBOL_TAG: u64 = FLOAT_NAN_TAG + 11;
 
 impl<'a> From<ValueType<'a>> for Value<'a> {
     fn from(value: ValueType<'a>) -> Self {
@@ -104,6 +107,10 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
             }
             ValueType::NumberReference(number_reference) => Value {
                 inner: (NUMBER_REFERENCE_TAG << DOWNSHIFT) + u64::from(number_reference),
+                phantom: PhantomData,
+            },
+            ValueType::SymbolReference(symbol_reference) => Value {
+                inner: (SYMBOL_REFERENCE_TAG << DOWNSHIFT) + u64::from(symbol_reference),
                 phantom: PhantomData,
             },
             ValueType::Symbol(id) => Value {
@@ -186,7 +193,8 @@ impl<'a> Value<'a> {
                 ValueType::StringReference(StringPointer::new(self.inner as u32))
             }
             NUMBER_REFERENCE_TAG => ValueType::NumberReference(self.inner as u32),
-            SYMBOL_TAG => ValueType::Symbol(self.inner as u32),
+            SYMBOL_REFERENCE_TAG => ValueType::SymbolReference((self.inner as u32).into()),
+            SYMBOL_TAG => ValueType::Symbol(JsSymbol::from(self.inner as u32)),
             _ => ValueType::Float,
         }
     }
@@ -316,6 +324,13 @@ impl<'a> Value<'a> {
 
                 base_object.get_indexed(thread, index as usize)
             }
+            ValueType::SymbolReference(symbol) => {
+                let base: Value = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
+
+                base_object.get_value(thread, symbol)
+            }
             _ => Ok(self),
         }
     }
@@ -347,6 +362,18 @@ impl<'a> Value<'a> {
                 let updated_value = with_value(original, thread)?;
 
                 base_object.set(thread, name, updated_value)?;
+                Ok(updated_value)
+            }
+            ValueType::SymbolReference(symbol) => {
+                let base: Value = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
+
+                let original = base_object.get_value(thread, symbol)?;
+
+                let updated_value = with_value(original, thread)?;
+
+                base_object.set(thread, symbol, updated_value)?;
                 Ok(updated_value)
             }
             ValueType::NumberReference(index) => {
@@ -385,9 +412,9 @@ impl<'a> Value<'a> {
                 let base = base.resolve(thread)?;
                 let base_object = base.to_object(&mut thread.realm)?;
 
-                base_object.delete(&mut thread.realm.objects, name);
+                let result = base_object.delete(&mut thread.realm.objects, name)?;
 
-                thread.push_stack(true);
+                thread.push_stack(result);
 
                 Ok(())
             }
@@ -399,6 +426,17 @@ impl<'a> Value<'a> {
                 base_object.delete_indexed(&mut thread.realm.objects, index as usize);
 
                 thread.push_stack(true);
+
+                Ok(())
+            }
+            ValueType::SymbolReference(symbol) => {
+                let base: Value = thread.pop_stack();
+                let base = base.resolve(thread)?;
+                let base_object = base.to_object(&mut thread.realm)?;
+
+                let result = base_object.delete(&mut thread.realm.objects, symbol)?;
+
+                thread.push_stack(result);
 
                 Ok(())
             }
@@ -510,7 +548,9 @@ impl<'a> Value<'a> {
             ValueType::Null | ValueType::Boolean(false) => Ok(0.0),
             ValueType::Boolean(true) => Ok(1.0),
             ValueType::Float => Ok(self.float()),
-            ValueType::StringReference(..) | ValueType::NumberReference(..) => {
+            ValueType::StringReference(..)
+            | ValueType::NumberReference(..)
+            | ValueType::SymbolReference(..) => {
                 todo!("References are not supported")
             }
             ValueType::String(value) => Ok(realm

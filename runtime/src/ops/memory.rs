@@ -27,6 +27,7 @@ pub(crate) fn set(thread: &mut JsThread) {
 
     match attribute.get_type() {
         ValueType::String(str) => catch!(thread, target.set(thread, str, value)),
+        ValueType::Symbol(symbol) => catch!(thread, target.set(thread, symbol, value)),
         ValueType::Float => catch!(
             thread,
             target.set_indexed(thread, attribute.float() as usize, value)
@@ -59,6 +60,7 @@ pub(crate) fn get(thread: &mut JsThread) {
 
     let reference: Value = match attribute.get_type() {
         ValueType::Float => ValueType::NumberReference(attribute.float() as u32),
+        ValueType::Symbol(s) => ValueType::SymbolReference(s),
         _ => ValueType::StringReference(catch!(thread, attribute.to_string(thread))),
     }
     .into();

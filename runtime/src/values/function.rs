@@ -2,7 +2,7 @@ use crate::context::JsContext;
 use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer};
 use crate::primordials::{get_prototype_property, RuntimeHelpers};
 use crate::result::JsResult;
-use crate::values::object::JsObject;
+use crate::values::object::{Constructor, JsObject};
 use crate::values::string::JsPrimitiveString;
 use crate::vm::JsThread;
 
@@ -97,11 +97,20 @@ pub struct JsFunction {
 }
 
 #[derive(Clone)]
+pub struct JsProperty {
+    property: JsPrimitiveString,
+    getter: Option<JsFunction>,
+    setter: Option<JsFunction>,
+}
+
+#[derive(Clone)]
 pub struct JsClass {
     construct: Option<JsFunction>,
     atoms: Vec<JsPrimitiveString>,
     name: JsPrimitiveString,
     methods: Vec<JsFunction>,
+    properties: Vec<JsProperty>,
+    static_properties: Vec<JsProperty>,
     static_methods: Vec<JsFunction>,
     private_properties: usize,
 }
@@ -121,17 +130,24 @@ impl JsClass {
         prototype: Prototype<'a>,
     ) -> JsResult<'a> {
         let constructor = if let Some(constructor) = &self.construct {
-            Some(FunctionReference::Custom(CustomFunctionReference {
-                function: constructor.clone(),
-                parent_context: context.clone(),
-            }))
+            Some(Constructor::Function(FunctionReference::Custom(
+                CustomFunctionReference {
+                    function: constructor.clone(),
+                    parent_context: context.clone(),
+                },
+            )))
         } else if let Prototype::Custom(obj) = prototype {
             let callable = obj
                 .get_construct(&thread.realm.objects)
-                .or_else(|| obj.get_callable(&thread.realm.objects));
+                .cloned()
+                .or_else(|| {
+                    obj.get_callable(&thread.realm.objects)
+                        .cloned()
+                        .map(Constructor::Function)
+                });
 
             if let Some(function) = callable {
-                Some(function.clone())
+                Some(function)
             } else {
                 return Err(thread
                     .new_type_error(format!(
@@ -162,7 +178,9 @@ impl JsClass {
         let mut object_builder = JsObject::builder(&mut thread.realm.objects);
 
         if let Some(construct) = constructor {
-            object_builder.with_construct(construct);
+            object_builder.with_existing_construct(construct);
+        } else {
+            object_builder.with_default_construct();
         }
 
         object_builder.with_property(thread.realm.constants.prototype, prototype);
@@ -182,6 +200,66 @@ impl JsClass {
             );
 
             prototype.set(thread, method.name(), function.into())?;
+        }
+
+        for JsProperty {
+            getter,
+            setter,
+            property,
+        } in &self.properties
+        {
+            let getter = getter.as_ref().map(|g| {
+                FunctionReference::Custom(CustomFunctionReference {
+                    function: g.clone(),
+                    parent_context: context.clone(),
+                })
+            });
+
+            let setter = setter.as_ref().map(|s| {
+                FunctionReference::Custom(CustomFunctionReference {
+                    function: s.clone(),
+                    parent_context: context.clone(),
+                })
+            });
+
+            prototype.define_property(
+                &mut thread.realm.objects,
+                *property,
+                getter,
+                setter,
+                false,
+                true,
+            )?;
+        }
+
+        for JsProperty {
+            getter,
+            setter,
+            property,
+        } in &self.static_properties
+        {
+            let getter = getter.as_ref().map(|g| {
+                FunctionReference::Custom(CustomFunctionReference {
+                    function: g.clone(),
+                    parent_context: context.clone(),
+                })
+            });
+
+            let setter = setter.as_ref().map(|s| {
+                FunctionReference::Custom(CustomFunctionReference {
+                    function: s.clone(),
+                    parent_context: context.clone(),
+                })
+            });
+
+            object.define_property(
+                &mut thread.realm.objects,
+                *property,
+                getter,
+                setter,
+                false,
+                true,
+            )?;
         }
 
         for method in &self.static_methods {
@@ -294,6 +372,24 @@ impl<'a> JsFunction {
                         .static_methods
                         .into_iter()
                         .map(|f| JsFunction::load(f, realm))
+                        .collect(),
+                    properties: f
+                        .properties
+                        .into_iter()
+                        .map(|p| JsProperty {
+                            property: realm.strings.intern(p.name),
+                            getter: p.getter.map(|f| JsFunction::load(f, realm)),
+                            setter: p.setter.map(|f| JsFunction::load(f, realm)),
+                        })
+                        .collect(),
+                    static_properties: f
+                        .static_properties
+                        .into_iter()
+                        .map(|p| JsProperty {
+                            property: realm.strings.intern(p.name),
+                            getter: p.getter.map(|f| JsFunction::load(f, realm)),
+                            setter: p.setter.map(|f| JsFunction::load(f, realm)),
+                        })
                         .collect(),
                     private_properties: f.private_fields,
                 }

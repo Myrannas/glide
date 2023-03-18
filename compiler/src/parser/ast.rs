@@ -195,23 +195,8 @@ pub(crate) struct BlockStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct ClassStatement<'a> {
-    pub(crate) name: &'a str,
-    pub(crate) extends: Option<Expression<'a>>,
-    pub(crate) members: Vec<ClassMember<'a>>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Field<'a> {
     pub(crate) identifier: &'a str,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub(crate) enum ClassMember<'a> {
-    Constructor(FunctionStatement<'a>),
-    Function(FunctionStatement<'a>),
-    StaticFunction(FunctionStatement<'a>),
-    PrivateField(Field<'a>),
 }
 
 impl<'a> From<DeclStatement<'a>> for BlockStatement<'a> {

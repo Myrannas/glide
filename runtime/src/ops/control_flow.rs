@@ -3,7 +3,7 @@ use crate::object_pool::ObjectPointer;
 use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
-use crate::values::object::Property;
+use crate::values::object::{Constructor, Property};
 use crate::{catch, dv, pop, resolve, ExecutionError, JsObject, JsThread, Realm, Value, ValueType};
 use instruction_set::Constant;
 
@@ -118,10 +118,15 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
     let target_pointer = thread.realm.objects.allocate(target);
 
     match callable {
-        FunctionReference::Custom(function) => {
+        Constructor::Default => {
+            thread.call_noop(args);
+            thread.push_stack(target_pointer);
+            thread.step();
+        }
+        Constructor::Function(FunctionReference::Custom(function)) => {
             thread.call(target_pointer.into(), function, args, true, false);
         }
-        FunctionReference::BuiltIn(function) => {
+        Constructor::Function(FunctionReference::BuiltIn(function)) => {
             catch!(
                 thread,
                 function.apply_return(args, thread, target_pointer.into())

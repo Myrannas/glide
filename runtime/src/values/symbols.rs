@@ -1,14 +1,28 @@
-use crate::object_pool::{ObjectPointer, ObjectPool};
-use crate::{JsObject, JsPrimitiveString, Value, ValueType};
+use crate::{JsPrimitiveString, Value, ValueType};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub(crate) struct SymbolRegistry<'a> {
-    registry: HashMap<JsPrimitiveString, u32>,
-    names: HashMap<u32, JsPrimitiveString>,
+    registry: HashMap<JsPrimitiveString, JsSymbol>,
+    names: HashMap<JsSymbol, JsPrimitiveString>,
     allocator: u32,
     phantom: PhantomData<Value<'a>>,
+}
+
+#[derive(Clone, PartialEq, Hash, Eq, Copy)]
+pub struct JsSymbol(u32);
+
+impl From<JsSymbol> for u64 {
+    fn from(value: JsSymbol) -> u64 {
+        value.0 as u64
+    }
+}
+
+impl From<u32> for JsSymbol {
+    fn from(value: u32) -> JsSymbol {
+        JsSymbol(value)
+    }
 }
 
 impl<'a> SymbolRegistry<'a> {
@@ -26,9 +40,11 @@ impl<'a> SymbolRegistry<'a> {
             *id
         } else {
             self.allocator += 1;
-            self.registry.insert(name, self.allocator);
-            self.names.insert(self.allocator, name);
-            self.allocator
+
+            let symbol = JsSymbol(self.allocator);
+            self.registry.insert(name, symbol);
+            self.names.insert(symbol, name);
+            symbol
         };
 
         ValueType::Symbol(id).into()
@@ -36,12 +52,13 @@ impl<'a> SymbolRegistry<'a> {
 
     pub(crate) fn create_unique(&mut self, name: JsPrimitiveString) -> Value<'a> {
         self.allocator += 1;
-        self.names.insert(self.allocator, name);
 
-        ValueType::Symbol(self.allocator).into()
+        let symbol = JsSymbol(self.allocator);
+        self.names.insert(symbol, name);
+        ValueType::Symbol(symbol).into()
     }
 
-    pub(crate) fn get_name(&self, id: u32) -> Option<JsPrimitiveString> {
+    pub(crate) fn get_name(&self, id: JsSymbol) -> Option<JsPrimitiveString> {
         self.names.get(&id).cloned()
     }
 }

@@ -3,6 +3,7 @@ use logos::{Lexer, Logos};
 #[derive(Logos, Debug, PartialEq, Copy, Clone)]
 pub enum Token<'a> {
     #[regex(r"[0-9]*(\.[0-9]+)?((e|E)[+-]?[1-9][0-9]*)?", float)]
+    #[regex(r"0x([0-9a-fA-F]+)", hex)]
     Float(f64),
 
     #[regex(r"(true|false)", boolean)]
@@ -176,6 +177,12 @@ pub enum Token<'a> {
     #[token("static")]
     Static,
 
+    #[token("get")]
+    Get,
+
+    #[token("set")]
+    Set,
+
     #[token("(")]
     OpenParen,
 
@@ -260,6 +267,13 @@ fn float<'b>(lex: &mut Lexer<'b, Token<'b>>) -> Option<f64> {
     Some(result.unwrap_or(f64::NAN))
 }
 
+fn hex<'b>(lex: &mut Lexer<'b, Token<'b>>) -> Option<f64> {
+    let hex_value: &str = lex.slice();
+    let result = u32::from_str_radix(hex_value, 16).map(|v| v as f64);
+
+    Some(result.unwrap_or(f64::NAN))
+}
+
 // Note: callbacks can return `Option` or `Result`
 fn boolean<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Option<bool> {
     let slice = lex.slice();
@@ -280,6 +294,22 @@ fn string<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Option<&'a str> {
 fn pattern<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Option<&'a str> {
     let slice = lex.slice();
     Some(slice)
+}
+
+impl<'a> Token<'a> {
+    pub(crate) fn is_identifier(&self) -> bool {
+        self.identifier().is_some()
+    }
+
+    pub(crate) fn identifier(&self) -> Option<&'a str> {
+        match self {
+            Token::Id(value) => Some(value),
+            Token::For => Some("for"),
+            Token::Get => Some("get"),
+            Token::Set => Some("set"),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

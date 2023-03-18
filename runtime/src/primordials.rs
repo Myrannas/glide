@@ -1,6 +1,6 @@
 use super::builtins::prototype::Prototype;
 use super::builtins::{array, errors, function, number, objects, promise, set, string};
-use crate::builtins::{console, map, symbol};
+use crate::builtins::{boolean, console, date, map, regexp, symbol};
 use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
 use crate::string_pool::{StringPointer, StringPool};
@@ -88,6 +88,8 @@ pub struct Constants {
     pub configurable: StringPointer,
     pub writable: StringPointer,
     pub value: StringPointer,
+    pub get: StringPointer,
+    pub set: StringPointer,
 
     pub number: StringPointer,
     pub boolean: StringPointer,
@@ -124,6 +126,8 @@ impl Constants {
             message: string_pool.intern_native("message"),
             symbol: string_pool.intern_native("symbol"),
             infinity: string_pool.intern_native("Infinity"),
+            get: string_pool.intern_native("get"),
+            set: string_pool.intern_native("set"),
         }
     }
 }
@@ -361,7 +365,35 @@ impl<'a> Primitives<'a> {
             function_prototype_base,
         );
 
+        regexp::RegExp::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            symbols,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
         console::JsConsole::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            symbols,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
+        #[cfg(feature = "runtime_time")]
+        date::JsDate::bind_thread(
+            global_this,
+            object_pool,
+            strings,
+            symbols,
+            object_prototype_base,
+            function_prototype_base,
+        );
+
+        boolean::JsBoolean::bind_thread(
             global_this,
             object_pool,
             strings,
@@ -503,6 +535,11 @@ pub(crate) trait RuntimeHelpers<'a> {
         name: JsPrimitiveString,
         function: impl Into<FunctionReference<'a>>,
     ) -> ObjectPointer<'a>;
+    fn new_function_no_prototype(
+        &mut self,
+        name: JsPrimitiveString,
+        function: impl Into<FunctionReference<'a>>,
+    ) -> ObjectPointer<'a>;
 }
 
 impl<'a> RuntimeHelpers<'a> for JsThread<'a> {
@@ -524,6 +561,14 @@ impl<'a> RuntimeHelpers<'a> for JsThread<'a> {
         function: impl Into<FunctionReference<'a>>,
     ) -> ObjectPointer<'a> {
         self.realm.new_function(name, function)
+    }
+
+    fn new_function_no_prototype(
+        &mut self,
+        name: JsPrimitiveString,
+        function: impl Into<FunctionReference<'a>>,
+    ) -> ObjectPointer<'a> {
+        self.realm.new_function_no_prototype(name, function)
     }
 }
 
@@ -587,6 +632,19 @@ impl<'a> RuntimeHelpers<'a> for Realm<'a> {
             .with_property(self.constants.prototype, prototype_property)
             .build()
     }
+
+    fn new_function_no_prototype(
+        &mut self,
+        name: JsPrimitiveString,
+        function: impl Into<FunctionReference<'a>>,
+    ) -> ObjectPointer<'a> {
+        let function = function.into();
+
+        JsObject::builder(&mut self.objects)
+            .with_callable(function.clone())
+            .with_property(self.constants.name, name)
+            .build()
+    }
 }
 
 impl<'a> Errors<'a> {
@@ -620,6 +678,42 @@ impl<'a> Errors<'a> {
             function_prototype,
         );
         let (.., reference_error_prototype) = errors::ReferenceError::bind_thread(
+            global_this,
+            pool,
+            strings,
+            symbols,
+            error_prototype,
+            function_prototype,
+        );
+
+        errors::URIError::bind_thread(
+            global_this,
+            pool,
+            strings,
+            symbols,
+            error_prototype,
+            function_prototype,
+        );
+
+        errors::RangeError::bind_thread(
+            global_this,
+            pool,
+            strings,
+            symbols,
+            error_prototype,
+            function_prototype,
+        );
+
+        errors::JsSyntaxError::bind_thread(
+            global_this,
+            pool,
+            strings,
+            symbols,
+            error_prototype,
+            function_prototype,
+        );
+
+        errors::EvalError::bind_thread(
             global_this,
             pool,
             strings,

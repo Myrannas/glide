@@ -13,6 +13,7 @@ default = []
 eval = ["glide_compiler"]
 debugging = []
 cost_limits = []
+runtime_time = ["chrono"]
 
 [dependencies]
 anyhow = "1.0.38"
@@ -23,5 +24,6 @@ log={ version = "0.4.14" }
 rand = "0.8.3"
 ahash = "0.7.2"
 better_any = "0.2.0"
+chrono = { optional = true, version = "0.4.24" }
 
 glide_compiler = { optional = true, path = "../compiler", features=["eval"] }
