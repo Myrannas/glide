@@ -7,6 +7,7 @@ mod strings;
 use crate::parser::hand_parser::{pretty_print, Parse, WhitespaceTrackingLexer};
 use crate::result::{Result, SyntaxError};
 use logos::Logos;
+use std::collections::VecDeque;
 
 pub use ast::ParsedModule;
 pub(crate) use hand_parser::ParseContext;
@@ -17,7 +18,7 @@ pub fn parse_input(input: &str) -> Result<ParsedModule> {
     match hand_parser::parse(
         &mut WhitespaceTrackingLexer {
             lexer,
-            peeked: None,
+            peeked: VecDeque::with_capacity(2),
             previous_was_newline: false,
         },
         ParseContext { top_level: true },
@@ -33,7 +34,7 @@ pub(crate) fn parse_input_as<'a, T: Parse<'a>>(input: &'a str, context: ParseCon
     match T::parse(
         &mut WhitespaceTrackingLexer {
             lexer,
-            peeked: None,
+            peeked: VecDeque::with_capacity(2),
             previous_was_newline: false,
         },
         context,

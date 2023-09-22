@@ -2,22 +2,23 @@ use super::ast::{Expression, Reference};
 use crate::parser::ast::{
     BinaryOperator, BlockStatement, ConstStatement, FunctionStatement, IfStatement, ParsedModule,
     ReturnStatement, ThrowStatement, TryStatement, UnaryOperator, VarDeclaration, VarStatement,
-    WhileStatement,
 };
 use crate::parser::hand_parser::Error::Expected;
 use crate::parser::lexer::Token;
 use crate::parser::statements::decl_statement::DeclStatement;
 use crate::parser::statements::statement::Statement;
 use crate::parser::strings::parse_string;
+use itertools::Itertools;
 use logos::{Source, Span, SpannedIter};
 use std::backtrace::Backtrace;
 use std::cmp::min;
+use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
 pub(crate) struct WhitespaceTrackingLexer<'a> {
     pub(crate) lexer: SpannedIter<'a, Token<'a>>,
-    pub(crate) peeked: Option<Option<(Token<'a>, Span)>>,
+    pub(crate) peeked: VecDeque<(Option<(Token<'a>, Span)>, bool)>,
     pub(crate) previous_was_newline: bool,
 }
 
@@ -116,59 +117,72 @@ pub(crate) type LexerImpl<'a> = WhitespaceTrackingLexer<'a>;
 
 impl<'a> WhitespaceTrackingLexer<'a> {
     pub(crate) fn peek(&mut self) -> Option<&(Token<'a>, Span)> {
-        if self.peeked.is_none() {
-            self.peeked = Some(self.next())
+        if self.peeked.is_empty() {
+            let next = self.fetch_next();
+            self.peeked.push_back(next)
         }
 
-        self.peeked.as_ref().unwrap().as_ref()
+        (self.peeked[0].0).as_ref()
+    }
+
+    pub(crate) fn peek_n(&mut self, ahead: usize) -> Option<(Token<'a>, Span)> {
+        while self.peeked.len() < ahead {
+            let next = self.fetch_next();
+            self.peeked.push_back(next)
+        }
+
+        self.peeked.get(ahead - 1).and_then(|v| v.0.clone())
     }
 
     pub(crate) fn next(&mut self) -> Option<(Token<'a>, Span)> {
-        if let Some(peeked) = self.peeked.take() {
-            // println!("{:?}", peeked);
+        let (next, previous_was_newline) =
+            self.peeked.pop_front().unwrap_or_else(|| self.fetch_next());
 
-            return peeked;
-        }
+        self.previous_was_newline = previous_was_newline;
 
-        self.previous_was_newline = false;
+        next
+    }
+
+    fn fetch_next(&mut self) -> (Option<(Token<'a>, Span)>, bool) {
+        let mut previous_was_newline = false;
         while let Some(next) = self.lexer.next() {
             match next {
                 (Token::NewLine, ..) => {
-                    self.previous_was_newline = true;
+                    previous_was_newline = true;
                 }
                 (Token::Comment, ..) => {}
                 (Token::BlockComment(comment), ..) => {
                     if comment.contains('\n') {
-                        self.previous_was_newline = true;
+                        previous_was_newline = true;
                     }
 
                     if comment.contains('\r') {
-                        self.previous_was_newline = true;
+                        previous_was_newline = true;
                     }
 
                     if comment.contains('\u{2029}') {
-                        self.previous_was_newline = true;
+                        previous_was_newline = true;
                     }
 
                     if comment.contains('\u{2028}') {
-                        self.previous_was_newline = true;
+                        previous_was_newline = true;
                     }
                 }
                 other => {
                     // println!("{:?}", other);
 
-                    let bt = Backtrace::capture();
+                    // let bt = Backtrace::capture();
 
                     // do_some_work();
 
                     // println!("{}", bt);
 
-                    return Some(other);
+                    return (Some(other), previous_was_newline);
                 }
             }
         }
 
-        None
+        (None, previous_was_newline)
     }
 
     pub(crate) fn expect(&mut self, token: Token<'a>) -> Result<'a, ()> {
@@ -199,7 +213,7 @@ impl<'a> WhitespaceTrackingLexer<'a> {
             other => other.unwrap_or(&(Token::EndOfFile, 0..0)).clone(),
         };
 
-        if self.previous_was_newline {
+        if self.lookahead_was_newline() {
             Ok(())
         } else {
             self.expected(
@@ -255,6 +269,16 @@ impl<'a> WhitespaceTrackingLexer<'a> {
     }
 
     #[inline]
+    pub(crate) fn lookahead_was_newline(&mut self) -> bool {
+        if self.peeked.is_empty() {
+            let next = self.fetch_next();
+            self.peeked.push_back(next)
+        }
+
+        self.peeked[0].1
+    }
+
+    #[inline]
     pub(crate) fn lookahead_is(&mut self, token: Token<'a>) -> bool {
         if let Some((next_token, ..)) = self.peek() {
             if *next_token == token {
@@ -263,6 +287,26 @@ impl<'a> WhitespaceTrackingLexer<'a> {
         }
 
         false
+    }
+
+    #[inline]
+    pub(crate) fn lookahead_n_is(&mut self, ahead: usize, token: Token<'a>) -> bool {
+        if let Some((next_token, ..)) = self.peek_n(ahead) {
+            if next_token == token {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    #[inline]
+    pub(crate) fn lookahead_is_id(&mut self) -> bool {
+        if let Some((next_token, ..)) = self.peek() {
+            next_token.is_identifier()
+        } else {
+            false
+        }
     }
 
     #[inline]
@@ -290,6 +334,11 @@ fn parse_object_literal<'a>(
                 let expression = parse_expression(input, context)?;
                 attributes.push((value.to_string(), expression))
             }
+            // Some((Token::Label(label), ..)) => {
+            //     let expression = parse_expression(input, context)?;
+            //
+            //     attributes.push((label.to_owned(), expression))
+            // }
             Some(_) => {
                 let id = input.expect_id()?;
                 input.expect(Token::Colon)?;
@@ -357,11 +406,16 @@ fn parse_value<'a>(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'
             Ok(Expression::Undefined)
         }
         Some((Token::Function, ..)) => {
+            let name = if input.lookahead_is_id() {
+                Some(input.expect_id()?)
+            } else {
+                None
+            };
             let arguments = parse_args_list(input)?;
             let statements = BlockStatement::parse(input, ParseContext { top_level: false })?;
 
             Ok(Expression::Function {
-                name: None,
+                name,
                 arguments,
                 statements,
             })
@@ -518,7 +572,7 @@ fn parse_unary<'a>(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'
 
     let result = match input.lookahead() {
         Some((Token::Inc, ..)) => {
-            if input.previous_was_newline {
+            if input.lookahead_was_newline() {
                 return Err(Error::SyntaxError {
                     message: "Invalid symbol before ++ symbol",
                 });
@@ -689,13 +743,58 @@ fn parse_equality<'a>(
     )
 }
 
-fn parse_logical_and<'a>(
+fn parse_bitwise_and<'a>(
     input: &mut LexerImpl<'a>,
     context: ParseContext,
 ) -> Result<'a, Expression<'a>> {
     parse_binary_expression(
         input,
         parse_equality,
+        |token| match token {
+            Token::BitwiseAnd => Some(BinaryOperator::BitwiseAnd),
+            _ => None,
+        },
+        context,
+    )
+}
+
+fn parse_bitwise_xor<'a>(
+    input: &mut LexerImpl<'a>,
+    context: ParseContext,
+) -> Result<'a, Expression<'a>> {
+    parse_binary_expression(
+        input,
+        parse_bitwise_and,
+        |token| match token {
+            Token::BitwiseXor => Some(BinaryOperator::BitwiseXor),
+            _ => None,
+        },
+        context,
+    )
+}
+
+fn parse_bitwise_or<'a>(
+    input: &mut LexerImpl<'a>,
+    context: ParseContext,
+) -> Result<'a, Expression<'a>> {
+    parse_binary_expression(
+        input,
+        parse_bitwise_xor,
+        |token| match token {
+            Token::BitwiseOr => Some(BinaryOperator::BitwiseOr),
+            _ => None,
+        },
+        context,
+    )
+}
+
+fn parse_logical_and<'a>(
+    input: &mut LexerImpl<'a>,
+    context: ParseContext,
+) -> Result<'a, Expression<'a>> {
+    parse_binary_expression(
+        input,
+        parse_bitwise_or,
         |token| match token {
             Token::LogicalAnd => Some(BinaryOperator::LogicalAnd),
             _ => None,
@@ -847,11 +946,20 @@ fn parse_assignment<'a>(
 //     context: ParseContext,
 // ) -> Result<'a, Expression<'a>> {
 //     if input.consume_if(Token::Function) {
+//         let name = if input.lookahead_is_id() {
+//             Some(input.expect_id()?)
+//         } else {
+//             None
+//         };
 //         let arguments = parse_args_list(input)?;
 //         let statements = BlockStatement::parse(input, ParseContext { top_level: false })?;
 //
+//         if input.lookahead_is(Token::OpenParen) {
+//             parse_
+//         }
+//
 //         Ok(Expression::Function {
-//             name: None,
+//             name,
 //             arguments,
 //             statements,
 //         })
@@ -885,20 +993,6 @@ impl<'a> Parse<'a> for IfStatement<'a> {
             condition,
             true_block: Box::new(true_block),
             false_block,
-        })
-    }
-}
-
-impl<'a> Parse<'a> for WhileStatement<'a> {
-    fn parse(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'a, Self> {
-        input.expect(Token::While)?;
-
-        let condition = parse_group(input, context)?;
-        let loop_block = Statement::parse(input, context)?;
-
-        Ok(WhileStatement {
-            condition,
-            loop_block: Box::new(loop_block),
         })
     }
 }
@@ -979,7 +1073,10 @@ pub(crate) fn parse_args_list<'a>(input: &mut LexerImpl<'a>) -> Result<'a, Vec<&
     Ok(arguments)
 }
 
-fn parse_group<'a>(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'a, Expression<'a>> {
+pub(crate) fn parse_group<'a>(
+    input: &mut LexerImpl<'a>,
+    context: ParseContext,
+) -> Result<'a, Expression<'a>> {
     input.expect(Token::OpenParen)?;
 
     let expr = parse_expression(input, context)?;

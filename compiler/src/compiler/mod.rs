@@ -7,23 +7,21 @@ use crate::compiler::locals::{LocalAllocator, Resolution};
 use crate::parser::ast::Reference::{Accessor, Id};
 use crate::parser::ast::{
     BlockStatement, ConstStatement, Expression, Field, FunctionStatement, IfStatement,
-    ParsedModule, ReturnStatement, ThrowStatement, TryStatement, UnaryOperator, VarDeclaration,
-    VarStatement, WhileStatement,
+    ParsedModule, ReturnStatement, ThrowStatement, TryStatement, VarDeclaration, VarStatement,
 };
 use crate::parser::parse_input_as;
 use crate::parser::statements::class_statement::ClassMember;
 use crate::parser::statements::decl_statement::DeclStatement;
+use crate::parser::statements::do_while_statement::DoWhileStatement;
 use crate::parser::statements::for_statement::ForStatement;
 use crate::parser::statements::statement::Statement;
+use crate::parser::statements::while_statement::WhileStatement;
 use crate::parser::ParseContext;
-use crate::result::{CompilerError, InternalError, Result, SyntaxError};
+use crate::result::{CompilerError, Result, SyntaxError};
 use instruction_set::Constant::Undefined;
 use instruction_set::Environmental::GlobalThis;
 use instruction_set::Instruction::*;
-use instruction_set::{
-    Chunk, Class, Constant, Environmental, Function, Instruction, Local, LocalInit, Module,
-    Property,
-};
+use instruction_set::{Chunk, Class, Constant, Function, Instruction, Local, Module, Property};
 use log::debug;
 use std::ops::Index;
 
@@ -40,6 +38,7 @@ macro_rules! internal_error {
     };
 }
 
+#[macro_export]
 macro_rules! syntax_error {
     ($error: literal) => {
         return Err(CompilerError::SyntaxError(SyntaxError::new($error)));
@@ -183,11 +182,13 @@ impl<'b> ChunkBuilder {
 //     }
 // }
 
-enum BreakStack {
+enum BreakStack<'a, 'b> {
     Root,
     Child {
         break_chunk: usize,
         continue_chunk: usize,
+        identifier: Option<&'b str>,
+        parent: &'a BreakStack<'a, 'b>,
     },
 }
 
@@ -248,27 +249,49 @@ fn freeze_instructions(mut chunks: Vec<Chunk>) -> Vec<Instruction> {
     result
 }
 
-impl BreakStack {
-    fn new() -> BreakStack {
+impl<'a, 'b> BreakStack<'a, 'b> {
+    fn new() -> BreakStack<'a, 'b> {
         BreakStack::Root
     }
 
-    fn child(&self, break_chunk: usize, continue_chunk: usize) -> BreakStack {
+    fn child(
+        &'a self,
+        name: Option<&'b str>,
+        break_chunk: usize,
+        continue_chunk: usize,
+    ) -> BreakStack<'a, 'b> {
         BreakStack::Child {
             break_chunk,
             continue_chunk,
+            identifier: name,
+            parent: self,
         }
     }
 
-    fn get_break(&self) -> Result<usize> {
+    fn get_stack_by_id(&self, id: Option<&'b str>) -> &BreakStack {
+        if id.is_none() {
+            return &self;
+        }
+
         match self {
+            BreakStack::Root => &self,
+            stack @ BreakStack::Child {
+                identifier: Some(identifier),
+                ..
+            } if Some(*identifier) == id => stack,
+            BreakStack::Child { parent, .. } => parent.get_stack_by_id(id),
+        }
+    }
+
+    fn get_break(&self, id: Option<&'b str>) -> Result<usize> {
+        match self.get_stack_by_id(id) {
             BreakStack::Root => syntax_error!("Illegal break statement"),
             BreakStack::Child { break_chunk, .. } => Ok(*break_chunk),
         }
     }
 
-    fn get_continue(&self) -> Result<usize> {
-        match self {
+    fn get_continue(&self, id: Option<&'b str>) -> Result<usize> {
+        match self.get_stack_by_id(id) {
             BreakStack::Root => syntax_error!("Illegal continue statement"),
             BreakStack::Child { continue_chunk, .. } => Ok(*continue_chunk),
         }
@@ -309,8 +332,10 @@ impl<'a, 'c> ChunkBuilder {
         input: Statement<'a>,
         next_block: Option<usize>,
         break_stack: &'b BreakStack,
+        label: Option<&'a str>,
     ) -> Result<(Self, bool)> {
         let chunk = match input {
+            Statement::Empty => self,
             Statement::Return(ReturnStatement { expression }) => {
                 if let Some(expression) = expression {
                     self.compile(expression)?.append(Return)
@@ -328,16 +353,16 @@ impl<'a, 'c> ChunkBuilder {
                     expression,
                 } in declarations
                 {
+                    if identifier == "arguments" && expression.is_some() {
+                        syntax_error!("Cannot declare variable named arguments");
+                    } else if identifier == "eval" && expression.is_some() {
+                        syntax_error!("Cannot declare variable named eval");
+                    };
+
                     let local = next.allocate_local(identifier, false);
 
                     if let Some(expression) = expression {
-                        if !next.frame.locals.set_init_value(
-                            local,
-                            &expression,
-                            &mut next.frame.atoms,
-                        ) {
-                            next = next.compile(expression)?.append(SetLocal { local });
-                        }
+                        next = next.compile(expression)?.append(SetLocal { local });
 
                         if !next.options.module {
                             let name = next.allocate_atom(identifier);
@@ -368,8 +393,12 @@ impl<'a, 'c> ChunkBuilder {
                 let mut next = self;
 
                 if let Some(vars) = vars {
-                    let (next_builder, finalized) =
-                        next.compile_statement(Statement::Var(vars), next_block, break_stack)?;
+                    let (next_builder, finalized) = next.compile_statement(
+                        Statement::Var(vars),
+                        next_block,
+                        break_stack,
+                        None,
+                    )?;
 
                     if finalized {
                         return Ok((next_builder, finalized));
@@ -395,7 +424,7 @@ impl<'a, 'c> ChunkBuilder {
                     next = next.append(Jump { to: block_index });
                 }
 
-                let next_break_stack = &break_stack.child(next_index, operation_index);
+                let next_break_stack = &break_stack.child(label, next_index, operation_index);
                 next = next
                     .switch_to(block_index)
                     .compile_block(*block, operation_index, next_break_stack, |c| c)?
@@ -438,7 +467,7 @@ impl<'a, 'c> ChunkBuilder {
                     });
                 };
 
-                self.compile_statement(Statement::For(for_statement), None, break_stack)?
+                self.compile_statement(Statement::For(for_statement), None, break_stack, None)?
                     .0
 
                 // self.switch_to(next_index)
@@ -491,7 +520,7 @@ impl<'a, 'c> ChunkBuilder {
                 let block_index = self.allocate_chunk();
                 let next_index = self.allocate_chunk();
 
-                let next_break_stack = &break_stack.child(next_index, condition_index);
+                let next_break_stack = &break_stack.child(label, next_index, condition_index);
 
                 self.append(Jump {
                     to: condition_index,
@@ -505,6 +534,34 @@ impl<'a, 'c> ChunkBuilder {
                 .switch_to(block_index)
                 .compile_block(*loop_block, condition_index, next_break_stack, |c| c)?
                 .switch_to(next_index)
+            }
+            Statement::DoWhile(DoWhileStatement {
+                condition,
+                loop_block,
+            }) => {
+                let block_index = self.allocate_chunk();
+                let condition_index = self.allocate_chunk();
+                let next_index = self.allocate_chunk();
+
+                let next_break_stack = &break_stack.child(label, next_index, condition_index);
+
+                self.append(Jump { to: block_index })
+                    .switch_to(block_index)
+                    .compile_block(*loop_block, condition_index, next_break_stack, |c| c)?
+                    .append(Jump {
+                        to: condition_index,
+                    })
+                    .switch_to(condition_index)
+                    .compile(condition)?
+                    .append(CompareJump {
+                        if_true: block_index,
+                        if_false: next_index,
+                    })
+                    .switch_to(next_index)
+            }
+            Statement::Label(label, statement) => {
+                self.compile_statement(*statement, next_block, break_stack, Some(label))?
+                    .0
             }
             Statement::Try(TryStatement {
                 try_block,
@@ -561,11 +618,11 @@ impl<'a, 'c> ChunkBuilder {
             Statement::Block(block) => {
                 self.compile_block(block, next_block.unwrap_or(usize::MAX), break_stack, |c| c)?
             }
-            Statement::Break => self.append(Jump {
-                to: break_stack.get_break()?,
+            Statement::Break(id) => self.append(Jump {
+                to: break_stack.get_break(id)?,
             }),
-            Statement::Continue => self.append(Jump {
-                to: break_stack.get_continue()?,
+            Statement::Continue(id) => self.append(Jump {
+                to: break_stack.get_continue(id)?,
             }),
         };
 
@@ -767,7 +824,7 @@ impl<'a, 'c> ChunkBuilder {
                 (next, false)
             }
             DeclStatement::Statement(statement) => {
-                self.compile_statement(statement, next_block, break_stack)?
+                self.compile_statement(statement, next_block, break_stack, None)?
             }
             DeclStatement::Const(ConstStatement { declarations }) => {
                 let mut next = self;
@@ -928,6 +985,7 @@ pub fn compile_eval(locals: Vec<Local>, input: ParsedModule) -> Result<Function>
             current_id: 0,
             init: vec![],
         }
+        .child()
         .child(),
     };
 

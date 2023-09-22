@@ -1,7 +1,7 @@
 use crate::debugging::{DebugRepresentation, Renderer};
 use crate::values::nan::Value;
 use crate::JsThread;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Debug, Clone)]
 pub struct Stack {
@@ -30,6 +30,21 @@ pub enum ExecutionError<'a> {
     InternalError(InternalError),
     SyntaxError(SyntaxError),
     TypeError(String),
+}
+
+impl Debug for ExecutionError<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecutionError::Thrown(_value, stack) => {
+                f.write_fmt(format_args!("Thrown {:?}", stack))
+            }
+            ExecutionError::InternalError(err) => {
+                f.write_fmt(format_args!("InternalError: {:?}", err))
+            }
+            ExecutionError::SyntaxError(err) => f.write_fmt(format_args!("SyntaxError: {:?}", err)),
+            ExecutionError::TypeError(err) => f.write_fmt(format_args!("TypeError: {:?}", err)),
+        }
+    }
 }
 
 #[derive(Debug)]

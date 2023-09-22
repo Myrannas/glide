@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn bootstrap_harness<'a>() -> Realm<'a> {
-    let mut realm = Realm::new();
+    let mut realm = Realm::new().unwrap();
 
     for file in &[
         "./test262/harness/sta.js",
@@ -122,9 +122,7 @@ fn run_suite(
 
     if let Some(flags) = &details.flags {
         // panic!("{:?}", details);
-        let supported_flags = vec!["generated".to_string(), "onlyStrict".to_string()]
-            .into_iter()
-            .collect();
+        let supported_flags = vec!["generated".to_string()].into_iter().collect();
         let diff = flags.difference(&supported_flags);
 
         if diff.count() > 0 {
@@ -299,12 +297,12 @@ fn main() {
         .unwrap();
 
     let mut suites: Vec<PathBuf> = vec![
-        // PathBuf::from("./test262/test"),
-        PathBuf::from("./test262/test/built-ins"),
+        PathBuf::from("./test262/test"),
+        // PathBuf::from("./test262/test/built-ins"),
         // PathBuf::from("./test262/test/annexB"),
         // PathBuf::from("./test262/test/intl402"),
         // PathBuf::from("./test262/implementation-contributed"),
-        PathBuf::from("./test262/test/language"),
+        // PathBuf::from("./test262/test/language"),
     ]
     .into_iter()
     .flat_map(|f| all_suites(f).unwrap())

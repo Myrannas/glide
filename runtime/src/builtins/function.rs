@@ -2,8 +2,8 @@ use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::{CustomFunctionReference, FunctionReference};
 use crate::values::nan::{Value, ValueType};
-use crate::{ExecutionError, InternalError, JsThread};
-use builtin::{constructor, named, prototype, varargs};
+use crate::{ExecutionError, InternalError, JsFunction, JsThread};
+use builtin::{callable, constructor, named, prototype, varargs};
 
 pub(crate) struct JsFunctionObject<'a, 'b> {
     target: Value<'a>,
@@ -15,6 +15,48 @@ pub(crate) struct JsFunctionObject<'a, 'b> {
 impl<'a, 'b> JsFunctionObject<'a, 'b> {
     #[constructor]
     fn constructor(&mut self) {}
+
+    #[callable]
+    fn callable(thread: &mut JsThread<'a>, call: Value<'a>) -> JsResult<'a> {
+        #[cfg(feature = "eval")]
+        {
+            match call.get_type() {
+                ValueType::String(str) => {
+                    let input = thread.realm.strings.get(str).as_ref().to_owned();
+
+                    let code = match glide_compiler::parse_input(&input) {
+                        Ok(code) => code,
+                        Err(err) => {
+                            return Err(err.into());
+                        }
+                    };
+
+                    let function = match glide_compiler::compile_eval(vec![], code) {
+                        Ok(code) => code,
+                        Err(err) => {
+                            return Err(err.into());
+                        }
+                    };
+
+                    let loaded_function = JsFunction::load(function, &mut thread.realm);
+
+                    let function_constant = thread.realm.constants.function;
+                    let context = thread.current_context().clone();
+
+                    let function = thread.realm.wrap_function(
+                        function_constant,
+                        FunctionReference::Custom(CustomFunctionReference {
+                            function: loaded_function,
+                            parent_context: context,
+                        }),
+                    );
+
+                    Ok(function.into())
+                }
+                _ => Ok(Value::UNDEFINED),
+            }
+        }
+    }
 
     #[varargs]
     fn call(&mut self, args: Vec<Value<'a>>) -> JsResult<'a> {

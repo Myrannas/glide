@@ -8,7 +8,6 @@ use builtin::{constant, named, prototype, varargs};
 use rand::prelude::*;
 use std::f64::consts::{E, PI};
 
-// #[allow(dead_code)]
 pub(crate) struct JsMath {}
 
 #[prototype]
@@ -262,9 +261,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("E")]
     fn e(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         E.into()
     }
@@ -272,9 +271,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("PI")]
     fn pi(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         PI.into()
     }
@@ -282,9 +281,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("LN10")]
     fn ln10(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         10f64.ln().into()
     }
@@ -292,9 +291,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("LN2")]
     fn ln2(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         2f64.ln().into()
     }
@@ -302,9 +301,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("LOG10E")]
     fn log10e(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         E.log10().into()
     }
@@ -312,9 +311,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("LOG2E")]
     fn log2e(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         E.log2().into()
     }
@@ -322,9 +321,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("SQRT1_2")]
     fn sqrt1_2(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         (0.5f64).sqrt().into()
     }
@@ -332,9 +331,9 @@ impl<'a, 'b> JsMath {
     #[constant]
     #[named("SQRT2")]
     fn sqrt2(
-        pool: &mut ObjectPool<'a>,
-        strings: &mut StringPool,
-        symbols: &mut SymbolRegistry<'a>,
+        _pool: &mut ObjectPool<'a>,
+        _strings: &mut StringPool,
+        _symbols: &mut SymbolRegistry<'a>,
     ) -> Value<'a> {
         2f64.sqrt().into()
     }

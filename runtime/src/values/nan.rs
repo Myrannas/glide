@@ -135,6 +135,12 @@ impl<'a> From<f64> for Value<'a> {
     }
 }
 
+impl<'a> From<u32> for Value<'a> {
+    fn from(value: u32) -> Self {
+        Value::from(value as f64)
+    }
+}
+
 impl<'a> From<Option<Value<'a>>> for Value<'a> {
     fn from(value: Option<Value<'a>>) -> Self {
         value.unwrap_or_default()

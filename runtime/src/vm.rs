@@ -154,6 +154,10 @@ impl<'a> JsThread<'a> {
         self.stack.pop().unwrap().into()
     }
 
+    pub(crate) fn pop_call_stack(&mut self) {
+        self.current_frame = self.call_stack.pop().unwrap();
+    }
+
     pub(crate) fn return_value(&mut self, value: impl Into<Value<'a>>) {
         let value = value.into();
 

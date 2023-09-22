@@ -24,6 +24,9 @@ impl Compile for BinaryOperator {
             BinaryOperator::InstanceOf => InstanceOf,
             BinaryOperator::In => In,
             BinaryOperator::Exponential => Exponential,
+            BinaryOperator::BitwiseOr => BitwiseOr,
+            BinaryOperator::BitwiseXor => BitwiseXor,
+            BinaryOperator::BitwiseAnd => BitwiseAnd,
             BinaryOperator::LogicalOr => panic!("Lor is handled separately"),
             BinaryOperator::LogicalAnd => panic!("Land is handled separately"),
         };

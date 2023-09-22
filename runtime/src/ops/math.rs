@@ -50,12 +50,38 @@ pub(crate) fn numeric_op(thread: &mut JsThread, function: impl FnOnce(f64, f64) 
     thread.step();
 }
 
+pub(crate) fn integer_op(thread: &mut JsThread, function: impl FnOnce(u32, u32) -> u32) {
+    let l_prim: Value = pop!(thread);
+    let l_prim = catch!(thread, l_prim.to_u32(&thread.realm));
+
+    let r_prim: Value = pop!(thread);
+    let r_prim = catch!(thread, r_prim.to_u32(&thread.realm));
+
+    let result = function(l_prim, r_prim);
+
+    thread.push_stack(result);
+
+    thread.step();
+}
+
 pub(crate) fn subtract(thread: &mut JsThread) {
     numeric_op(thread, |v1, v2| v1 - v2)
 }
 
 pub(crate) fn multiply(thread: &mut JsThread) {
     numeric_op(thread, |v1, v2| v1 * v2)
+}
+
+pub(crate) fn bitwise_and(thread: &mut JsThread) {
+    integer_op(thread, |v1, v2| v1 & v2)
+}
+
+pub(crate) fn bitwise_or(thread: &mut JsThread) {
+    integer_op(thread, |v1, v2| v1 | v2)
+}
+
+pub(crate) fn bitwise_xor(thread: &mut JsThread) {
+    integer_op(thread, |v1, v2| v1 ^ v2)
 }
 
 pub(crate) fn divide(thread: &mut JsThread) {

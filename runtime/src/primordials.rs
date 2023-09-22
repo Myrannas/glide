@@ -3,6 +3,7 @@ use super::builtins::{array, errors, function, number, objects, promise, set, st
 use crate::builtins::{boolean, console, date, map, regexp, symbol};
 use crate::debugging::X;
 use crate::object_pool::{ObjectPointer, ObjectPool};
+use crate::result::JsResult;
 use crate::string_pool::{StringPointer, StringPool};
 use crate::values::function::FunctionReference;
 use crate::values::nan::Value;
@@ -151,13 +152,13 @@ pub(crate) fn get_prototype_property<'a>(
 
 impl<'a> Default for Realm<'a> {
     fn default() -> Self {
-        Realm::new()
+        Realm::new().unwrap()
     }
 }
 
 impl<'a> Realm<'a> {
     #[must_use]
-    pub fn new() -> Realm<'a> {
+    pub fn new() -> JsResult<'a, Realm<'a>> {
         let mut object_pool = ObjectPool::new();
         let global_this = object_pool.allocate(JsObject::new());
         let mut string_pool = StringPool::new();
@@ -170,7 +171,7 @@ impl<'a> Realm<'a> {
             &mut string_pool,
             &constants,
             &mut symbols,
-        );
+        )?;
         let errors = Errors::init(
             global_this,
             primitives.object,
@@ -178,7 +179,7 @@ impl<'a> Realm<'a> {
             &mut object_pool,
             &mut string_pool,
             &mut symbols,
-        );
+        )?;
 
         super::builtins::math::JsMath::bind_thread(
             global_this,
@@ -187,7 +188,7 @@ impl<'a> Realm<'a> {
             &mut symbols,
             primitives.object,
             primitives.function,
-        );
+        )?;
 
         #[cfg(feature = "eval")]
         {
@@ -213,7 +214,7 @@ impl<'a> Realm<'a> {
                 false,
                 false,
                 false,
-            );
+            )?;
         }
         global_this.define_value_property(
             &mut object_pool,
@@ -222,7 +223,7 @@ impl<'a> Realm<'a> {
             false,
             false,
             false,
-        );
+        )?;
         global_this.define_value_property(
             &mut object_pool,
             constants.nan,
@@ -230,7 +231,7 @@ impl<'a> Realm<'a> {
             false,
             false,
             false,
-        );
+        )?;
         global_this.define_value_property(
             &mut object_pool,
             constants.infinity,
@@ -238,9 +239,9 @@ impl<'a> Realm<'a> {
             false,
             false,
             false,
-        );
+        )?;
 
-        Realm {
+        Ok(Realm {
             global_this,
             wrappers: primitives,
             errors,
@@ -248,7 +249,7 @@ impl<'a> Realm<'a> {
             strings: string_pool,
             constants,
             symbols,
-        }
+        })
     }
 
     pub fn intern_string(&mut self, string: impl AsRef<str>) -> StringPointer {
@@ -269,6 +270,15 @@ impl<'a> Realm<'a> {
     pub fn get_object_mut(&mut self, pointer: ObjectPointer<'a>) -> &mut JsObject<'a> {
         self.objects.get_mut(pointer)
     }
+
+    pub(crate) fn wrap_function(
+        &mut self,
+        name: JsPrimitiveString,
+        function: impl Into<FunctionReference<'a>>,
+    ) -> ObjectPointer<'a> {
+        self.wrappers
+            .wrap_function(&mut self.objects, &self.constants, name, function)
+    }
 }
 
 impl<'a> Primitives<'a> {
@@ -278,7 +288,7 @@ impl<'a> Primitives<'a> {
         strings: &mut StringPool,
         constants: &Constants,
         symbols: &mut SymbolRegistry<'a>,
-    ) -> Primitives<'a> {
+    ) -> JsResult<'a, Primitives<'a>> {
         let function_prototype_base = JsObject::builder(object_pool).build();
         let object_prototype_base = JsObject::builder(object_pool).build();
 
@@ -289,7 +299,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         function_prototype_base.set_prototype(object_pool, object_prototype_base);
 
@@ -300,7 +310,7 @@ impl<'a> Primitives<'a> {
             symbols,
             function_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         let (_, string_prototype) = string::JsString::bind_thread(
             global_this,
@@ -309,7 +319,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         let (symbol_contructor, _) = symbol::JsSymbol::bind_thread(
             global_this,
@@ -318,7 +328,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         let (number_constructor, ..) = number::JsNumber::bind_thread(
             global_this,
@@ -327,7 +337,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         let (_, array_prototype) = array::JsArray::bind_thread(
             global_this,
@@ -336,7 +346,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         let (promise_constructor, ..) = promise::JsPromise::bind_thread(
             global_this,
@@ -345,7 +355,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         set::JsSet::bind_thread(
             global_this,
@@ -354,7 +364,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         map::JsMap::bind_thread(
             global_this,
@@ -363,7 +373,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         regexp::RegExp::bind_thread(
             global_this,
@@ -372,7 +382,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         console::JsConsole::bind_thread(
             global_this,
@@ -381,7 +391,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         #[cfg(feature = "runtime_time")]
         date::JsDate::bind_thread(
@@ -391,7 +401,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         boolean::JsBoolean::bind_thread(
             global_this,
@@ -400,7 +410,7 @@ impl<'a> Primitives<'a> {
             symbols,
             object_prototype_base,
             function_prototype_base,
-        );
+        )?;
 
         let name = strings.intern_native("name");
 
@@ -430,9 +440,9 @@ impl<'a> Primitives<'a> {
             false,
             false,
             false,
-        );
+        )?;
 
-        primitives
+        Ok(primitives)
     }
 
     pub(crate) fn wrap_string(
@@ -467,16 +477,17 @@ impl<'a> Primitives<'a> {
     #[allow(dead_code)]
     pub(crate) fn wrap_function(
         &self,
-        realm: &mut Realm<'a>,
+        pool: &mut ObjectPool<'a>,
+        constants: &Constants,
         name: JsPrimitiveString,
         function: impl Into<FunctionReference<'a>>,
     ) -> ObjectPointer<'a> {
         let function = function.into();
-        JsObject::builder(&mut realm.objects)
+        JsObject::builder(pool)
             .with_callable(function.clone())
             .with_construct(function)
             .with_prototype(self.function)
-            .with_property(realm.constants.name, name)
+            .with_property(constants.name, name)
             .build()
     }
 
@@ -655,7 +666,7 @@ impl<'a> Errors<'a> {
         pool: &mut ObjectPool<'a>,
         strings: &mut StringPool,
         symbols: &mut SymbolRegistry<'a>,
-    ) -> Errors<'a> {
+    ) -> JsResult<'a, Errors<'a>> {
         let (.., error_prototype) = errors::JsError::bind_thread(
             global_this,
             pool,
@@ -663,7 +674,7 @@ impl<'a> Errors<'a> {
             symbols,
             object_prototype,
             function_prototype,
-        );
+        )?;
 
         let syntax_error = JsObject::builder(pool)
             .with_prototype(error_prototype)
@@ -676,7 +687,7 @@ impl<'a> Errors<'a> {
             symbols,
             error_prototype,
             function_prototype,
-        );
+        )?;
         let (.., reference_error_prototype) = errors::ReferenceError::bind_thread(
             global_this,
             pool,
@@ -684,7 +695,7 @@ impl<'a> Errors<'a> {
             symbols,
             error_prototype,
             function_prototype,
-        );
+        )?;
 
         errors::URIError::bind_thread(
             global_this,
@@ -693,7 +704,7 @@ impl<'a> Errors<'a> {
             symbols,
             error_prototype,
             function_prototype,
-        );
+        )?;
 
         errors::RangeError::bind_thread(
             global_this,
@@ -702,7 +713,7 @@ impl<'a> Errors<'a> {
             symbols,
             error_prototype,
             function_prototype,
-        );
+        )?;
 
         errors::JsSyntaxError::bind_thread(
             global_this,
@@ -711,7 +722,7 @@ impl<'a> Errors<'a> {
             symbols,
             error_prototype,
             function_prototype,
-        );
+        )?;
 
         errors::EvalError::bind_thread(
             global_this,
@@ -720,13 +731,13 @@ impl<'a> Errors<'a> {
             symbols,
             error_prototype,
             function_prototype,
-        );
+        )?;
 
         let syntax_error_name = strings.intern_native("SyntaxError");
         let type_error_name = strings.intern_native("TypeError");
         let reference_error_name = strings.intern_native("ReferenceError");
 
-        Errors {
+        Ok(Errors {
             reference_error: reference_error_prototype,
             syntax_error,
             type_error: type_error_prototype,
@@ -736,7 +747,7 @@ impl<'a> Errors<'a> {
             syntax_error_name,
             type_error_name,
             reference_error_name,
-        }
+        })
     }
 
     fn new_error(

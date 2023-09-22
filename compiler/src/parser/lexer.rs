@@ -216,6 +216,15 @@ pub enum Token<'a> {
     #[token(".")]
     Dot,
 
+    #[token("&")]
+    BitwiseAnd,
+
+    #[token("|")]
+    BitwiseOr,
+
+    #[token("^")]
+    BitwiseXor,
+
     #[token("?.")]
     NullSafe,
 
@@ -224,6 +233,9 @@ pub enum Token<'a> {
 
     #[token("&&")]
     LogicalAnd,
+
+    #[token("do")]
+    Do,
 
     #[regex(r"[$a-zA-Z_][$a-zA-Z0-9_]*")]
     Id(&'a str),

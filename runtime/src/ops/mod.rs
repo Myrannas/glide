@@ -15,7 +15,10 @@ use crate::ops::control_flow::{
     call, call_new, catch, compare_jump, debug, drop_catch, jump, return_constant, return_value,
     throw_value,
 };
-use crate::ops::math::{add, divide, exponential, increment, modulus, multiply, negate, subtract};
+use crate::ops::math::{
+    add, bitwise_and, bitwise_or, bitwise_xor, divide, exponential, increment, modulus, multiply,
+    negate, subtract,
+};
 use crate::ops::memory::{
     delete, duplicate, get, get_capture, get_class, get_function, get_local, get_named,
     get_private, load_constant, load_environmental, resolve, set, set_capture, set_local,
@@ -40,6 +43,9 @@ impl Operand for Instruction {
             Instruction::Modulo => modulus(thread),
             Instruction::Exponential => exponential(thread),
             Instruction::Multiply => multiply(thread),
+            Instruction::BitwiseAnd => bitwise_and(thread),
+            Instruction::BitwiseOr => bitwise_or(thread),
+            Instruction::BitwiseXor => bitwise_xor(thread),
             Instruction::LoadConstant { constant } => load_constant(thread, constant),
             Instruction::LoadEnvironmental { environmental } => {
                 load_environmental(thread, environmental)

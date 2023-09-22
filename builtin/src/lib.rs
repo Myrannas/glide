@@ -89,7 +89,7 @@ impl ToTokens for Constructor {
             }.into();
 
             constructor_object.set_construct(pool, constructor.clone());
-            prototype.define_value_property(pool, strings.intern_native("constructor"), Value::from(constructor_object), false, false, true);
+            prototype.define_value_property(pool, strings.intern_native("constructor"), Value::from(constructor_object), false, false, true)?;
         };
 
         output.to_tokens(tokens);
@@ -128,9 +128,9 @@ impl ToTokens for StaticMethod {
                 name: Some(name)
             }).with_prototype(function_prototype).build();
 
-            method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
-            method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true);
-            constructor_object.define_value_property(pool, name, Value::from(method), true, false, true);
+            method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true)?;
+            method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true)?;
+            constructor_object.define_value_property(pool, name, Value::from(method), true, false, true)?;
         };
 
         output.to_tokens(tokens);
@@ -168,9 +168,9 @@ impl ToTokens for Method {
                 },
                 name: Some(name)
             }).with_prototype(function_prototype).build();
-            method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true);
-            method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true);
-            prototype.define_value_property(pool, name, Value::from(method), true, false, true);
+            method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true)?;
+            method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true)?;
+            prototype.define_value_property(pool, name, Value::from(method), true, false, true)?;
         };
 
         output.to_tokens(tokens);
@@ -351,7 +351,7 @@ impl ToTokens for Constant {
                 false,
                 false,
                 false
-            );
+            )?;
         };
 
         output.to_tokens(tokens);
@@ -628,14 +628,14 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 constructor_object: crate::object_pool::ObjectPointer<'a>,
                 prototype: crate::object_pool::ObjectPointer<'a>,
                 function_prototype: crate::object_pool::ObjectPointer<'a>,
-            ) -> crate::JsPrimitiveString {
+            ) -> crate::result::JsResult<'a, crate::JsPrimitiveString> {
                 #(#methods)*
 
                 let type_name: crate::JsPrimitiveString = strings.intern_native(#name);
-                constructor_object.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true);
-                prototype.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true);
+                constructor_object.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true)?;
+                prototype.define_value_property(pool, strings.intern_native("name"), Value::from(strings.intern_native(#type_identifier)), false, false, true)?;
 
-                strings.intern_native(#type_identifier)
+                Ok(strings.intern_native(#type_identifier))
             }
         }
     })

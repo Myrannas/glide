@@ -6,6 +6,7 @@ use glide_compiler::{
     compile_eval, parse_input, CompilerError, InternalError as CompilationInternalError,
     SyntaxError as CompilationSyntaxError,
 };
+use log::trace;
 
 impl<'a> From<CompilerError> for ExecutionError<'a> {
     fn from(error: CompilerError) -> Self {
@@ -41,6 +42,7 @@ pub(crate) fn eval<'a>(
 
             let current_function = frame.current_function();
             let locals = current_function.locals();
+
             let function = match compile_eval(locals.to_vec(), code) {
                 Ok(code) => code,
                 Err(err) => {
@@ -52,15 +54,23 @@ pub(crate) fn eval<'a>(
             let context = frame.current_context().clone();
 
             let loaded_function = JsFunction::load(function, &mut frame.realm);
-            let result = frame.call_from_native(
+
+            frame.call(
                 this,
-                FunctionReference::Custom(CustomFunctionReference {
+                CustomFunctionReference {
                     function: loaded_function,
                     parent_context: context,
-                }),
-                0,
+                },
+                args,
                 false,
-            )?;
+                true,
+            );
+
+            let result = frame.run()?;
+
+            trace!("Finished eval execution");
+
+            frame.pop_call_stack();
 
             Ok(Some(result))
         }

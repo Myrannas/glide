@@ -46,6 +46,9 @@ pub enum BinaryOperator {
     InstanceOf,
     In,
     Exponential,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -154,12 +157,6 @@ pub(crate) struct ConstStatement<'a> {
 pub(crate) struct VarDeclaration<'a> {
     pub(crate) identifier: &'a str,
     pub(crate) expression: Option<Expression<'a>>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub(crate) struct WhileStatement<'a> {
-    pub(crate) condition: Expression<'a>,
-    pub(crate) loop_block: Box<Statement<'a>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]

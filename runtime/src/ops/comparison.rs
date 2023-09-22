@@ -1,4 +1,4 @@
-use crate::debugging::DebugWithRealm;
+use crate::debugging::{DebugWithRealm, X};
 use crate::primordials::{get_prototype_property, RuntimeHelpers};
 use crate::{catch, dv, pop, JsThread, Value, ValueType};
 
