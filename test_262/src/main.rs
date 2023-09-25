@@ -302,7 +302,7 @@ fn main() {
         // PathBuf::from("./test262/test/annexB"),
         // PathBuf::from("./test262/test/intl402"),
         // PathBuf::from("./test262/implementation-contributed"),
-        // PathBuf::from("./test262/test/language"),
+        // PathBuf::from("./test262/test/language/expressions"),
     ]
     .into_iter()
     .flat_map(|f| all_suites(f).unwrap())

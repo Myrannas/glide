@@ -1,19 +1,20 @@
 use crate::debugging::{DebugRepresentation, Renderer};
 use crate::pool::{Pool, PoolPointer};
-use crate::primordials::{Errors, RuntimeHelpers};
+use crate::primordials::RuntimeHelpers;
 use crate::result::JsResult;
 use crate::values::function::FunctionReference;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::{Constructor, JsObjectState, Property, PropertyKey};
 use crate::{ExecutionError, JsObject, JsPrimitiveString, JsThread};
 use better_any::{TidAble, TidExt};
+use stash::{Index, Stash};
 use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
 impl<'a> DebugRepresentation<'a> for ObjectPointer<'a> {
     fn render(&self, renderer: &mut Renderer<'a, '_, '_, '_>) -> std::fmt::Result {
-        let obj = renderer.realm.objects.get(*self);
+        let obj = &renderer.realm.objects[*self];
 
         renderer.literal(&format!("{:?}#", self.inner.to_string()))?;
 
@@ -32,51 +33,34 @@ impl<'a> From<ObjectPointer<'a>> for u32 {
     }
 }
 
-#[derive(Clone)]
-pub struct ObjectPool<'a> {
-    pool: Pool<JsObject<'a>>,
-}
+pub type ObjectPool<'a> = Stash<JsObject<'a>, ObjectPointer<'a>>;
 
-impl<'a> ObjectPool<'a> {
-    pub(crate) fn new() -> Self {
-        ObjectPool { pool: Pool::new() }
+impl<'a> Index for ObjectPointer<'a> {
+    fn from_usize(idx: usize) -> Self {
+        ObjectPointer {
+            inner: PoolPointer::from_usize(idx),
+        }
     }
 
-    pub(crate) fn allocate(&mut self, object: JsObject<'a>) -> ObjectPointer<'a> {
-        let pointer = self.pool.allocate(object);
-
-        ObjectPointer { inner: pointer }
-    }
-
-    pub(crate) fn get(&self, key: ObjectPointer<'a>) -> &JsObject<'a> {
-        self.pool.get(key.inner)
-    }
-
-    pub(crate) fn get_mut(&mut self, key: ObjectPointer<'a>) -> &mut JsObject<'a> {
-        self.pool.get_mut(key.inner)
+    fn into_usize(self) -> usize {
+        self.inner.into_usize()
     }
 }
 
 impl<'a> ObjectPointer<'a> {
-    pub(crate) fn new(index: u32) -> ObjectPointer<'a> {
-        ObjectPointer {
-            inner: PoolPointer::new(index),
-        }
-    }
-
     pub(crate) fn get_object<'b>(self, pool: &'b ObjectPool<'a>) -> &'b JsObject<'a> {
-        pool.get(self)
+        &pool[self]
     }
 
     pub(crate) fn get_mut_object<'b>(self, pool: &'b mut ObjectPool<'a>) -> &'b mut JsObject<'a> {
-        pool.get_mut(self)
+        &mut pool[self]
     }
 
     pub(crate) fn get_native_handle<'b, T: TidAble<'a>>(
         self,
         pool: &'b ObjectPool<'a>,
     ) -> Option<Ref<'b, T>> {
-        match &pool.get(self).native_handle {
+        match &pool[self].native_handle {
             Some(handle) => {
                 let handle_ref = (*handle).as_ref().borrow();
 
@@ -90,7 +74,7 @@ impl<'a> ObjectPointer<'a> {
         self,
         pool: &'b mut ObjectPool<'a>,
     ) -> Option<RefMut<'b, &'a mut T>> {
-        match &mut pool.get_mut(self).native_handle {
+        match &mut pool[self].native_handle {
             Some(handle) => {
                 let handle_ref = (*handle).as_ref().borrow_mut();
 
@@ -106,11 +90,11 @@ impl<'a> ObjectPointer<'a> {
         pool: &'b mut ObjectPool<'a>,
         value: Rc<RefCell<T>>,
     ) {
-        pool.get_mut(self).native_handle = Some(value)
+        pool[self].native_handle = Some(value)
     }
 
     pub(crate) fn set_prototype(self, pool: &mut ObjectPool<'a>, prototype: ObjectPointer<'a>) {
-        pool.get_mut(self).set_prototype(prototype)
+        pool[self].set_prototype(prototype)
     }
 
     pub fn set_construct(
@@ -118,7 +102,7 @@ impl<'a> ObjectPointer<'a> {
         pool: &mut ObjectPool<'a>,
         construct: impl Into<FunctionReference<'a>>,
     ) {
-        pool.get_mut(self).set_construct(construct)
+        pool[self].set_construct(construct)
     }
 
     pub fn set_callable(
@@ -126,7 +110,7 @@ impl<'a> ObjectPointer<'a> {
         pool: &mut ObjectPool<'a>,
         construct: impl Into<FunctionReference<'a>>,
     ) {
-        pool.get_mut(self).set_callable(construct)
+        pool[self].set_callable(construct)
     }
 
     pub fn get_value(
@@ -152,7 +136,7 @@ impl<'a> ObjectPointer<'a> {
     }
 
     pub fn get_indexed(self, thread: &mut JsThread<'a>, key: usize) -> JsResult<'a, Value<'a>> {
-        let object = thread.realm.objects.get(self);
+        let object = &thread.realm.objects[self];
 
         if let Some(ValueType::String(str)) = &object.wrapped.map(Value::get_type) {
             let result = thread
@@ -209,7 +193,7 @@ impl<'a> ObjectPointer<'a> {
         let property_key = key.into();
 
         loop {
-            let object = pool.get(current);
+            let object = &pool[current];
             if let Some(obj_property) = object.properties.get(&property_key) {
                 return Some(obj_property);
             }
@@ -231,7 +215,7 @@ impl<'a> ObjectPointer<'a> {
         pool: &mut ObjectPool<'a>,
         key: impl Into<PropertyKey>,
     ) -> JsResult<'a, bool> {
-        let current = pool.get_mut(self);
+        let current = &mut pool[self];
 
         let property_key = key.into();
         if let Some(existing) = current.properties.get(&property_key) {
@@ -250,13 +234,13 @@ impl<'a> ObjectPointer<'a> {
     }
 
     pub(crate) fn delete_indexed(self, pool: &mut ObjectPool<'a>, key: usize) {
-        let current = pool.get_mut(self);
+        let current = &mut pool[self];
 
         current.indexed_properties.remove(key);
     }
 
     pub fn has(self, objects: &ObjectPool<'a>, key: impl Into<PropertyKey>) -> bool {
-        let object = objects.get(self);
+        let object = &objects[self];
 
         object.properties.contains_key(&key.into())
     }
@@ -270,7 +254,7 @@ impl<'a> ObjectPointer<'a> {
         let property_key = key.into();
 
         let setter = {
-            let object = thread.realm.objects.get_mut(self);
+            let object = &mut thread.realm.objects[self];
             let state = object.state;
 
             match object.properties.get_mut(&property_key) {
@@ -303,7 +287,7 @@ impl<'a> ObjectPointer<'a> {
         };
 
         if setter {
-            let object = thread.realm.objects.get(self);
+            let object = &thread.realm.objects[self];
 
             if let Some(Property::AccessorDescriptor {
                 setter: Some(func), ..
@@ -321,7 +305,7 @@ impl<'a> ObjectPointer<'a> {
         key: JsPrimitiveString,
         value: Value<'a>,
     ) {
-        let object = objects.get_mut(self);
+        let object = &mut objects[self];
 
         object.set(key, value);
     }
@@ -332,7 +316,7 @@ impl<'a> ObjectPointer<'a> {
         key: usize,
         value: Value<'a>,
     ) -> JsResult<'a, ()> {
-        let object = thread.realm.objects.get_mut(self);
+        let object = &mut thread.realm.objects[self];
 
         if key < 10000 {
             let indexed_properties = &mut object.indexed_properties;
@@ -366,7 +350,7 @@ impl<'a> ObjectPointer<'a> {
         enumerable: bool,
         configurable: bool,
     ) -> JsResult<'a, ()> {
-        let object = pool.get_mut(self);
+        let object = &mut pool[self];
 
         if matches!(object.state, JsObjectState::Extensible) {
             Ok(object.define_value_property(key, value, writable, enumerable, configurable))
@@ -386,7 +370,7 @@ impl<'a> ObjectPointer<'a> {
         enumerable: bool,
         configurable: bool,
     ) -> JsResult<'a, ()> {
-        let object = pool.get_mut(self);
+        let object = &mut pool[self];
 
         if matches!(object.state, JsObjectState::Extensible) {
             Ok(object.define_property(key, getter, setter, enumerable, configurable))
@@ -398,13 +382,13 @@ impl<'a> ObjectPointer<'a> {
     }
 
     pub fn unwrap(self, pool: &ObjectPool<'a>) -> Option<Value<'a>> {
-        let object = pool.get(self);
+        let object = &pool[self];
 
         object.get_wrapped_value()
     }
 
     pub fn wrap(self, thread: &mut JsThread<'a>, value: Value<'a>) {
-        let object = thread.realm.objects.get_mut(self);
+        let object = &mut thread.realm.objects[self];
 
         object.set_wrapped_value(value);
     }
@@ -424,15 +408,15 @@ impl<'a> ObjectPointer<'a> {
     }
 
     pub fn get_prototype(self, thread: &mut JsThread<'a>) -> Option<ObjectPointer<'a>> {
-        thread.realm.objects.get(self).prototype()
+        thread.realm.objects[self].prototype()
     }
 
     pub fn get_name(self, pool: &ObjectPool<'a>) -> Option<JsPrimitiveString> {
-        pool.get(self).name
+        pool[self].name
     }
 
     pub fn get_construct<'b>(self, pool: &'b ObjectPool<'a>) -> Option<&'b Constructor<'a>> {
-        let object = pool.get(self);
+        let object = &pool[self];
 
         object.construct.as_ref()
     }
@@ -454,19 +438,19 @@ impl<'a> ObjectPointer<'a> {
         Return NormalCompletion(undefined).
     */
     pub fn get_callable<'b>(self, pool: &'b ObjectPool<'a>) -> Option<&'b FunctionReference<'a>> {
-        let object = pool.get(self);
+        let object = &pool[self];
 
         object.callable.as_ref()
     }
 
     pub fn is_class_constructor(self, pool: &ObjectPool<'a>) -> bool {
-        let object = pool.get(self);
+        let object = &pool[self];
 
         object.construct.is_some() && object.callable.is_none()
     }
 
     pub fn is_callable(self, pool: &ObjectPool<'a>) -> bool {
-        let object = pool.get(self);
+        let object = &pool[self];
 
         object.construct.is_some() || object.callable.is_some()
     }

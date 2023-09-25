@@ -30,6 +30,7 @@ pub enum ExecutionError<'a> {
     InternalError(InternalError),
     SyntaxError(SyntaxError),
     TypeError(String),
+    ReferenceError(String),
 }
 
 impl Debug for ExecutionError<'_> {
@@ -43,6 +44,9 @@ impl Debug for ExecutionError<'_> {
             }
             ExecutionError::SyntaxError(err) => f.write_fmt(format_args!("SyntaxError: {:?}", err)),
             ExecutionError::TypeError(err) => f.write_fmt(format_args!("TypeError: {:?}", err)),
+            ExecutionError::ReferenceError(err) => {
+                f.write_fmt(format_args!("ReferenceError: {}", err))
+            }
         }
     }
 }
@@ -140,6 +144,7 @@ impl<'a> ExecutionError<'a> {
 
                 rendered_error
             }
+            ExecutionError::ReferenceError(err) => anyhow::Error::msg(err),
         }
     }
 }
@@ -222,6 +227,10 @@ impl<'a> DebugRepresentation<'a> for ExecutionError<'a> {
             ExecutionError::TypeError(v) => {
                 renderer.string_literal(v);
 
+                &None
+            }
+            ExecutionError::ReferenceError(err) => {
+                renderer.string_literal(err);
                 &None
             }
         };

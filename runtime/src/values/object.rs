@@ -219,8 +219,8 @@ impl<'a> Default for JsObject<'a> {
 
 impl<'a> JsObject<'a> {
     pub(crate) fn builder<'b>(pool: &'b mut ObjectPool<'a>) -> JsObjectBuilder<'a, 'b> {
-        let object = pool.allocate(JsObject::new());
-        let inner = pool.get_mut(object);
+        let object = pool.put(JsObject::new());
+        let inner = &mut pool[object];
 
         JsObjectBuilder {
             inner,

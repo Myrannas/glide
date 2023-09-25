@@ -1,5 +1,5 @@
 use crate::context::JsContext;
-use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer};
+use crate::debugging::{DebugRepresentation, DebugWithRealm, Renderer, X};
 use crate::primordials::{get_prototype_property, RuntimeHelpers};
 use crate::result::JsResult;
 use crate::values::object::{Constructor, JsObject};
@@ -16,6 +16,8 @@ use core::option::Option;
 use core::option::Option::{None, Some};
 use core::result::Result::{Err, Ok};
 use instruction_set::{Function, Instruction, Local, LocalInit};
+use log::Level::Trace;
+use log::{log_enabled, trace};
 use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,9 +64,27 @@ impl<'a> BuiltIn<'a> {
         thread: &mut JsThread<'a>,
         target: Value<'a>,
     ) -> JsResult<'a, Option<Value<'a>>> {
+        if log_enabled!(Trace) {
+            trace!(
+                "{}(...{})",
+                self.name
+                    .map(|name| thread.get_realm().get_string(name))
+                    .unwrap(),
+                arguments
+            );
+        }
+
         let start_len = thread.stack.len() - arguments;
         let result = (self.op)(arguments, thread, target, self.context);
         thread.stack.truncate(start_len);
+
+        if log_enabled!(Trace) {
+            match &result {
+                Ok(Some(value)) => trace!("returned {:?}", X::from(value, thread.get_realm())),
+                Ok(None) => trace!("returned undefined"),
+                Err(err) => trace!("threw {:?}", err),
+            }
+        }
 
         result
     }

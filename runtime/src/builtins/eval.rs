@@ -27,7 +27,10 @@ pub(crate) fn eval<'a>(
     _value: Value<'a>,
     _context: Option<Value<'a>>,
 ) -> JsResult<'a, Option<Value<'a>>> {
-    let argument = frame.read_arg(args, 0).unwrap_or_default();
+    let argument = frame
+        .read_arg(args, 0)
+        .map_or(Ok(None), |r| r.map(Some))?
+        .unwrap_or_default();
 
     match argument.get_type() {
         ValueType::String(str) => {
@@ -61,7 +64,7 @@ pub(crate) fn eval<'a>(
                     function: loaded_function,
                     parent_context: context,
                 },
-                args,
+                0,
                 false,
                 true,
             );

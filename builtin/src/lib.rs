@@ -4,13 +4,12 @@ extern crate syn;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote, ToTokens};
+use syn::Lit;
 use syn::__private::TokenStream2;
-use syn::parse::{ParseBuffer, ParseStream};
 use syn::{
     parse_macro_input, FnArg, ImplItem, ImplItemMethod, ItemImpl, Meta, NestedMeta, ReturnType,
     Signature, Type,
 };
-use syn::{Lit, PatType};
 
 fn is_result_type(output_type: &Type) -> bool {
     if let Type::Path(type_path) = output_type {
@@ -60,6 +59,7 @@ impl ToTokens for Constructor {
         let method_name = &self.method_name;
         let setup = &self.arguments.setup();
         let arguments = &self.arguments.call();
+        let pretty_name = method_name.clone().to_string();
 
         let call_type = match self.return_type {
             BindingReturnType::None => quote! {
@@ -85,7 +85,7 @@ impl ToTokens for Constructor {
 
                     Ok(None)
                 },
-                name: Some(strings.intern_native("#method_name"))
+                name: Some(strings.intern_native(#pretty_name))
             }.into();
 
             constructor_object.set_construct(pool, constructor.clone());
@@ -102,6 +102,7 @@ struct StaticMethod {
     method_name: syn::Ident,
     arguments: Arguments,
     return_type: BindingReturnType,
+    is_global: bool,
 }
 
 impl ToTokens for StaticMethod {
@@ -117,6 +118,16 @@ impl ToTokens for StaticMethod {
             <#type_name>::#method_name(thread, #arguments)
         });
 
+        let global_assignment = if self.is_global {
+            quote! {
+                global_this.define_value_property(pool, name, Value::from(method), true, false, true)?;
+            }
+        } else {
+            quote! {}
+        };
+
+        println!("Global Assignment {}!!", self.is_global);
+
         let output = quote! {
             let name: crate::JsPrimitiveString = strings.intern_native(#method_name_string);
             let method = crate::JsObject::builder(pool).with_callable(crate::BuiltIn {
@@ -131,6 +142,7 @@ impl ToTokens for StaticMethod {
             method.define_value_property(pool, strings.intern_native("name"), Value::from(name), false, false, true)?;
             method.define_value_property(pool, strings.intern_native("length"), Value::from(#args_len), false, false, true)?;
             constructor_object.define_value_property(pool, name, Value::from(method), true, false, true)?;
+            #global_assignment
         };
 
         output.to_tokens(tokens);
@@ -241,9 +253,10 @@ impl Arguments {
                 let args: Vec<TokenStream2> = args
                     .iter()
                     .enumerate()
+                    .rev()
                     .map(|(i, _)| {
                         let arg_id = format_ident!("arg_{}", i);
-                        quote! { let #arg_id = thread.read_arg(args, #i); }
+                        quote! { let #arg_id = thread.read_arg(args, #i).map_or(Ok(None), |r| r.map(Some))?; }
                     })
                     .collect();
 
@@ -254,7 +267,11 @@ impl Arguments {
             Arguments::Varargs => {
                 quote! {
                     let stack_len = thread.stack.len();
-                    let args = thread.stack[(stack_len - args)..stack_len].to_vec();
+                    let mut args = thread.stack[(stack_len - args)..stack_len].to_vec();
+
+                    for arg in &mut args {
+                        *arg = arg.resolve(thread)?;
+                    }
                 }
             }
         }
@@ -304,6 +321,7 @@ impl ToTokens for Callable {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         let type_name = &self.type_name;
         let method_name = &self.method_name;
+        let method_name_string = type_name.clone().to_string();
         let setup = &self.arguments.setup();
         let arguments = &self.arguments.call();
 
@@ -320,7 +338,7 @@ impl ToTokens for Callable {
                         #setup
                         #call
                     },
-                    name: Some(strings.intern_native("#method_name"))
+                    name: Some(strings.intern_native(#method_name_string))
                 });
         };
 
@@ -328,13 +346,13 @@ impl ToTokens for Callable {
     }
 }
 
-struct Constant {
+struct Global {
     js_name: String,
     type_name: syn::Ident,
     method_name: syn::Ident,
 }
 
-impl ToTokens for Constant {
+impl ToTokens for Global {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         let type_name = &self.type_name;
         let method_name = &self.method_name;
@@ -344,7 +362,7 @@ impl ToTokens for Constant {
             // Constant #js_name
             let value = <#type_name>::#method_name(pool, strings, symbols);
             let name = #js_name;
-            constructor_object.define_value_property(
+            global_this.define_value_property(
                 pool,
                 strings.intern_native(name),
                 value,
@@ -358,6 +376,54 @@ impl ToTokens for Constant {
     }
 }
 
+struct Constant {
+    js_name: String,
+    type_name: syn::Ident,
+    method_name: syn::Ident,
+    is_global: bool,
+}
+
+impl ToTokens for Constant {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        let type_name = &self.type_name;
+        let method_name = &self.method_name;
+        let js_name = &self.js_name;
+
+        let global_assignment = if self.is_global {
+            quote! {
+                constructor_object.define_value_property(
+                pool,
+                interned_name,
+                value,
+                false,
+                false,
+                false
+            )?;
+            }
+        } else {
+            quote! {}
+        };
+
+        let output = quote! {
+            // Constant #js_name
+            let value = <#type_name>::#method_name(pool, strings, symbols);
+            let name = #js_name;
+            let interned_name = strings.intern_native(name);
+            constructor_object.define_value_property(
+                pool,
+                interned_name,
+                value,
+                false,
+                false,
+                false
+            )?;
+            #global_assignment
+        };
+
+        output.to_tokens(tokens);
+    }
+}
+
 enum Item {
     Constructor(Constructor),
     StaticMethod(StaticMethod),
@@ -365,6 +431,7 @@ enum Item {
     Getter(Getter),
     Callable(Callable),
     Constant(Constant),
+    Global(Global),
 }
 
 impl ToTokens for Item {
@@ -376,6 +443,7 @@ impl ToTokens for Item {
             Item::Getter(constructor) => constructor.to_tokens(tokens),
             Item::Callable(constructor) => constructor.to_tokens(tokens),
             Item::Constant(constant) => constant.to_tokens(tokens),
+            Item::Global(global) => global.to_tokens(tokens),
         }
     }
 }
@@ -407,6 +475,11 @@ pub fn constructor(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn constant(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn target(_attr: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
@@ -468,6 +541,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
             let mut is_varargs = false;
             let mut is_constructor = false;
             let mut is_constant = false;
+            let mut is_global = false;
             let mut args = Vec::new();
             for input in inputs.iter() {
                 match input {
@@ -488,6 +562,8 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                         if let Some(NestedMeta::Lit(Lit::Str(value))) = meta.nested.first() {
                             identifier = value.value()
                         }
+                    } else if meta.path.get_ident().unwrap() == "target" {
+                        is_global = true;
                     }
                 }
 
@@ -540,6 +616,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                     type_name: type_name.clone(),
                     js_name: identifier,
                     method_name: ident.clone(),
+                    is_global,
                 }))
             } else if is_constructor {
                 if !uses_self {
@@ -594,6 +671,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                     method_name: ident.clone(),
                     return_type,
                     js_name: identifier,
+                    is_global,
                 }))
             }
         }
@@ -628,6 +706,7 @@ pub fn prototype(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
                 constructor_object: crate::object_pool::ObjectPointer<'a>,
                 prototype: crate::object_pool::ObjectPointer<'a>,
                 function_prototype: crate::object_pool::ObjectPointer<'a>,
+                global_this: crate::object_pool::ObjectPointer<'a>
             ) -> crate::result::JsResult<'a, crate::JsPrimitiveString> {
                 #(#methods)*
 

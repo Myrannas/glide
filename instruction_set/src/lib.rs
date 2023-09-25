@@ -18,6 +18,13 @@ pub enum Instruction {
     Modulo,
     Multiply,
 
+    Exponential,
+
+    // Bitwise operators
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+
     LoadConstant { constant: Constant },
     LoadEnvironmental { environmental: Environmental },
 
@@ -65,13 +72,12 @@ pub enum Instruction {
     RightShift,
     LeftShift,
     InstanceOf,
-    Exponential,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
     Increment { by: f64, pre: bool },
     Catch { chunk: ChunkId },
     DropCatch { chunk: ChunkId },
+
+    // Stack management
+    DropS,
     Duplicate,
     Resolve,
     In,

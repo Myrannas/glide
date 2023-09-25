@@ -10,6 +10,7 @@ impl Compile for UnaryOperator {
             UnaryOperator::LogicalNot => Some(LogicalNot),
             UnaryOperator::Sub => Some(Neg),
             UnaryOperator::Add => None,
+            UnaryOperator::Void => None,
             UnaryOperator::Delete => Some(Delete),
             UnaryOperator::PrefixInc => Some(Increment { by: 1.0, pre: true }),
             UnaryOperator::PrefixDec => Some(Increment {

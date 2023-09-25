@@ -257,6 +257,9 @@ impl<'a, T> Unwrap<'a, T> for JsResult<'a, T> {
             Err(ExecutionError::TypeError(message)) => {
                 panic!("{:?}", message)
             }
+            Err(ExecutionError::ReferenceError(err)) => {
+                panic!("{}", err)
+            }
         }
     }
 

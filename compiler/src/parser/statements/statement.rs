@@ -9,6 +9,7 @@ use crate::parser::statements::decl_statement::DeclStatement;
 use crate::parser::statements::do_while_statement::DoWhileStatement;
 use crate::parser::statements::for_statement::ForStatement;
 use crate::parser::statements::while_statement::WhileStatement;
+use std::iter;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Statement<'a> {

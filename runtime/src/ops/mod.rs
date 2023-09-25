@@ -20,7 +20,7 @@ use crate::ops::math::{
     negate, subtract,
 };
 use crate::ops::memory::{
-    delete, duplicate, get, get_capture, get_class, get_function, get_local, get_named,
+    delete, drop_s, duplicate, get, get_capture, get_class, get_function, get_local, get_named,
     get_private, load_constant, load_environmental, resolve, set, set_capture, set_local,
     set_named, set_private,
 };
@@ -100,6 +100,7 @@ impl Operand for Instruction {
             Instruction::Catch { chunk } => catch(thread, *chunk),
             Instruction::DropCatch { chunk } => drop_catch(thread, *chunk),
             Instruction::Duplicate => duplicate(thread),
+            Instruction::DropS => drop_s(thread),
             Instruction::Resolve => resolve(thread),
             Instruction::In => in_operator(thread),
             Instruction::Debug { entire_stack } => debug(thread, *entire_stack),

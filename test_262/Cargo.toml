@@ -2,7 +2,7 @@
 name = "test_262"
 version = "0.1.0"
 authors = ["Michael Oates <michael@oates.dev>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 glide_compiler = { path = "../compiler", features=["eval"] }

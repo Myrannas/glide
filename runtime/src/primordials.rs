@@ -159,8 +159,8 @@ impl<'a> Default for Realm<'a> {
 impl<'a> Realm<'a> {
     #[must_use]
     pub fn new() -> JsResult<'a, Realm<'a>> {
-        let mut object_pool = ObjectPool::new();
-        let global_this = object_pool.allocate(JsObject::new());
+        let mut object_pool = ObjectPool::default();
+        let global_this = object_pool.put(JsObject::new());
         let mut string_pool = StringPool::new();
         let constants = Constants::new(&mut string_pool);
         let mut symbols = SymbolRegistry::new();
@@ -263,12 +263,12 @@ impl<'a> Realm<'a> {
 
     #[must_use]
     pub fn get_object(&self, pointer: ObjectPointer<'a>) -> &JsObject<'a> {
-        self.objects.get(pointer)
+        &self.objects[pointer]
     }
 
     #[must_use]
     pub fn get_object_mut(&mut self, pointer: ObjectPointer<'a>) -> &mut JsObject<'a> {
-        self.objects.get_mut(pointer)
+        &mut self.objects[pointer]
     }
 
     pub(crate) fn wrap_function(
@@ -554,16 +554,16 @@ pub(crate) trait RuntimeHelpers<'a> {
 }
 
 impl<'a> RuntimeHelpers<'a> for JsThread<'a> {
-    fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
-        self.realm.new_reference_error(message)
-    }
-
     fn new_syntax_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.realm.new_syntax_error(message)
     }
 
     fn new_type_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
         self.realm.new_type_error(message)
+    }
+
+    fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
+        self.realm.new_reference_error(message)
     }
 
     fn new_function(
@@ -626,6 +626,20 @@ impl<'a> RuntimeHelpers<'a> for Realm<'a> {
             )
             .into()
     }
+
+    // fn new_reference_error(&mut self, message: impl AsRef<str>) -> Value<'a> {
+    //     let message = self.strings.intern(message);
+    //
+    //     self.errors
+    //         .clone()
+    //         .new_error(
+    //             self,
+    //             self.errors.type_error,
+    //             self.errors.type_error_name,
+    //             message,
+    //         )
+    //         .into()
+    // }
 
     fn new_function(
         &mut self,

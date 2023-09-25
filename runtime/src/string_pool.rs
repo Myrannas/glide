@@ -1,5 +1,6 @@
-use crate::pool::{Pool, PoolPointer};
+use crate::pool::PoolPointer;
 use ahash::{AHashMap, AHasher};
+use stash::{Index, Stash};
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
@@ -34,9 +35,9 @@ pub struct StringPointer {
 }
 
 impl StringPointer {
-    pub(crate) fn new(index: u32) -> StringPointer {
+    pub(crate) fn new(pool_pointer: PoolPointer<StringValue>) -> StringPointer {
         StringPointer {
-            inner: PoolPointer::new(index),
+            inner: pool_pointer,
         }
     }
 }
@@ -53,9 +54,21 @@ impl<'a> From<StringPointer> for u32 {
     }
 }
 
+impl Index for StringPointer {
+    fn from_usize(idx: usize) -> Self {
+        StringPointer {
+            inner: PoolPointer::from_usize(idx),
+        }
+    }
+
+    fn into_usize(self) -> usize {
+        self.inner.into_usize()
+    }
+}
+
 #[derive(Clone)]
 pub struct StringPool {
-    pool: Pool<StringValue>,
+    pool: Stash<StringValue, StringPointer>,
     lookup: AHashMap<String, StringPointer>,
     natives: HashSet<StringPointer>,
 }
@@ -63,7 +76,7 @@ pub struct StringPool {
 impl StringPool {
     pub(crate) fn new() -> StringPool {
         StringPool {
-            pool: Pool::new(),
+            pool: Stash::default(),
             lookup: AHashMap::with_capacity(1024),
             natives: HashSet::new(),
         }
@@ -77,16 +90,14 @@ impl StringPool {
 
             value_str.hash(&mut hasher);
 
-            let id = self.pool.allocate(StringValue {
+            let id = self.pool.put(StringValue {
                 hash: hasher.finish(),
                 value: value_str.to_owned(),
             });
 
-            let identifier = StringPointer { inner: id };
+            self.lookup.insert(value_str.to_owned(), id);
 
-            self.lookup.insert(value_str.to_owned(), identifier);
-
-            identifier
+            id
         })
     }
 
@@ -95,7 +106,7 @@ impl StringPool {
         pointer: StringPointer,
         function: impl Fn(&str) -> &str,
     ) -> StringPointer {
-        let current_strings = self.pool.get(pointer.inner);
+        let current_strings = &self.pool[pointer];
 
         let result = function(current_strings.as_ref());
 
@@ -112,7 +123,7 @@ impl StringPool {
         pointer: StringPointer,
         function: impl Fn(&str) -> String,
     ) -> StringPointer {
-        let current_strings = self.pool.get(pointer.inner);
+        let current_strings = &self.pool[pointer];
 
         let result = function(current_strings.as_ref());
 
@@ -133,6 +144,6 @@ impl StringPool {
     }
 
     pub(crate) fn get(&self, pointer: StringPointer) -> &StringValue {
-        self.pool.get(pointer.inner)
+        &self.pool[pointer]
     }
 }

@@ -3,6 +3,8 @@ use crate::parser::hand_parser::{Error, LexerImpl, Parse, ParseContext};
 use crate::parser::lexer::Token;
 use crate::parser::statements::class_statement::ClassStatement;
 use crate::parser::statements::statement::Statement;
+use std::iter;
+use std::iter::Empty;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum DeclStatement<'a> {

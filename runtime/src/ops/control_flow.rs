@@ -115,7 +115,7 @@ pub(crate) fn call_new(thread: &mut JsThread, args: usize) {
 
     target.set(thread.realm.constants.constructor, resolved_value);
 
-    let target_pointer = thread.realm.objects.allocate(target);
+    let target_pointer = thread.realm.objects.put(target);
 
     match callable {
         Constructor::Default => {

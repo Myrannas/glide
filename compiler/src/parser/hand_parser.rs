@@ -400,11 +400,6 @@ fn parse_value<'a>(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'
         Some((Token::OpenBrace, ..)) => parse_object_literal(input, context),
         Some((Token::OpenBracket, ..)) => parse_array_literal(input, context),
         Some((Token::Null, ..)) => Ok(Expression::Null),
-        Some((Token::Void, ..)) => {
-            parse_expression(input, context)?;
-
-            Ok(Expression::Undefined)
-        }
         Some((Token::Function, ..)) => {
             let name = if input.lookahead_is_id() {
                 Some(input.expect_id()?)
@@ -556,6 +551,7 @@ fn parse_unary<'a>(input: &mut LexerImpl<'a>, context: ParseContext) -> Result<'
         Some((Token::Add, ..)) => Some(UnaryOperator::Add),
         Some((Token::Inc, ..)) => Some(UnaryOperator::PrefixInc),
         Some((Token::Dec, ..)) => Some(UnaryOperator::PrefixDec),
+        Some((Token::Void, ..)) => Some(UnaryOperator::Void),
         _ => None,
     };
 

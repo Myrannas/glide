@@ -2,7 +2,7 @@
 name = "glide_runtime"
 version = "0.1.0"
 authors = ["Michael Oates <michael@oates.dev>"]
-edition = "2018"
+edition = "2021"
 license = "MIT"
 categories = ["js"]
 description = "GlideJS Runtime"
@@ -24,6 +24,7 @@ log={ version = "0.4.14" }
 rand = "0.8.3"
 ahash = "0.7.2"
 better_any = "0.2.0"
+stash = "0.1.5"
 chrono = { optional = true, version = "0.4.24" }
 
 glide_compiler = { optional = true, path = "../compiler", features=["eval"] }

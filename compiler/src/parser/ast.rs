@@ -2,6 +2,7 @@ use crate::compiler::BucketEq;
 use crate::parser::statements::decl_statement::DeclStatement;
 use crate::parser::statements::statement::Statement;
 use instruction_set::Constant;
+use std::fmt::{Debug, Formatter};
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Reference<'a> {
@@ -60,6 +61,7 @@ pub enum UnaryOperator {
     Delete,
     PrefixInc,
     PrefixDec,
+    Void,
 }
 
 #[allow(clippy::enum_variant_names)]

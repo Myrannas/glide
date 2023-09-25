@@ -13,6 +13,7 @@ pub(crate) trait Prototype<'a> {
         object: ObjectPointer<'a>,
         prototype: ObjectPointer<'a>,
         function_prototype: ObjectPointer<'a>,
+        global_this: ObjectPointer<'a>,
     ) -> JsResult<'a, JsPrimitiveString>;
 
     fn bind_thread<'b>(
@@ -31,7 +32,7 @@ pub(crate) trait Prototype<'a> {
 
         object.set_prototype(function_prototype);
 
-        let constructor_object = pool.allocate(object);
+        let constructor_object = pool.put(object);
         constructor_object.define_value_property(
             pool,
             strings.intern_native("prototype"),
@@ -48,6 +49,7 @@ pub(crate) trait Prototype<'a> {
             constructor_object,
             prototype,
             function_prototype,
+            global_this,
         )?;
 
         global_this.define_value_property(
@@ -73,7 +75,7 @@ pub(crate) trait Prototype<'a> {
         let mut object = JsObject::new();
 
         object.set_prototype(prototype);
-        let constructor_object = pool.allocate(object);
+        let constructor_object = pool.put(object);
         constructor_object.define_value_property(
             pool,
             strings.intern_native("prototype"),
@@ -90,6 +92,7 @@ pub(crate) trait Prototype<'a> {
             constructor_object,
             prototype,
             function_prototype,
+            global_this,
         )?;
 
         global_this.define_value_property(

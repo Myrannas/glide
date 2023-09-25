@@ -4,7 +4,7 @@ use crate::string_pool::StringPool;
 use crate::values::nan::Value;
 use crate::values::symbols::SymbolRegistry;
 use crate::{ExecutionError, JsThread, ValueType};
-use builtin::{constant, constructor, named, prototype};
+use builtin::{callable, constant, constructor, named, prototype, target};
 
 #[allow(dead_code)]
 pub(crate) struct JsNumber<'a, 'b> {
@@ -18,17 +18,28 @@ impl<'a, 'b> JsNumber<'a, 'b> {
     #[constructor]
     fn constructor(&mut self) {}
 
+    #[callable]
+    fn callable(thread: &mut JsThread<'a>, value: Option<Value<'a>>) -> JsResult<'a, Value<'a>> {
+        let number = value
+            .unwrap_or_else(|| thread.realm.constants.empty_string.into())
+            .to_number(&thread.realm)?;
+
+        Ok(Value::from(number))
+    }
+
     #[named("parseInt")]
     fn parse_int(thread: &mut JsThread<'a>, value: Value<'a>) -> JsResult<'a, f64> {
         value.to_number(&thread.realm)
     }
 
     #[named("isFinite")]
+    #[target(global, local)]
     fn is_finite(_: &mut JsThread<'a>, value: Value<'a>) -> bool {
         value.float().is_finite()
     }
 
     #[named("isNaN")]
+    #[target(global, local)]
     fn is_nan(_: &mut JsThread<'a>, value: Value<'a>) -> bool {
         value.float().is_nan()
     }

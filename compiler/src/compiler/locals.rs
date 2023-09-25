@@ -1,6 +1,8 @@
+use crate::compiler::locals::Resolution::Resolved;
 use crate::parser::ast::Expression;
 use instruction_set::{Local, LocalInit};
 
+#[derive(Debug)]
 pub(crate) enum Resolution {
     Resolved { local: usize },
     Capture { frame: usize, local: usize },
@@ -8,29 +10,32 @@ pub(crate) enum Resolution {
 }
 
 #[derive(Debug)]
-pub(crate) struct LocalAllocator {
+pub(crate) struct LocalAllocator<'a> {
     pub(crate) locals: Vec<Local>,
     pub(crate) init: Vec<Option<LocalInit>>,
     pub(crate) current_id: usize,
+    pub(crate) parent: Option<Box<&'a Self>>,
 }
 
-impl LocalAllocator {
+impl<'a> LocalAllocator<'a> {
     pub(crate) fn resolve_identifier(&self, id: &str) -> Resolution {
-        let result = self
-            .locals
-            .iter()
-            .rev()
-            .find(|Local { name, .. }| name == id);
+        for local in &self.locals {
+            if local.name == id {
+                return Resolved { local: local.local };
+            }
+        }
 
-        match result {
-            Some(Local {
-                local, frame: 0, ..
-            }) => Resolution::Resolved { local: *local },
-            Some(Local { local, frame, .. }) => Resolution::Capture {
-                local: *local,
-                frame: *frame,
-            },
-            None => Resolution::Unresolved,
+        if let Some(parent) = &self.parent {
+            match parent.resolve_identifier(id) {
+                Resolution::Resolved { local } => Resolution::Capture { local, frame: 1 },
+                Resolution::Capture { local, frame } => Resolution::Capture {
+                    local,
+                    frame: frame + 1,
+                },
+                Resolution::Unresolved => Resolution::Unresolved,
+            }
+        } else {
+            Resolution::Unresolved
         }
     }
 
@@ -55,32 +60,16 @@ impl LocalAllocator {
             current_id: 0,
             locals: vec![],
             init: vec![],
+            parent: None,
         }
     }
 
-    pub(crate) fn child(&self) -> Self {
-        let locals: Vec<Local> = self
-            .locals
-            .iter()
-            .map(
-                |Local {
-                     name,
-                     local,
-                     frame,
-                     argument,
-                 }| Local {
-                    name: name.to_owned(),
-                    local: *local,
-                    frame: frame + 1,
-                    argument: *argument,
-                },
-            )
-            .collect();
-
+    pub(crate) fn child(&'a self) -> Self {
         LocalAllocator {
-            locals,
+            locals: vec![],
             current_id: 0,
             init: vec![],
+            parent: Some(Box::new(self)),
         }
     }
 

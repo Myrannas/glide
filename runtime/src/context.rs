@@ -1,7 +1,8 @@
 use crate::debugging::{DebugRepresentation, Renderer, Representation};
 use crate::values::nan::Value;
 use crate::{JsFunction, Realm};
-use std::cell::RefCell;
+use chrono::Local;
+use std::cell::{Ref, RefCell};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 
@@ -21,6 +22,7 @@ struct JsContextInner<'a> {
     locals: Vec<Value<'a>>,
     parent: Option<JsContext<'a>>,
     this: Value<'a>,
+    function: Option<JsFunction>,
 }
 
 #[derive(Clone)]
@@ -74,6 +76,7 @@ impl<'a, 'b> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
                 locals: vec![],
+                function: None,
                 parent: None,
                 this: global_this.global_this.clone().into(),
             })),
@@ -89,6 +92,7 @@ impl<'a, 'b> JsContext<'a> {
         JsContext {
             inner: Rc::new(RefCell::new(JsContextInner {
                 locals: function.init(realm, &parent),
+                function: Some(function.clone()),
                 parent: Some(parent),
                 this,
             })),
@@ -118,6 +122,27 @@ impl<'a, 'b> JsContext<'a> {
         }
 
         ctx.locals.get(index).cloned()
+    }
+
+    pub(crate) fn capture_name(
+        &self,
+        offset: usize,
+        index: usize,
+    ) -> Option<instruction_set::Local> {
+        let ctx = self.inner.borrow();
+
+        if offset > 0 {
+            return ctx
+                .parent
+                .as_ref()
+                .and_then(|parent| parent.capture_name(offset - 1, index));
+        }
+
+        if let Some(function) = &ctx.function {
+            function.locals().get(index).cloned()
+        } else {
+            None
+        }
     }
 
     pub(crate) fn write_capture(&self, offset: usize, index: usize, value: Value<'a>) {

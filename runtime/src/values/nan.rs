@@ -6,6 +6,8 @@ use crate::string_pool::StringPointer;
 use crate::values::symbols::JsSymbol;
 use crate::{ExecutionError, InternalError, JsPrimitiveString, JsThread, Realm};
 use instruction_set::Constant;
+use log::trace;
+use stash::Index;
 use std::marker::PhantomData;
 
 #[repr(transparent)]
@@ -21,7 +23,7 @@ impl<'a> Value<'a> {
         realm: &'b Realm<'a>,
     ) -> JsResult<'a, impl Iterator<Item = &'b Value<'a>>> {
         if let Ok(obj) = self.as_object(realm) {
-            let o = realm.objects.get(obj);
+            let o = &realm.objects[obj];
 
             Ok(o.indexed_properties.iter())
         } else {
@@ -43,6 +45,7 @@ pub enum ValueType<'a> {
     NumberReference(u32),
     SymbolReference(JsSymbol),
     Symbol(JsSymbol),
+    EnvironmentRecord,
 }
 
 const DOWNSHIFT: u64 = 47;
@@ -58,6 +61,7 @@ const STRING_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 8;
 const NUMBER_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 9;
 const SYMBOL_REFERENCE_TAG: u64 = FLOAT_NAN_TAG + 10;
 const SYMBOL_TAG: u64 = FLOAT_NAN_TAG + 11;
+const ENVIRONMENT_RECORD_TAG: u64 = FLOAT_NAN_TAG + 12;
 
 impl<'a> From<ValueType<'a>> for Value<'a> {
     fn from(value: ValueType<'a>) -> Self {
@@ -97,8 +101,8 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
                 inner: (LOCAL_TAG << DOWNSHIFT) + u64::from(local),
                 phantom: PhantomData,
             },
-            ValueType::StringReference(str) => {
-                let str_index: u32 = str.into();
+            ValueType::StringReference(string) => {
+                let str_index: u32 = string.into();
 
                 Value {
                     inner: (STRING_REFERENCE_TAG << DOWNSHIFT) + u64::from(str_index),
@@ -115,6 +119,10 @@ impl<'a> From<ValueType<'a>> for Value<'a> {
             },
             ValueType::Symbol(id) => Value {
                 inner: (SYMBOL_TAG << DOWNSHIFT) + u64::from(id),
+                phantom: PhantomData,
+            },
+            ValueType::EnvironmentRecord => Value {
+                inner: (ENVIRONMENT_RECORD_TAG << DOWNSHIFT),
                 phantom: PhantomData,
             },
             ValueType::Float => panic!("Unreachable"),
@@ -183,24 +191,30 @@ impl<'a> Value<'a> {
         phantom: PhantomData,
     };
 
+    pub const ENVIRONMENT: Self = Value {
+        inner: ENVIRONMENT_RECORD_TAG << DOWNSHIFT,
+        phantom: PhantomData,
+    };
+
     #[must_use]
     pub fn get_type(self) -> ValueType<'a> {
         let tag = self.inner >> DOWNSHIFT;
 
         match tag {
-            OBJECT_TAG => ValueType::Object(ObjectPointer::new(self.inner as u32)),
+            OBJECT_TAG => ValueType::Object(ObjectPointer::from_usize(self.inner as u32 as usize)),
             NULL_TAG => ValueType::Null,
             UNDEFINED_TAG => ValueType::Undefined,
-            STRING_TAG => ValueType::String(StringPointer::new(self.inner as u32)),
+            STRING_TAG => ValueType::String(StringPointer::from_usize(self.inner as u32 as usize)),
             BOOLEAN_TRUE_TAG => ValueType::Boolean(true),
             BOOLEAN_FALSE_TAG => ValueType::Boolean(false),
             LOCAL_TAG => ValueType::Local(self.inner as u32),
             STRING_REFERENCE_TAG => {
-                ValueType::StringReference(StringPointer::new(self.inner as u32))
+                ValueType::StringReference(StringPointer::from_usize(self.inner as u32 as usize))
             }
             NUMBER_REFERENCE_TAG => ValueType::NumberReference(self.inner as u32),
             SYMBOL_REFERENCE_TAG => ValueType::SymbolReference((self.inner as u32).into()),
             SYMBOL_TAG => ValueType::Symbol(JsSymbol::from(self.inner as u32)),
+            ENVIRONMENT_RECORD_TAG => ValueType::EnvironmentRecord,
             _ => ValueType::Float,
         }
     }
@@ -303,11 +317,37 @@ impl<'a, 'b> DebugRepresentation<'a> for Value<'a> {
                 render.end_internal()?;
                 Ok(())
             }
+            (Representation::Debug, ValueType::EnvironmentRecord) => {
+                render.start_internal("ENVIRONMENT")?;
+                Ok(())
+            }
             (.., ValueType::Float) => render.literal(&format!("{}", self.float())),
             _ => panic!("Unsupported debug view"),
         }
     }
 }
+
+// fn get_blah<'a>(
+//     target: Value<'a>,
+//     attribute: Value<'a>,
+//     thread: &mut JsThread<'a>,
+// ) -> JsResult<'a> {
+//     if target == Value::UNDEFINED {
+//         let attribute = thread.realm.strings.get(atom);
+//         let message = format!("Cannot get property {} of undefined", attribute);
+//
+//         let type_error = thread.new_type_error(message);
+//
+//         return thread.throw(type_error);
+//     } else if target == Value::NULL {
+//         let attribute = thread.realm.strings.get(atom);
+//         let message = format!("Cannot get property {} of null", attribute);
+//
+//         let type_error = thread.new_type_error(message);
+//
+//         return thread.throw(type_error);
+//     } else if
+// }
 
 impl<'a> Value<'a> {
     pub(crate) fn resolve<'c>(
@@ -318,10 +358,26 @@ impl<'a> Value<'a> {
             ValueType::Local(index) => Ok(thread.current_context().read(index as usize)),
             ValueType::StringReference(name) => {
                 let base: Value = thread.pop_stack();
+
+                if base == Value::ENVIRONMENT {
+                    let global = thread.realm.global_this;
+
+                    if !global.has(&thread.realm.objects, name) {
+                        let str = thread.realm.strings.get(name);
+                        return Err(ExecutionError::ReferenceError(format!(
+                            "{} is not defined",
+                            str.to_string()
+                        )));
+                    }
+                }
+
                 let base = base.resolve(thread)?;
+
                 let base_object = base.to_object(&mut thread.realm)?;
 
-                base_object.get_value(thread, name)
+                let value = base_object.get_value(thread, name)?;
+
+                Ok(value)
             }
             ValueType::NumberReference(index) => {
                 let base: Value = thread.pop_stack();
@@ -515,6 +571,7 @@ impl<'a> Value<'a> {
             ValueType::Object(obj) => obj,
             ValueType::Float => realm.wrappers.wrap_number(&mut realm.objects, self.float()),
             ValueType::Boolean(f) => realm.wrappers.wrap_boolean(&mut realm.objects, f),
+            ValueType::EnvironmentRecord => realm.global_this,
             _ => {
                 return Err(ExecutionError::TypeError(format!(
                     "Can't wrap {:?} with object",
@@ -544,11 +601,11 @@ impl<'a> Value<'a> {
             ValueType::String(str) if str == realm.constants.empty_string => false,
             ValueType::String(..) | ValueType::Object(..) => true,
             ValueType::Null | ValueType::Undefined => false,
-            _ => todo!("Unsupported types {:?}", realm.debug_value(&self)),
+            _ => panic!("Unsupported types {:?}", realm.debug_value(&self)),
         }
     }
 
-    pub(crate) fn to_number(self, realm: &Realm) -> JsResult<'a, f64> {
+    pub(crate) fn to_number(self, realm: &Realm<'a>) -> JsResult<'a, f64> {
         match self.get_type() {
             ValueType::Undefined | ValueType::Object(..) => Ok(f64::NAN),
             ValueType::Null | ValueType::Boolean(false) => Ok(0.0),
@@ -568,17 +625,17 @@ impl<'a> Value<'a> {
             ValueType::Symbol(_) => Err(ExecutionError::TypeError(
                 "Can't convert a Symbol value to a number".to_owned(),
             )),
-            ValueType::Local(..) => panic!("Can't convert a local runtime value to a number"),
+            _ => panic!("Unsupported types {:?}", realm.debug_value(&self)),
         }
     }
 
-    pub(crate) fn to_usize(self, realm: &Realm) -> JsResult<'a, usize> {
+    pub(crate) fn to_usize(self, realm: &Realm<'a>) -> JsResult<'a, usize> {
         let value: f64 = self.to_number(realm)?;
 
         Ok(value.trunc() as usize)
     }
 
-    pub(crate) fn to_u32(self, realm: &Realm) -> JsResult<'a, u32> {
+    pub(crate) fn to_u32(self, realm: &Realm<'a>) -> JsResult<'a, u32> {
         let input: f64 = self.to_number(realm)?;
 
         let f_val = match input {
@@ -587,10 +644,10 @@ impl<'a> Value<'a> {
             input => input,
         };
 
-        Ok(f_val.abs() as u32)
+        Ok(f_val as i64 as u32)
     }
 
-    pub(crate) fn to_i32(self, realm: &Realm) -> JsResult<'a, i32> {
+    pub(crate) fn to_i32(self, realm: &Realm<'a>) -> JsResult<'a, i32> {
         let input: f64 = self.to_number(realm)?;
 
         let f_val = match input {

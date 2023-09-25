@@ -17,7 +17,7 @@ pub(crate) fn right_shift(thread: &mut JsThread) {
 }
 
 pub(crate) fn right_shift_unsigned(thread: &mut JsThread) {
-    let value: i32 = catch!(thread, pop!(thread).to_i32(&thread.realm));
+    let value: u32 = catch!(thread, pop!(thread).to_u32(&thread.realm));
     let shift: u32 = catch!(thread, pop!(thread).to_u32(&thread.realm));
     let shift = shift & 0x1F;
 

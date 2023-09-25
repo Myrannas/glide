@@ -59,8 +59,12 @@ impl Suite {
         let details = &test[(suite_details_start + 6)..(suite_details_end - 1)];
         let details: SuiteDetails = serde_yaml::from_str(details)?;
 
-        let module = parse_input(&test)
-            .and_then(|module| compile("S8.3_A1_T1.js", module, CompilerOptions::new()));
+        // println!("{}", test);
+
+        let module = parse_input(&test).and_then(|module| {
+            // println!("{:#?}", module);
+            compile("S8.3_A1_T1.js", module, CompilerOptions::new())
+        });
 
         Ok(Suite { module, details })
     }

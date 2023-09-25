@@ -2,7 +2,7 @@ use crate::primordials::RuntimeHelpers;
 use crate::values::function::{CustomFunctionReference, FunctionReference, Prototype};
 use crate::values::nan::Value;
 
-use crate::debugging::DebugWithRealm;
+use crate::debugging::{DebugWithRealm, X};
 use crate::{catch, pop, InternalError, JsThread, ValueType};
 use instruction_set::{Constant, Environmental, PrivateValue};
 
@@ -99,16 +99,14 @@ pub(crate) fn get_local(thread: &mut JsThread, local: usize) {
 }
 
 pub(crate) fn get_capture(thread: &mut JsThread, offset: usize, local: usize) {
-    let value = thread.current_context().capture(offset - 1, local);
+    let value = thread.current_context().capture(offset, local);
     thread.push_stack(value);
     thread.step();
 }
 
 pub(crate) fn set_capture(thread: &mut JsThread, offset: usize, local: usize) {
     let value = pop!(thread);
-    thread
-        .current_context()
-        .write_capture(offset - 1, local, value);
+    thread.current_context().write_capture(offset, local, value);
     thread.step();
 }
 
@@ -165,18 +163,8 @@ pub(crate) fn get_class(thread: &mut JsThread, class_id: usize, extends: bool) {
 
 pub(crate) fn get_named(thread: &mut JsThread, atom: usize) {
     let atom = thread.current_function().get_atom(atom);
+
     let target = pop!(thread, "Need a target");
-
-    if target == Value::UNDEFINED {
-        let attribute = thread.realm.strings.get(atom);
-        let message = format!("Cannot get property {} of undefined", attribute);
-
-        let type_error = thread.new_type_error(message);
-
-        return thread.throw(type_error);
-    }
-
-    let target = catch!(thread, target.to_object(&mut thread.realm));
 
     thread.push_stack(target);
     thread.push_stack(ValueType::StringReference(atom));
@@ -225,7 +213,7 @@ pub(crate) fn load_constant(thread: &mut JsThread, constant: &Constant) {
 
 pub(crate) fn load_environmental(thread: &mut JsThread, environmental: &Environmental) {
     let value: Value = match environmental {
-        Environmental::GlobalThis => thread.realm.global_this.into(),
+        Environmental::GlobalThis => ValueType::EnvironmentRecord.into(),
         Environmental::This => thread.current_context().this(),
         Environmental::NewObject => thread
             .realm
@@ -264,5 +252,10 @@ pub(crate) fn duplicate(thread: &mut JsThread) {
     let element = thread.stack.last().cloned().unwrap_or_default();
 
     thread.stack.push(element);
+    thread.step();
+}
+
+pub(crate) fn drop_s(thread: &mut JsThread) {
+    pop!(thread);
     thread.step();
 }

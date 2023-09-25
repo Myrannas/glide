@@ -8,7 +8,8 @@ use crate::values::nan::Value;
 use crate::values::value::make_arguments;
 use crate::{ExecutionError, JsFunction};
 use instruction_set::{Constant, Instruction};
-use log::trace;
+use log::Level::Trace;
+use log::{log_enabled, trace};
 use std::fmt::{Debug, Formatter};
 
 #[derive(Debug)]
@@ -105,11 +106,11 @@ impl<'a> JsThread<'a> {
     }
 
     #[must_use]
-    pub fn read_arg(&self, count: usize, index: usize) -> Option<Value<'a>> {
-        if index > count {
+    pub fn read_arg(&mut self, count: usize, index: usize) -> Option<JsResult<'a>> {
+        if index >= count {
             None
         } else {
-            self.stack.get(self.stack.len() - count + index).cloned()
+            self.stack.pop().map(|v| v.resolve(self))
         }
     }
 
@@ -161,12 +162,7 @@ impl<'a> JsThread<'a> {
     pub(crate) fn return_value(&mut self, value: impl Into<Value<'a>>) {
         let value = value.into();
 
-        trace!(
-            "return {:?} {:?} {:?}",
-            self.debug_value(&value),
-            self.current_frame,
-            self.call_stack.last()
-        );
+        trace!("return {:?}", self.debug_value(&value));
 
         if let Some(parent) = self.call_stack.pop() {
             self.current_frame = parent;
@@ -230,6 +226,10 @@ impl<'a> JsThread<'a> {
 
         if let ExecutionError::TypeError(msg) = &error {
             error = ExecutionError::Thrown(self.new_type_error(msg), None);
+        }
+
+        if let ExecutionError::ReferenceError(err) = &error {
+            error = ExecutionError::Thrown(self.new_reference_error(err), None);
         }
 
         let error = error.fill_stack_trace(stack);
@@ -342,12 +342,6 @@ impl<'a> JsThread<'a> {
         new: bool,
         native: bool,
     ) {
-        let args_debug: Vec<Value<'a>> = self.stack.iter().rev().take(args).cloned().collect();
-        trace!(
-            "{}({:?}) \n =====",
-            self.realm.get_string(function.name()),
-            X::from(&args_debug, &self.realm)
-        );
         if self.call_stack.len() > self.call_stack_limit {
             return self.throw(InternalError::new_stackless("Stack overflow"));
         }
@@ -365,21 +359,31 @@ impl<'a> JsThread<'a> {
             JsContext::with_parent(&mut self.realm, context.clone(), target, &function);
 
         let stack_length = self.stack.len();
-        let arguments = (stack_length - args)..stack_length;
-
-        for (write_to, read_from) in arguments.clone().enumerate().take(function.args_size()) {
-            new_context.write(write_to + 1, self.stack[read_from])
+        let mut arguments = Vec::with_capacity(args);
+        for i in 0..args {
+            if let Some(value) = self.stack.pop() {
+                match value.resolve(self) {
+                    Ok(value) => arguments.push(value),
+                    Err(err) => return self.throw(err),
+                }
+            }
         }
 
-        new_context.write(
-            0,
-            make_arguments(
-                arguments
-                    .map(|_| self.stack.pop().unwrap_or_default())
-                    .collect(),
-                self,
-            ),
-        );
+        for (index, value) in arguments.iter().rev().enumerate() {
+            new_context.write(index + 1, *value);
+        }
+
+        arguments.reverse();
+
+        if log_enabled!(Trace) {
+            trace!(
+                "{}({:?})",
+                self.realm.get_string(function.name()),
+                X::from(&arguments, &self.realm)
+            );
+        }
+
+        new_context.write(0, make_arguments(arguments, self));
 
         self.current_frame.stack_size = self.stack.len();
         let new_frame = StackFrame {
@@ -404,11 +408,13 @@ impl<'a> JsThread<'a> {
         while self.current_frame.index < self.current_frame.current_function.instructions().len() {
             let frame_index = self.current_frame.index;
 
-            trace!(
-                "{:3} {:?}",
-                frame_index,
-                DebuggableInstruction::new(&self.next_instruction(), self)
-            );
+            if log_enabled!(Trace) {
+                trace!(
+                    "{:3} {:?}",
+                    frame_index,
+                    DebuggableInstruction::new(&self.next_instruction(), self)
+                );
+            }
 
             // trace!("{:?} \n result: {:?}", &chunk.instructions[index], frame);
 
@@ -491,15 +497,32 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
             Instruction::GetNamed { name } => {
                 let atom = self.thread.current_frame.current_function.get_atom(*name);
                 let str = self.thread.realm.strings.get(atom).as_ref();
+                let target = self
+                    .thread
+                    .stack
+                    .last()
+                    .cloned()
+                    .unwrap_or(Value::UNDEFINED);
 
-                f.debug_struct("GetNamed").field("name", &str).finish()
+                f.debug_struct("GetNamed")
+                    .field("name", &str)
+                    .field("target", &X::from(&target, self.thread.get_realm()))
+                    .finish()
             }
             Instruction::GetLocal { local } => {
                 let locals = &self.thread.current_frame.current_function.locals()[*local];
+                let value = &self
+                    .thread
+                    .current_frame
+                    .context
+                    .capture(0, *local)
+                    .unwrap_or(Value::UNDEFINED);
+                let value = X::from(value, self.thread.get_realm());
 
                 f.debug_struct("GetLocal")
                     .field("local", &locals.name)
                     .field("local_id", local)
+                    .field("value", &value)
                     .finish()
             }
 
@@ -521,10 +544,21 @@ impl<'a, 'b> Debug for DebuggableInstruction<'a, 'b> {
 
                 let value = self.thread.stack.last().cloned().unwrap_or_default();
                 let last = X::from(&value, self.thread.get_realm());
-                f.debug_struct("SetLocal")
+                f.debug_struct("SetNamed")
                     .field("field", &str)
                     .field("value", &last)
                     .finish()
+            }
+
+            Instruction::GetCapture { frame, local } => {
+                let mut debugger = f.debug_struct("GetCapture");
+
+                debugger.field("local_id", &local).field("frame", frame);
+
+                if let Some(local) = self.thread.current_context().capture_name(*frame, *local) {
+                    debugger.field("name", &local.name);
+                }
+                debugger.finish()
             }
 
             Instruction::LoadConstant {

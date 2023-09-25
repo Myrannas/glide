@@ -4,7 +4,7 @@ use crate::result::JsResult;
 use crate::values::nan::{Value, ValueType};
 use crate::values::object::{JsObjectState, Property, PropertyKey};
 use crate::{dv, JsObject, JsThread};
-use builtin::{constructor, named, prototype};
+use builtin::{constructor, getter, named, prototype};
 
 pub(crate) struct JsObjectBase<'a, 'b> {
     target: Value<'a>,
@@ -25,7 +25,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
     ) -> JsResult<'a, Value<'a>> {
         let string_key = property.to_string(thread)?;
 
-        let object = thread.realm.objects.allocate(JsObject::new());
+        let object = thread.realm.objects.put(JsObject::new());
 
         match target
             .to_object(&mut thread.realm)?
@@ -158,6 +158,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
         let descriptor = if let ValueType::Object(obj) = property_descriptor.get_type() {
             obj
         } else {
+            println!("{:?}", &X::from(&property_descriptor, &self.thread.realm));
             return Err(self
                 .thread
                 .new_type_error("Property description must be an object: {}")
@@ -210,7 +211,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                 .into());
         };
 
-        let js_object = self.thread.realm.objects.get_mut(object);
+        let js_object = &mut self.thread.realm.objects[object];
 
         for (_, property) in &mut js_object.properties {
             property.set_writable(false);
@@ -229,7 +230,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                 .into());
         };
 
-        let js_object = self.thread.realm.objects.get_mut(object);
+        let js_object = &mut self.thread.realm.objects[object];
 
         for (_, property) in &mut js_object.properties {
             property.set_configurable(false);
@@ -249,7 +250,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                 .into());
         };
 
-        let js_object = self.thread.realm.objects.get_mut(object);
+        let js_object = &mut self.thread.realm.objects[object];
 
         js_object.state = JsObjectState::NotExtensible;
 
@@ -267,7 +268,7 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
                 .into());
         };
 
-        let js_object = self.thread.realm.objects.get(object);
+        let js_object = &mut self.thread.realm.objects[object];
 
         let matches: bool = matches!(js_object.state, JsObjectState::NotExtensible);
         Ok(matches)
@@ -299,6 +300,26 @@ impl<'a, 'b> JsObjectBase<'a, 'b> {
             Ok(prototype == target)
         } else {
             Ok(false)
+        }
+    }
+
+    #[getter]
+    #[named("prototype")]
+    fn get_prototype(&mut self) -> JsResult<'a> {
+        let object = if let ValueType::Object(obj) = self.target.get_type() {
+            obj
+        } else {
+            return Err(self
+                .thread
+                .new_type_error("Object.isPrototypeOf called on non-object")
+                .into());
+        };
+        let target = self.target.as_object(&self.thread.realm)?;
+
+        if let Some(prototype) = object.get_prototype(self.thread) {
+            Ok(prototype.into())
+        } else {
+            Ok(Value::UNDEFINED)
         }
     }
 }

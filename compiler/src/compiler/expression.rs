@@ -62,6 +62,19 @@ impl<'a> Compile for Expression<'a> {
                 operator: UnaryOperator::Add,
                 value,
             } => builder.compile(*value)?,
+            Expression::UnaryExpression {
+                operator: UnaryOperator::Void,
+                value: expr,
+            } => {
+                let mut next = builder;
+
+                next = expr.compile(next)?;
+
+                next.append(Instruction::DropS)
+                    .append(Instruction::LoadConstant {
+                        constant: Constant::Undefined,
+                    })
+            }
             Expression::UnaryExpression { value, operator } => {
                 builder.compile(*value)?.compile(operator)?
             }
@@ -96,9 +109,13 @@ impl<'a> Compile for Expression<'a> {
                 assign_to: Reference::Id(id),
                 expression,
             } => {
-                let mut next = builder.compile(*expression)?;
+                let mut next = builder
+                    .compile(*expression)?
+                    .append(Resolve)
+                    .append(Duplicate);
 
-                match next.resolve_identifier(id) {
+                let resolution = next.resolve_identifier(id);
+                match resolution {
                     Resolution::Resolved { local } => next.append(SetLocal { local }),
                     Resolution::Capture { frame, local } => {
                         next.append(SetCapture { local, frame })
@@ -148,9 +165,7 @@ impl<'a> Compile for Expression<'a> {
 
                 parameters
                     .into_iter()
-                    .try_fold(builder, |next, expression| {
-                        next.compile(expression).map(|n| n.append(Resolve))
-                    })?
+                    .try_fold(builder, |next, expression| next.compile(expression))?
                     .compile(*expression)?
                     .append(Call { args_count })
             }
@@ -283,7 +298,7 @@ impl<'a> Compile for Expression<'a> {
                 let identifier = identifier.unwrap_or("(anonymous)");
                 let function = builder.frame.functions.allocate(compile_function(
                     identifier,
-                    builder.frame.locals.child(),
+                    &builder.frame.locals,
                     arguments,
                     statements,
                     DEFAULT_OPTIONS,
